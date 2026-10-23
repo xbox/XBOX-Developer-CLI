@@ -1,0 +1,86 @@
+name: Bug report
+description: Report something that doesn't work the way you'd expect.
+type: bug
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report! Please fill out the sections below so we can reproduce and fix the issue quickly.
+
+        Reproduce the problem with the latest CLI release when possible.
+
+        **Before you file**: please search [existing issues](https://github.com/microsoft/XBOX-Developer-CLI/issues?q=is%3Aissue) to avoid duplicates, and **do not** report security vulnerabilities here — see [SECURITY.md](https://github.com/microsoft/XBOX-Developer-CLI/blob/main/SECURITY.md).
+
+        🚨 **Before submitting, redact all secrets and sensitive data** (tokens, credentials, API keys, title IDs, account IDs, etc.) from commands, logs, and screenshots.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug.
+      placeholder: When I run `xbox ...`, the CLI ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Related command
+      description: The command path that failed. Omit argument values and request bodies that may contain sensitive information.
+      placeholder: xbox playfab title-data get
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+      placeholder: I expected the CLI to ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Minimal commands that reproduce the issue. Redact any PlayFab title IDs, account names, tokens, or other sensitive identifiers before pasting.
+      placeholder: |
+        1. `xbox auth login`
+        2. `xbox playfab api call /Admin/GetTitleData`
+        3. ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: output
+    attributes:
+      label: Actual CLI output / error
+      description: Paste the full command output, including any error message. Redact tokens, secrets, and other sensitive values.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment Summary
+      description: Prefilled by `xbox feedback`. Otherwise paste the environment summary from `xbox feedback --no-browser`. Review it before submitting.
+      placeholder: |
+        XBOX CLI: 0.1.0
+        OS: Microsoft Windows 10.0.26100
+        OS architecture: X64
+        Process architecture: X64
+        Runtime: .NET 10.0.0
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Anything else that might help — related issues, recent changes, workarounds you've tried.
+    validations:
+      required: false
