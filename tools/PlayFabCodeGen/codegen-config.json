@@ -1,0 +1,43 @@
+{
+  "specSource": {
+    "type": "github",
+    "repo": "PlayFab/API_Specs",
+    "branch": "master",
+    "path": "Swagger/PlayFab"
+  },
+  "output": {
+    "directory": "../../src/XboxDevCLI/PlayFab/Generated",
+    "namespace": "XboxDevCLI.PlayFab.Generated"
+  },
+  "include": [
+    "Admin",
+    "Economy",
+    "Multiplayer",
+    "Groups",
+    "Leaderboards",
+    "Addon",
+    "Progression",
+    "Events",
+    "CloudScript",
+    "Experimentation",
+    "Profiles",
+    "Data",
+    "Insights",
+    "State",
+    "Authentication",
+    "Sweepstakes",
+    "Localization"
+  ],
+  "exclude": {
+    "groups": [
+      "Client",
+      "Server",
+      "Matchmaker"
+    ],
+    "apis": {}
+  },
+  "preferences": {
+    "nullableReferenceTypes": true,
+    "generateXmlDocs": true
+  }
+}

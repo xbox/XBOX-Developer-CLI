@@ -1,0 +1,74 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>$(CliCommandName)</AssemblyName>
+    <AssemblyTitle>$(CliProductName)</AssemblyTitle>
+    <Product>$(CliProductName)</Product>
+    <PackageId>$(CliProductName)</PackageId>
+    <RootNamespace>XboxDevCLI</RootNamespace>
+    <Version>0.1.0</Version>
+    <!-- Generated so the compiler checks doc comments, such as their crefs. Nothing reads it at
+         runtime, so it isn't published. -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PublishDocumentationFile>false</PublishDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <!-- Release builds embed symbols in the executable: no loose .pdb ships, and stack traces keep line numbers. -->
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="Azure.Monitor.OpenTelemetry.Exporter" Version="1.8.3" />
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.EnvironmentVariables" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Identity.Client" Version="4.84.2" />
+    <PackageReference Include="Microsoft.Identity.Client.Extensions.Msal" Version="4.84.2" />
+    <PackageReference Include="NuGet.Versioning" Version="7.0.0" />
+    <PackageReference Include="Serilog" Version="4.4.0" />
+    <PackageReference Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <PackageReference Include="Serilog.Sinks.File" Version="7.0.0" />
+    <PackageReference Include="System.CommandLine" Version="2.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\xbox-logo.txt" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="appsettings.*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="XboxDevCLI.UnitTest" />
+    <InternalsVisibleTo Include="XboxDevCLI.FuzzTest" />
+  </ItemGroup>
+
+  <!-- ProjectLinks.cs holds the links released builds use. A build that has
+       ProjectLinks.Development.cs uses its links instead, unless UseDevelopmentLinks=false. -->
+  <PropertyGroup>
+    <UseDevelopmentLinks Condition="'$(UseDevelopmentLinks)' == ''">$([System.IO.File]::Exists('$(MSBuildThisFileDirectory)ProjectLinks.Development.cs'))</UseDevelopmentLinks>
+    <DefineConstants Condition="'$(UseDevelopmentLinks)' == 'true'">$(DefineConstants);XBOX_DEVELOPMENT_LINKS</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(UseDevelopmentLinks)' != 'true'">
+    <Compile Remove="ProjectLinks.Development.cs" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(XBOXDEVCLI_TELEMETRY_CONNECTION_STRING)' != ''">
+    <AssemblyMetadata
+      Include="XboxDevCLI.TelemetryConnectionString"
+      Value="$(XBOXDEVCLI_TELEMETRY_CONNECTION_STRING)" />
+  </ItemGroup>
+
+</Project>

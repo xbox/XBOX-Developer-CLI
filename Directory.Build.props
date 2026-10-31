@@ -1,0 +1,23 @@
+<Project>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Keep the user-facing executable independent from stable product and compatibility identities. -->
+    <CliProductName>XboxDevCLI</CliProductName>
+    <CliCommandName>xbox</CliCommandName>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Version>0.0.0-local</Version>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <Authors>Microsoft</Authors>
+    <Copyright>© Microsoft Corporation.</Copyright>
+    <PackageProjectUrl>https://github.com/microsoft/XBOX-Developer-CLI</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/microsoft/XBOX-Developer-CLI</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+
+</Project>

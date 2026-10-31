@@ -1,25 +1,24 @@
-# TODO: The maintainer of this repo has not yet edited this file
-
-**REPO OWNER**: Do you want Customer Service & Support (CSS) support for this product/project?
-
-- **No CSS support:** Fill out this template with information about how to file issues and get help.
-- **Yes CSS support:** Fill out an intake form at [aka.ms/onboardsupport](https://aka.ms/onboardsupport). CSS will work with/help you to determine next steps.
-- **Not sure?** Fill out an intake as though the answer were "Yes". CSS will help you decide.
-
-*Then remove this first heading from this SUPPORT.MD file before publishing your repo.*
-
 # Support
 
-## How to file issues and get help  
+The XBOX CLI is a technical preview. It's supported through GitHub Issues, not through
+Microsoft Customer Service & Support.
 
-This project uses GitHub Issues to track bugs and feature requests. Please search the existing 
-issues before filing new issues to avoid duplicates.  For new issues, file your bug or 
-feature request as a new Issue.
+## Report a bug or request a feature
 
-For help and questions about using this project, please **REPO MAINTAINER: INSERT INSTRUCTIONS HERE 
-FOR HOW TO ENGAGE REPO OWNERS OR COMMUNITY FOR HELP. COULD BE A STACK OVERFLOW TAG OR OTHER
-CHANNEL. WHERE WILL YOU HELP PEOPLE?**.
+Search the [existing issues](https://github.com/microsoft/XBOX-Developer-CLI/issues) first,
+then open a new issue with the **Bug report** or **Feature request** form. `xbox feedback`
+opens a bug report with your environment details already filled in. Issues are public, so
+leave out anything you wouldn't share publicly.
 
-## Microsoft Support Policy  
+## Other help for XBOX developers
 
-Support for this **PROJECT or PRODUCT** is limited to the resources listed above.
+If you're an XBOX developer, you can also contact your partner manager, or reach out
+through your standard developer support channels.
+
+## Security issues
+
+Don't report security vulnerabilities in public issues. See [SECURITY.md](SECURITY.md).
+
+## Microsoft support policy
+
+Support for the XBOX CLI is limited to the resources above.
