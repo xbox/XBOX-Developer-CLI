@@ -1,0 +1,29 @@
+name: Documentation issue
+description: Report missing, incorrect, or unclear XBOX CLI documentation.
+labels: ["documentation"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please search [existing issues](https://github.com/microsoft/XBOX-Developer-CLI/issues) first.
+        Do not include credentials, account details, or other sensitive information.
+  - type: input
+    id: page
+    attributes:
+      label: Documentation page or command
+      description: Link to the page, or give the command whose Help needs improvement.
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is missing or incorrect?
+      description: Describe the problem and the correction you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+    validations:
+      required: false

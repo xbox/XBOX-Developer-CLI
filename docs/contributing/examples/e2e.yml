@@ -1,0 +1,108 @@
+name: E2E (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Existing GitHub environment holding your identity and deployment settings.
+        required: true
+        type: environment
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-manual-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Publish CLI
+        run: >
+          dotnet publish src/XboxDevCLI/XboxDevCLI.csproj
+          --configuration Release
+          --runtime linux-x64
+          --self-contained
+          -p:PublishSingleFile=true
+          -p:PublishTrimmed=false
+          -p:IncludeNativeLibrariesForSelfExtract=true
+          --output "$RUNNER_TEMP/e2e/cli"
+
+      - name: Build harness
+        run: >
+          dotnet build tests/XboxDevCLI.EndToEndTests/XboxDevCLI.EndToEndTests.csproj
+          --configuration Release
+          --output "$RUNNER_TEMP/e2e/harness"
+
+      - name: Run offline checks
+        run: dotnet test "$RUNNER_TEMP/e2e/harness/XboxDevCLI.EndToEndTests.dll"
+
+      - name: Upload CLI and harness
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-build
+          path: ${{ runner.temp }}/e2e/
+          retention-days: 1
+          if-no-files-found: error
+
+  live:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+    env:
+      E2E_GITHUB_ENVIRONMENT: ${{ inputs.environment }}
+      E2E_EXPECTED_AUDIENCE: ${{ vars.E2E_EXPECTED_AUDIENCE }}
+      E2E_ALLOWED_HOST_SUFFIX: ${{ vars.E2E_ALLOWED_HOST_SUFFIX }}
+      E2E_PLAYFAB_BASE_URL_TEMPLATE: ${{ vars.E2E_PLAYFAB_BASE_URL_TEMPLATE }}
+      E2E_PLAYFAB_TITLE_ID: ${{ vars.E2E_PLAYFAB_TITLE_ID }}
+      E2E_PLAYFAB_HOST_HEADER: ${{ vars.E2E_PLAYFAB_HOST_HEADER }}
+      E2E_XBOX_PARTNER_BASE_URL: ${{ vars.E2E_XBOX_PARTNER_BASE_URL }}
+      E2E_SELLER_ID: ${{ vars.E2E_SELLER_ID }}
+      XBOX_AUTHENTICATION__CLIENTID: ${{ vars.XBOX_AUTHENTICATION__CLIENTID }}
+      XBOX_AUTHENTICATION__TENANTID: ${{ vars.XBOX_AUTHENTICATION__TENANTID }}
+      XBOX_AZUREAD__SCOPES: ${{ vars.XBOX_AZUREAD__SCOPES }}
+    steps:
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.4xx'
+
+      - name: Download CLI and harness
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: ${{ runner.temp }}/e2e
+          merge-multiple: true
+
+      - name: Validate configuration without calling services
+        env:
+          E2E_CLI_PATH: ${{ runner.temp }}/e2e/cli
+        run: >
+          dotnet test "$RUNNER_TEMP/e2e/harness/XboxDevCLI.EndToEndTests.dll"
+          --filter "FullyQualifiedName~XboxDevCLI.EndToEndTests.LiveConfigurationTests"
+
+      - name: Run read-only live scenarios
+        env:
+          E2E_CLI_PATH: ${{ runner.temp }}/e2e/cli
+        run: |
+          chmod +x "$E2E_CLI_PATH/xbox"
+          dotnet test "$RUNNER_TEMP/e2e/harness/XboxDevCLI.EndToEndTests.dll" \
+            --filter "FullyQualifiedName~XboxDevCLI.EndToEndTests.LiveReadOnlyTests"
