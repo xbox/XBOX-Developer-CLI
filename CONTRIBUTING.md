@@ -58,6 +58,10 @@ this copy convention.
 dotnet test
 ```
 
+The end-to-end tests in `tests/XboxDevCLI.E2ETest/` skip until you set them up to run as your own
+account; see
+[End-to-end tests with your own account](docs/contributing/testing.md#end-to-end-tests-with-your-own-account).
+
 ### Command architecture
 
 The command tree is split into small factory files, so adding a command does not mean editing one

@@ -46,7 +46,7 @@ internal static class XboxPartnerCommandSupport
         if (element.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidDataException(
-                "The XboxPartner response contained an entry that was not an object.");
+                "The response contained an entry that was not an object.");
         }
 
         var text = element.TryGetProperty(propertyName, out var value)
@@ -57,7 +57,7 @@ internal static class XboxPartnerCommandSupport
         if (required && text.Length == 0)
         {
             throw new InvalidDataException(
-                $"The XboxPartner response contained an entry with no '{propertyName}' value.");
+                $"The response contained an entry with no '{propertyName}' value.");
         }
 
         return text;
@@ -66,16 +66,16 @@ internal static class XboxPartnerCommandSupport
     public static Option<string?> CreateBaseUrlOption() =>
         new("--base-url")
         {
-            Description = "Backend service base URL. Overrides XboxPartner:BaseUrl configuration.",
+            Description = "Service base URL. Overrides XboxPartner:BaseUrl configuration.",
         };
 
     /// <summary>
-    /// Resolves the gateway base URL from <c>--base-url</c>, then <c>XboxPartner:BaseUrl</c>
+    /// Resolves the service base URL from <c>--base-url</c>, then <c>XboxPartner:BaseUrl</c>
     /// configuration.
     /// </summary>
     /// <remarks>
     /// There is no code fallback: the shipped appsettings.json is the single source of the
-    /// gateway URL, so the deployment can be retargeted without a rebuild and the source tree
+    /// service URL, so the deployment can be retargeted without a rebuild and the source tree
     /// carries no environment-specific hostname. A missing or blank key is reported as an
     /// actionable error rather than silently falling back to a compiled-in host.
     /// <see cref="XboxPartnerClient.BuildRequestUri"/> still rejects a non-HTTPS URL, since the
@@ -91,7 +91,7 @@ internal static class XboxPartnerCommandSupport
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             throw new InvalidOperationException(
-                "No XboxPartner gateway URL. Set XboxPartner:BaseUrl in appsettings.json, set "
+                "No service URL. Set XboxPartner:BaseUrl in appsettings.json, set "
                 + "the XBOX_XBOXPARTNER__BASEURL environment variable, or pass --base-url.");
         }
 
@@ -101,26 +101,19 @@ internal static class XboxPartnerCommandSupport
         return effectiveBaseUrl;
     }
 
-    public static string ResolveBaseUrl(
-        IConfiguration configuration,
-        string serviceName = "XboxPartner gateway",
-        bool includeDefaultUrl = true)
+    public static string ResolveBaseUrl(IConfiguration configuration)
     {
         string? baseUrl = configuration["XboxPartner:BaseUrl"];
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             throw new InvalidOperationException(
-                $"No {serviceName} URL. Set XboxPartner:BaseUrl in appsettings.json or set " +
+                "No service URL. Set XboxPartner:BaseUrl in appsettings.json or set " +
                 "the XBOX_XBOXPARTNER__BASEURL environment variable.");
         }
 
         _ = XboxPartnerClient.BuildRequestUri(baseUrl, string.Empty);
         string effectiveBaseUrl = baseUrl.TrimEnd('/');
-        EndpointOverrideWarning.WriteXboxPartnerWarningIfOverridden(
-            effectiveBaseUrl,
-            Console.Error,
-            serviceName,
-            includeDefaultUrl);
+        EndpointOverrideWarning.WriteXboxPartnerWarningIfOverridden(effectiveBaseUrl, Console.Error);
         return effectiveBaseUrl;
     }
 
@@ -247,7 +240,7 @@ internal static class XboxPartnerCommandSupport
         catch (Exception exception) when (exception is JsonException or ArgumentException)
         {
             throw new InvalidDataException(
-                $"The XboxPartner {resource} response was not valid JSON.",
+                $"The {resource} response was not valid JSON.",
                 exception);
         }
 
@@ -264,7 +257,7 @@ internal static class XboxPartnerCommandSupport
         catch (Exception exception) when (exception is JsonException or ArgumentException)
         {
             throw new InvalidDataException(
-                "The XboxPartner game response was not valid JSON.",
+                "The game response was not valid JSON.",
                 exception);
         }
 
@@ -287,7 +280,7 @@ internal static class XboxPartnerCommandSupport
             || games.ValueKind != JsonValueKind.Array)
         {
             throw new InvalidDataException(
-                "The XboxPartner game response must contain a games array.");
+                "The game response must contain a games array.");
         }
 
         foreach (var game in games.EnumerateArray())
@@ -377,7 +370,7 @@ internal static class XboxPartnerCommandSupport
         return string.Join(' ', arguments);
     }
 
-    public static T DeserializeResponse<T>(string response, string resource, string? serviceName = "XboxPartner")
+    public static T DeserializeResponse<T>(string response, string resource, string? serviceName = null)
     {
         try
         {
@@ -724,7 +717,6 @@ internal static class XboxPartnerCommandSupport
         string scope,
         string output,
         IReadOnlyList<string> examples,
-        string endpoint,
         TableView? table = null,
         IReadOnlyList<string>? learnMore = null) =>
         new(
@@ -732,7 +724,7 @@ internal static class XboxPartnerCommandSupport
             Scope: scope,
             Output: output,
             Examples: examples,
-            LearnMore: learnMore ?? [$"Calls the XboxPartner gateway: GET {endpoint}"],
+            LearnMore: learnMore ?? [],
             Table: table);
 
     private static string FormatIfJson(string value, bool compact)

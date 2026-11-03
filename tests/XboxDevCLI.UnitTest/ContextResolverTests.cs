@@ -33,7 +33,7 @@ public sealed class ContextResolverTests : IDisposable
 
     private static readonly string[] Variables =
     [
-        "XBOX_SELLER_ID", "XBOX_PLAYFAB_TITLE_ID", "XBOX_SANDBOX", "XBOX_PROFILE",
+        "XBOX_SELLER_ID", "XBOX_PLAYFAB_TITLE_ID", "XBOX_SANDBOX_ID", "XBOX_PROFILE",
         "XBOX_CONFIRM", "XBOX_YES", "XBOX_BODY", "XBOX_BODY_FILE", "XBOX_PLAYFAB__BASEURLTEMPLATE",
         "XBOX_PLAYFAB__TITLEID",
     ];
@@ -102,6 +102,29 @@ public sealed class ContextResolverTests : IDisposable
         Assert.Equal(0, _identityReads);
     }
 
+    [Theory]
+    [InlineData("configuration", "get")]
+    [InlineData("publish", "start")]
+    [InlineData("publish", "status")]
+    public async Task SandboxId_UsesFlagThenVariableThenSavedContext(string group, string action)
+    {
+        await SaveAsync("sandbox-id", Gateway, "TESTSB.42");
+        string[] args = ["xbl", group, action, "--scid", Scid];
+
+        var (_, saved, _) = await ResolveAsync(args);
+        Assert.Empty(saved.Errors);
+        Assert.Equal("TESTSB.42", saved.GetValue<string>("--sandbox-id"));
+
+        Environment.SetEnvironmentVariable("XBOX_SANDBOX_ID", "XDKS.1");
+        var (_, variable, _) = await ResolveAsync(args);
+        Assert.Empty(variable.Errors);
+        Assert.Equal("XDKS.1", variable.GetValue<string>("--sandbox-id"));
+
+        var (_, explicitValue, _) = await ResolveAsync([.. args, "--sandbox-id", "ABCDEF.1"]);
+        Assert.Empty(explicitValue.Errors);
+        Assert.Equal("ABCDEF.1", explicitValue.GetValue<string>("--sandbox-id"));
+    }
+
     /// <summary>
     /// A saved value belongs to the signed-in account and the endpoint the command talks to: the
     /// gateway, which <c>--base-url</c> moves, or the PlayFab endpoint. The account is read once.
@@ -110,7 +133,7 @@ public sealed class ContextResolverTests : IDisposable
     public async Task SavedValue_BelongsToTheAccountAndEndpoint()
     {
         await SaveAsync("seller-id", Gateway, "7654321");
-        await SaveAsync("sandbox", Gateway, "Dev.1");
+        await SaveAsync("sandbox-id", Gateway, "Dev.1");
         await SaveAsync("playfab-title-id", EndpointOverrideWarning.DefaultBaseUrlTemplate, "SAVED1");
 
         var (_, publish, _) = await ResolveAsync("xbl", "publish", "status", "--scid", Scid);
@@ -119,7 +142,7 @@ public sealed class ContextResolverTests : IDisposable
 
         Assert.Empty(publish.Errors);
         Assert.Equal(7654321L, publish.GetValue<long?>("--seller-id"));
-        Assert.Equal("Dev.1", publish.GetValue<string>("--sandbox"));
+        Assert.Equal("Dev.1", publish.GetValue<string>("--sandbox-id"));
         Assert.Equal("SAVED1", title.GetValue(Program.PlayFabTitleIdOption));
         Assert.Null(moved.GetValue<string>("--seller-id"));
         Assert.Equal(3, _identityReads);
@@ -164,8 +187,8 @@ public sealed class ContextResolverTests : IDisposable
     /// <summary>A value is parsed and validated as if typed, and fails naming where it came from.</summary>
     [Theory]
     [InlineData("XBOX_PLAYFAB_TITLE_ID", "ABC-12", "playfab title-data get", "XBOX_PLAYFAB_TITLE_ID: --playfab-title-id must contain only letters and digits.")]
-    [InlineData("XBOX_SANDBOX", "Dev 1", "xbl publish status --scid " + Scid, "XBOX_SANDBOX: --sandbox must be non-empty and cannot contain whitespace.")]
-    [InlineData("XBOX_SELLER_ID", "0", "xbl publish status --sandbox Dev.1 --scid " + Scid, "XBOX_SELLER_ID: --seller-id")]
+    [InlineData("XBOX_SANDBOX_ID", "Dev 1", "xbl publish status --scid " + Scid, "XBOX_SANDBOX_ID: --sandbox-id must be non-empty and cannot contain whitespace.")]
+    [InlineData("XBOX_SELLER_ID", "0", "xbl publish status --sandbox-id Dev.1 --scid " + Scid, "XBOX_SELLER_ID: --seller-id")]
     public async Task BadValue_FailsNamingItsSource(string variable, string value, string command, string expected)
     {
         Environment.SetEnvironmentVariable(variable, value);
@@ -601,17 +624,17 @@ public sealed class ContextResolverTests : IDisposable
     }
 
     /// <summary>
-    /// Only the seller, PlayFab title and XBOX Live sandbox resolve, so nothing fills in
+    /// Only the seller, PlayFab title and XBOX sandbox resolve, so nothing fills in
     /// <c>--confirm</c>, a request body, or any option that hasn't opted in.
     /// </summary>
     [Fact]
     public async Task OnlyMarkedOptionsResolve()
     {
         Assert.Equal(
-            ["--playfab-title-id", "--sandbox", "--seller-id"],
+            ["--playfab-title-id", "--sandbox-id", "--seller-id"],
             ContextResolver.FindAll(Program.BuildRootCommand()).Select(found => found.Option.Name).Distinct().Order());
         Assert.All(
-            ContextResolver.FindAll(Program.BuildRootCommand()).Where(found => found.Option.Name == "--sandbox"),
+            ContextResolver.FindAll(Program.BuildRootCommand()).Where(found => found.Option.Name == "--sandbox-id"),
             found => Assert.Contains(found.Command.Parents.OfType<Command>(), parent => parent.Name == "publish" || parent.Name == "configuration"));
 
         Environment.SetEnvironmentVariable("XBOX_CONFIRM", "true");

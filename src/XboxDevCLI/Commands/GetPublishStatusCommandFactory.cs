@@ -28,9 +28,10 @@ internal static class GetPublishStatusCommandFactory
                 result.AddError("--scid must be a non-empty GUID.");
             }
         });
-        var sandboxOption = new Option<string>("--sandbox", "-d")
+        var sandboxOption = new Option<string>("--sandbox-id")
         {
-            Description = "Case-sensitive destination sandbox.",
+            HelpName = "id",
+            Description = "Case-sensitive destination sandbox ID.",
             Required = true,
         }.AsContextValue(ContextEndpoint.XboxPartner);
         sandboxOption.Validators.Add(result =>
@@ -38,19 +39,19 @@ internal static class GetPublishStatusCommandFactory
             string? value = result.GetValueOrDefault<string>();
             if (string.IsNullOrWhiteSpace(value) || value.Any(char.IsWhiteSpace))
             {
-                result.AddError("--sandbox must be non-empty and cannot contain whitespace.");
+                result.AddError("--sandbox-id must be non-empty and cannot contain whitespace.");
             }
         });
 
-        var command = new Command("status", "Get XBOX Live configuration publish status");
+        var command = new Command("status", "Get XBOX services configuration publish status");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
             Scope: "Publish status for one destination sandbox and SCID.",
             Output: "The publish status as JSON or a table.",
             Examples:
             [
-                "xbox xbl publish status --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox RETAIL",
-                "xbox xbl publish status --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox RETAIL --output table",
+                "xbox xbl publish status --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id RETAIL",
+                "xbox xbl publish status --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id RETAIL --output table",
             ],
             Table: XboxPartnerCommandSupport.PublishStatusTableView));
         sellerOption.AddTo(command);
@@ -79,7 +80,7 @@ internal static class GetPublishStatusCommandFactory
                     cancellationToken);
                 Program.WriteVerbose(
                     verbose,
-                    () => $"POST XboxPartner publish status endpoint for {scid:D}/{sandbox}");
+                    () => $"Reading publish status for SCID {scid:D} in sandbox {sandbox}.");
                 return await RunAsync(
                     client,
                     sellerId,
@@ -174,7 +175,7 @@ internal static class GetPublishStatusCommandFactory
         if (string.IsNullOrWhiteSpace(result.Status))
         {
             throw new InvalidDataException(
-                "The XboxPartner publish status response did not contain a status.");
+                "The publish status response did not contain a status.");
         }
 
         return result;

@@ -15,19 +15,35 @@ internal static class XboxPartnerCommandErrorFormatter
         bool includeValidationErrors = false,
         bool omitAdditionalDetailWithFieldErrors = false,
         IReadOnlyList<string>? sensitiveValues = null,
-        string fallbackTitle = "XboxPartner request failed",
+        string fallbackTitle = "Request failed",
         string? fallbackDetail = null)
     {
         string failureMessage = fallbackDetail ?? exception.Message;
+        long? retryAfterSeconds = XboxPartnerErrorGuidance.RetryAfterSeconds(exception);
+        if (exception.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            string retryGuidance = XboxPartnerErrorGuidance.DescribeRetry(exception);
+            if (XboxPartnerErrorGuidance.IsRateLimited(exception.ResponseBody) &&
+                additionalDetail?.Contains(XboxPartnerErrorGuidance.RateLimitedHint, StringComparison.Ordinal) != true)
+            {
+                retryGuidance = $"{XboxPartnerErrorGuidance.RateLimitedHint} {retryGuidance}";
+            }
+
+            additionalDetail = string.IsNullOrWhiteSpace(additionalDetail)
+                ? retryGuidance
+                : AppendDetail(additionalDetail, retryGuidance);
+        }
+
         try
         {
             using var document = JsonDocument.Parse(exception.ResponseBody);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
-                return Redact(AppendDetail(failureMessage, additionalDetail), sensitiveValues);
+                return FormatFallback();
             }
 
             JsonElement root = document.RootElement;
+            string structuredFailure = fallbackDetail ?? DescribeStatus(exception);
             var includesDiagnosticDetails =
                 TryGetProperty(root, "exceptionDetails", out _) ||
                 TryGetProperty(root, "headers", out _) ||
@@ -38,8 +54,8 @@ internal static class XboxPartnerCommandErrorFormatter
                 : ReadFieldErrors(root, allowPartial: includeValidationErrors);
             string detail = AppendDetail(
                 includesDiagnosticDetails
-                    ? failureMessage
-                    : GetString(root, "detail") ?? failureMessage,
+                    ? structuredFailure
+                    : GetString(root, "detail") ?? structuredFailure,
                 omitAdditionalDetailWithFieldErrors && fieldErrors is not null
                     ? null
                     : additionalDetail);
@@ -69,6 +85,11 @@ internal static class XboxPartnerCommandErrorFormatter
                 sanitized["errors"] = fieldErrors;
             }
 
+            if (retryAfterSeconds is { } seconds)
+            {
+                sanitized["retryAfterSeconds"] = seconds;
+            }
+
             if (!includesDiagnosticDetails &&
                 TryGetProperty(root, "validation", out JsonElement validation) &&
                 XboxLiveValidationMessages.Read(validation).Where(static message => message.HasText).ToArray()
@@ -81,9 +102,28 @@ internal static class XboxPartnerCommandErrorFormatter
 
             return PlayFabApiClient.FormatJson(JsonSerializer.Serialize(sanitized), compact);
         }
-        catch (Exception parseException) when (parseException is JsonException or ArgumentException)
+        catch (Exception parseException) when (parseException is JsonException or ArgumentException
+            or InvalidOperationException)
         {
-            return Redact(AppendDetail(failureMessage, additionalDetail), sensitiveValues);
+            return FormatFallback();
+        }
+
+        string FormatFallback()
+        {
+            string detail = Redact(AppendDetail(failureMessage, additionalDetail), sensitiveValues);
+            if (retryAfterSeconds is not { } seconds)
+            {
+                return detail;
+            }
+
+            var sanitized = new Dictionary<string, object?>
+            {
+                ["status"] = (int)exception.StatusCode,
+                ["title"] = Redact(fallbackTitle, sensitiveValues),
+                ["detail"] = detail,
+                ["retryAfterSeconds"] = seconds,
+            };
+            return PlayFabApiClient.FormatJson(JsonSerializer.Serialize(sanitized), compact);
         }
     }
 
@@ -102,6 +142,12 @@ internal static class XboxPartnerCommandErrorFormatter
 
         return value;
     }
+
+    // The title already says the request failed, so the structured detail states only the status.
+    // A parsed body was read in full, so the body read failure suffix never applies here.
+    private static string DescribeStatus(XboxPartnerApiException exception) =>
+        $"The service returned HTTP {(int)exception.StatusCode}" +
+        (string.IsNullOrWhiteSpace(exception.ReasonPhrase) ? "." : $" ({exception.ReasonPhrase}).");
 
     private static string AppendDetail(string detail, string? additionalDetail) =>
         string.IsNullOrWhiteSpace(additionalDetail) ? detail : $"{detail} {additionalDetail}";

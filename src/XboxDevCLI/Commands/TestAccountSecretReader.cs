@@ -37,6 +37,20 @@ internal static class TestAccountSecretReader
 {
     public const string StandardInput = "-";
 
+    internal const string PasswordRequirements =
+        "Password must be 8 to 16 characters and contain at least three of these four categories: " +
+        "lowercase letters, uppercase letters, numbers, and symbols. Underscore does not count as a symbol.";
+
+    public static string ReadPassword(string? file, TestAccountCommandDependencies dependencies)
+    {
+        if (file is null && dependencies.IsInteractive())
+        {
+            Console.Error.WriteLine(PasswordRequirements);
+        }
+
+        return Read(file, "--password-file", "Password", dependencies);
+    }
+
     /// <summary>
     /// Throws <see cref="InvalidOperationException"/> when <see cref="Read"/> is bound to fail
     /// because the file is missing or no terminal can prompt. Reads nothing.

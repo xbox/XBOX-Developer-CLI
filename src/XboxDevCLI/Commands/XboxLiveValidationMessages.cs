@@ -6,7 +6,7 @@ using XboxDevCLI.Output;
 
 namespace XboxDevCLI.Commands;
 
-/// <summary>One XBOX Live validation message from XCon or XORC.</summary>
+/// <summary>One XBOX services validation message from XCon or XORC.</summary>
 internal sealed record XboxLiveValidationMessage(
     string? Severity,
     string? DocumentName,
@@ -18,7 +18,7 @@ internal sealed record XboxLiveValidationMessage(
 }
 
 /// <summary>
-/// Reads and writes the XBOX Live validation messages that explain why XCon or XORC refused
+/// Reads and writes the XBOX services validation messages that explain why XCon or XORC refused
 /// configuration documents: a commit's <c>ValidationInfo</c> and the gateway's <c>validation</c>.
 /// </summary>
 internal static class XboxLiveValidationMessages

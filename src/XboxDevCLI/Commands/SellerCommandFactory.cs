@@ -98,7 +98,7 @@ internal static class SellerCommandFactory
         catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
             return XboxPartnerCommandSupport.WriteLocalError(
-                new TimeoutException("The XboxPartner request timed out.", exception));
+                new TimeoutException("The request timed out.", exception));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {

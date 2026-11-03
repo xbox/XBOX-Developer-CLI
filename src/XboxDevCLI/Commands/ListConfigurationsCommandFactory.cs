@@ -34,10 +34,11 @@ internal static class ListConfigurationsCommandFactory
             "List working and published configuration state for each accessible sandbox");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "One XBOX Live title identified by SCID across all accessible sandboxes.",
+            Scope: "One XBOX title identified by SCID across all accessible sandboxes.",
             Output:
                 "A JSON array by default. Table output shows working and published versions, " +
-                "their associated commit times, and whether working changes are unpublished.",
+                "their associated commit times, and whether working changes are unpublished. " +
+                ListProgress.HelpOutput,
             Examples:
             [
                 "xbox xbl configuration list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
@@ -75,7 +76,7 @@ internal static class ListConfigurationsCommandFactory
 
                 Program.WriteVerbose(
                     verbose,
-                    () => $"List XBOX Live configuration state for SCID {scid:D}");
+                    () => $"List XBOX services configuration state for SCID {scid:D}");
                 return await RunAsync(
                     client,
                     sellerId,
@@ -106,9 +107,14 @@ internal static class ListConfigurationsCommandFactory
     {
         try
         {
-            string response = await client
-                .GetXboxLiveConfigurationsAsync(sellerId, scid, cancellationToken)
-                .ConfigureAwait(false);
+            string response;
+            using (var progress = ListProgress.Start("Reading configurations", stderr))
+            {
+                response = await client
+                    .GetXboxLiveConfigurationsAsync(sellerId, scid, cancellationToken, progress.PageRead)
+                    .ConfigureAwait(false);
+            }
+
             stdout.WriteLine(output.TableView is not null
                 ? XboxPartnerTableFormatter.FormatConfigurations(response)
                 : PlayFabApiClient.FormatJson(response, output.IsCompact));

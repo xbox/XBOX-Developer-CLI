@@ -45,8 +45,8 @@ The command pages follow the command tree:
     - [`experiment`](commands/playfab/experiment.md): experiments (Experimental)
     - [`player`](commands/playfab/player.md): player accounts (Experimental)
     - [`privacy`](commands/playfab/privacy.md): privacy exports (Experimental)
-  - [`xbl`](commands/xbl.md): XBOX Live configuration (Experimental)
-    - [`achievement-image`](commands/xbl/achievement-image.md): XBOX Live achievement images
+  - [`xbl`](commands/xbl.md): XBOX services configuration (Experimental)
+    - [`achievement-image`](commands/xbl/achievement-image.md): achievement images
   - [`info`](commands/info.md): version and links
   - [`upgrade`](commands/upgrade.md): check for a newer release
   - [`feedback`](commands/feedback.md): open a bug-report draft with environment information
@@ -67,7 +67,7 @@ The command pages follow the command tree:
 | Page | What it covers |
 |------|----------------|
 | [Building from source](contributing/building-from-source.md) | Build and run from the repository. |
-| [Testing and coverage](contributing/testing.md) | Run tests and measure coverage against the project's bar. |
+| [Testing and coverage](contributing/testing.md) | Run tests, including the end-to-end tests, and measure coverage against the project's bar. |
 | [Fuzz testing](contributing/fuzzing.md) | Run and tune the property-based fuzz tests. |
 | [Code generation](contributing/code-generation.md) | Regenerate PlayFab models and API metadata. |
 | [Experimental commands](cli-command-lifecycle.md) | CLI compatibility commitments and Experimental labeling. |

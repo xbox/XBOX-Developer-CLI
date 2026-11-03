@@ -7,6 +7,10 @@ description: What anonymous product-usage telemetry the CLI collects, and how to
 
 The XBOX Developer CLI collects limited, anonymous product-usage telemetry to help Microsoft understand command adoption, reliability, and performance. Telemetry is best-effort: it never changes command output or exit behavior, and machine-readable stdout remains reserved for command results.
 
+Microsoft handles this data as described in the
+[Microsoft privacy statement](https://go.microsoft.com/fwlink/?LinkID=824704). The repository's
+[privacy notice](/PRIVACY.md) covers data collection by the software.
+
 ## What is collected
 
 - CLI version, operating-system family, and .NET runtime description

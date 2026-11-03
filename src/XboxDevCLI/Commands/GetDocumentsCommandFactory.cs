@@ -31,9 +31,10 @@ internal static class GetDocumentsCommandFactory
         {
             Description = "Service configuration ID. Required for the default sandbox scope.",
         };
-        var sandboxOption = new Option<string?>("--sandbox", "-s")
+        var sandboxOption = new Option<string?>("--sandbox-id")
         {
-            Description = "Case-sensitive sandbox. Required for the default sandbox scope.",
+            HelpName = "id",
+            Description = "Case-sensitive sandbox ID. Required for the default sandbox scope.",
         };
         var destinationOption = new Option<string>("--dest", "-d")
         {
@@ -67,15 +68,15 @@ internal static class GetDocumentsCommandFactory
 
         var command = new Command(
             "download",
-            "Download XBOX Live configuration documents");
+            "Download XBOX services configuration documents");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "A sandbox or account XBOX Live configuration document set.",
+            Scope: "A sandbox or account XBOX services configuration document set.",
             Output: "Extracted documents, ETag metadata, and a JSON or table download summary.",
             Examples:
             [
-                "xbox xbl document download --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1 --dest xbox-config",
-                "xbox xbl document download --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1 --dest xbox-config --output table",
+                "xbox xbl document download --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --dest xbox-config",
+                "xbox xbl document download --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --dest xbox-config --output table",
                 "xbox xbl document download --type account --dest xbox-config",
             ],
             Table: XboxPartnerCommandSupport.DocumentDownloadTableView));
@@ -108,7 +109,7 @@ internal static class GetDocumentsCommandFactory
                 if (!IsValidSandbox(sandbox))
                 {
                     result.AddError(
-                        "--sandbox is required for sandbox documents and cannot contain " +
+                        "--sandbox-id is required for sandbox documents and cannot contain " +
                         "whitespace or path characters.");
                 }
 
@@ -117,7 +118,7 @@ internal static class GetDocumentsCommandFactory
             {
                 if (scid.HasValue || !string.IsNullOrWhiteSpace(sandbox))
                 {
-                    result.AddError("--scid and --sandbox cannot be used with account documents.");
+                    result.AddError("--scid and --sandbox-id cannot be used with account documents.");
                 }
             }
         });
@@ -307,7 +308,7 @@ internal static class GetDocumentsCommandFactory
         if (archive.Entries.Count > maxEntries)
         {
             throw new InvalidDataException(
-                $"XboxPartner returned an archive with more than {maxEntries} documents.");
+                $"The document archive contained more than {maxEntries} documents.");
         }
 
         var entries = new List<(ZipArchiveEntry Entry, string Name)>();
@@ -320,7 +321,7 @@ internal static class GetDocumentsCommandFactory
                 !names.Add(name))
             {
                 throw new InvalidDataException(
-                    "XboxPartner returned an archive with an invalid or duplicate document name.");
+                    "The document archive contained an invalid or duplicate document name.");
             }
 
             entries.Add((entry, name));
@@ -432,7 +433,7 @@ internal static class GetDocumentsCommandFactory
 
     private static InvalidDataException ExtractedArchiveTooLarge(long maxExtractedBytes) =>
         new(
-            $"XboxPartner returned an archive that expands beyond " +
+            $"The document archive expands beyond " +
             $"{maxExtractedBytes} bytes.");
 
     private static void ValidateEtagPath(string eTagPath)

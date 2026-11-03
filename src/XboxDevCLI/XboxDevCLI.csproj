@@ -7,7 +7,7 @@
     <Product>$(CliProductName)</Product>
     <PackageId>$(CliProductName)</PackageId>
     <RootNamespace>XboxDevCLI</RootNamespace>
-    <Version>0.1.0</Version>
+    <Version>0.1.29</Version>
     <!-- Generated so the compiler checks doc comments, such as their crefs. Nothing reads it at
          runtime, so it isn't published. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -70,5 +70,39 @@
       Include="XboxDevCLI.TelemetryConnectionString"
       Value="$(XBOXDEVCLI_TELEMETRY_CONNECTION_STRING)" />
   </ItemGroup>
+
+  <!-- Publishing puts the license and the third-party notices beside the executable. A
+       self-contained publish also bundles the .NET runtime, which includes code from other
+       projects whose licenses require their notices to ship with it, so it appends the notices
+       from the runtime pack it bundles to NOTICE.md, matching the runtime's version. -->
+  <Target Name="PublishLicenseAndNotices" AfterTargets="ComputeResolvedFilesToPublishList">
+    <PropertyGroup>
+      <_RepositoryRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)', '..', '..'))</_RepositoryRoot>
+      <_PublishedNotice>$(IntermediateOutputPath)NOTICE.md</_PublishedNotice>
+      <!-- Escaped, so MSBuild passes the text through unchanged and doesn't split it at semicolons. -->
+      <_NoticeText>$([MSBuild]::Escape($([System.IO.File]::ReadAllText('$(_RepositoryRoot)NOTICE.md').Replace('%0D', '').TrimEnd())))</_NoticeText>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(SelfContained)' == 'true'">
+      <_RuntimeNotices Include="@(ResolvedRuntimePack->'%(PackageDirectory)/THIRD-PARTY-NOTICES.TXT')"
+                       Condition="'%(ResolvedRuntimePack.FrameworkName)' == 'Microsoft.NETCore.App'" />
+    </ItemGroup>
+    <PropertyGroup Condition="'$(SelfContained)' == 'true'">
+      <_RuntimeNoticesFile>@(_RuntimeNotices)</_RuntimeNoticesFile>
+    </PropertyGroup>
+    <Error Condition="'$(SelfContained)' == 'true' And ('$(_RuntimeNoticesFile)' == '' Or !Exists('$(_RuntimeNoticesFile)'))"
+           Text="The .NET runtime's third-party notices weren't found in its runtime pack ('$(_RuntimeNoticesFile)'). A self-contained publish must ship them." />
+    <PropertyGroup Condition="'$(SelfContained)' == 'true'">
+      <_RuntimeNoticesText>$([MSBuild]::Escape($([System.IO.File]::ReadAllText('$(_RuntimeNoticesFile)').Replace('%0D', '').TrimEnd())))</_RuntimeNoticesText>
+      <_NoticeText>$(_NoticeText)%0A%0A## .NET runtime third-party notices%0A%0AThe .NET runtime bundled in this release includes the following notices:%0A%0A```text%0A$(_RuntimeNoticesText)%0A```</_NoticeText>
+    </PropertyGroup>
+
+    <WriteLinesToFile File="$(_PublishedNotice)" Lines="$(_NoticeText)" Overwrite="true" WriteOnlyWhenDifferent="true" />
+    <ItemGroup>
+      <FileWrites Include="$(_PublishedNotice)" />
+      <ResolvedFileToPublish Include="$(_RepositoryRoot)LICENSE" RelativePath="LICENSE" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+      <ResolvedFileToPublish Include="$(_PublishedNotice)" RelativePath="NOTICE.md" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+    </ItemGroup>
+  </Target>
 
 </Project>

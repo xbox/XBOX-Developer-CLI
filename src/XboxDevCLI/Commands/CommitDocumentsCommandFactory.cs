@@ -26,9 +26,10 @@ internal static class CommitDocumentsCommandFactory
         {
             Description = "Service configuration ID. Required for the default sandbox scope.",
         };
-        var sandboxOption = new Option<string?>("--sandbox", "-s")
+        var sandboxOption = new Option<string?>("--sandbox-id")
         {
-            Description = "Case-sensitive sandbox. Required for the default sandbox scope.",
+            HelpName = "id",
+            Description = "Case-sensitive sandbox ID. Required for the default sandbox scope.",
         };
         var filesOption = new Option<string[]>("--file", "-f")
         {
@@ -68,15 +69,15 @@ internal static class CommitDocumentsCommandFactory
 
         var command = new Command(
             "commit",
-            "Validate or commit XBOX Live configuration documents");
+            "Validate or commit XBOX services configuration documents");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.RemoteMutation,
-            Scope: "A sandbox or account XBOX Live working configuration document set.",
+            Scope: "A sandbox or account XBOX services working configuration document set.",
             Output: "The validation or commit result and local ETag metadata as JSON or a table.",
             Examples:
             [
-                "xbox xbl document commit --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1 --file \"xbox-config/*.xml\" --validate-only",
-                "xbox xbl document commit --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1 --file xbox-config/achievements2017.xml --file xbox-config/localization.xml --output table",
+                "xbox xbl document commit --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --file \"xbox-config/*.xml\" --validate-only",
+                "xbox xbl document commit --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --file xbox-config/achievements2017.xml --file xbox-config/localization.xml --output table",
                 "xbox xbl document commit --type account --file \"xbox-config/*.xml\" --message \"Update account configuration\"",
             ],
             SafetyDetails:
@@ -112,7 +113,7 @@ internal static class CommitDocumentsCommandFactory
                 if (!IsValidSandbox(sandbox))
                 {
                     result.AddError(
-                        "--sandbox is required for sandbox documents and cannot contain " +
+                        "--sandbox-id is required for sandbox documents and cannot contain " +
                         "whitespace or path characters.");
                 }
 
@@ -121,7 +122,7 @@ internal static class CommitDocumentsCommandFactory
             {
                 if (scid.HasValue || !string.IsNullOrWhiteSpace(sandbox))
                 {
-                    result.AddError("--scid and --sandbox cannot be used with account documents.");
+                    result.AddError("--scid and --sandbox-id cannot be used with account documents.");
                 }
             }
         });
@@ -418,8 +419,8 @@ internal static class CommitDocumentsCommandFactory
         TextWriter stderr)
     {
         string summary = validateOnly
-            ? "XBOX Live can't commit these documents"
-            : "XBOX Live didn't commit these documents";
+            ? "XBOX services can't commit these documents"
+            : "XBOX services didn't commit these documents";
         XboxLiveValidationMessage[] shown = [.. messages.Where(static message => message.HasText)];
         stderr.WriteLine(shown.Length == 0 ? $"{summary}." : $"{summary}:");
         foreach (XboxLiveValidationMessage message in shown)
@@ -439,7 +440,7 @@ internal static class CommitDocumentsCommandFactory
             !result.Committed.HasValue)
         {
             throw new InvalidDataException(
-                "The XboxPartner document commit response was missing required fields.");
+                "The document commit response was missing required fields.");
         }
 
         return result;
@@ -467,8 +468,7 @@ internal static class CommitDocumentsCommandFactory
             if (fileLength > XboxUploadPolicy.MaxDocumentContentBytes - totalBytes)
             {
                 throw new InvalidOperationException(
-                    "The total document content cannot exceed 50 MiB. " +
-                    "XboxPartner also validates the generated XCon ZIP before upload.");
+                    "The total document content cannot exceed 50 MiB.");
             }
 
             byte[] content = await File.ReadAllBytesAsync(file, cancellationToken)
@@ -477,8 +477,7 @@ internal static class CommitDocumentsCommandFactory
             if (totalBytes > XboxUploadPolicy.MaxDocumentContentBytes)
             {
                 throw new InvalidOperationException(
-                    "The total document content cannot exceed 50 MiB. " +
-                    "XboxPartner also validates the generated XCon ZIP before upload.");
+                    "The total document content cannot exceed 50 MiB.");
             }
 
             documents.Add(new XboxDocumentUpload(name, content));
@@ -492,7 +491,7 @@ internal static class CommitDocumentsCommandFactory
         if (LocalFileNameValidator.IsInvalid(name, enforceWindowsRules: true))
         {
             throw new InvalidDataException(
-                $"Document file name is not supported by XCon: '{name}'.");
+                $"Document file name is not supported: '{name}'.");
         }
     }
 
@@ -515,8 +514,8 @@ internal static class CommitDocumentsCommandFactory
             .ToArray();
         if (names.Length == 1)
         {
-            return $"XCon rejected the selected document name '{names[0]}'. " +
-                "Rename it to an XCon-supported document name, or select a different file " +
+            return $"The selected document name '{names[0]}' was rejected. " +
+                "Check the selected file name, or select a different document " +
                 "with --file <path>.";
         }
 
@@ -530,10 +529,10 @@ internal static class CommitDocumentsCommandFactory
                 $" (and {names.Length - displayedNameLimit} more)";
         }
 
-        return "XCon did not identify which selected document name was invalid. " +
-            $"Selected names: {selectedNames}. Re-run with --validate-only and one " +
+        return "The error did not identify which selected document name was invalid. " +
+            $"Selected names: {selectedNames}. Run again with --validate-only and one " +
             "--file <path> value at a time to identify the offending file, then rename it " +
-            "to an XCon-supported document name or exclude it from --file.";
+            "or exclude it from --file.";
     }
 
     private static async Task<string?> ReadSavedEtagAsync(

@@ -86,10 +86,10 @@ internal static class DownloadAchievementImagesCommandFactory
 
         var command = new Command(
             "download",
-            "Download XBOX Live achievement images and thumbnails");
+            "Download achievement images and thumbnails");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "One XBOX Live title; --scid identifies its service configuration.",
+            Scope: "One XBOX title; --scid identifies its service configuration.",
             Output:
                 "A JSON download manifest by default. Table output shows asset ID and " +
                 "destination folder.",
@@ -149,8 +149,8 @@ internal static class DownloadAchievementImagesCommandFactory
                 Program.WriteVerbose(
                     verbose,
                     () => all
-                        ? $"Download all XBOX Live achievement images for SCID {scid:D}"
-                        : $"Download XBOX Live achievement image {assetId:D} for SCID {scid:D}");
+                        ? $"Download all achievement images for SCID {scid:D}"
+                        : $"Download achievement image {assetId:D} for SCID {scid:D}");
                 return await RunAsync(
                     client,
                     downloadClient,
@@ -207,7 +207,7 @@ internal static class DownloadAchievementImagesCommandFactory
                 if (image.AssetId != requestedAssetId)
                 {
                     throw new InvalidDataException(
-                        "The XboxPartner achievement image response did not match the requested " +
+                        "The achievement image response did not match the requested " +
                         $"asset ID {requestedAssetId:D}.");
                 }
 
@@ -280,7 +280,7 @@ internal static class DownloadAchievementImagesCommandFactory
                 !assetIds.Add(image.AssetId))
             {
                 throw new InvalidDataException(
-                    "The XboxPartner achievement image response contained an invalid SCID, " +
+                    "The achievement image response contained an invalid SCID, " +
                     "asset ID, or duplicate asset ID.");
             }
 
@@ -445,7 +445,7 @@ internal static class DownloadAchievementImagesCommandFactory
         {
             throw new InvalidDataException(
                 $"The achievement {kind} CDN URL for asset {assetId:D} must be absolute HTTPS, " +
-                "or HTTP on the XBOX Live xboxlive.com CDN.");
+                "or HTTP on the xboxlive.com CDN.");
         }
 
         return uri;

@@ -173,40 +173,14 @@ public class EndpointOverrideWarningTests
     }
 
     [Fact]
-    public void WriteXboxPartnerWarningIfOverridden_CanDescribeTheTestAccountService()
-    {
-        using var writer = new StringWriter();
-
-        EndpointOverrideWarning.WriteXboxPartnerWarningIfOverridden(
-            "https://nodpublishers.com", writer, serviceName: "service", includeDefaultUrl: false);
-
-        Assert.StartsWith("Warning: the service is overridden", writer.ToString(), StringComparison.Ordinal);
-        Assert.Contains("XboxPartner:BaseUrl", writer.ToString(), StringComparison.Ordinal);
-        Assert.Contains("https://nodpublishers.com", writer.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain("XboxPartner gateway", writer.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain(EndpointOverrideWarning.DefaultXboxPartnerBaseUrl, writer.ToString(), StringComparison.Ordinal);
-        Assert.Contains("Requests and your access token will be sent to that host", writer.ToString(), StringComparison.Ordinal);
-        Assert.Contains("XBOX_XBOXPARTNER__BASEURL", writer.ToString(), StringComparison.Ordinal);
-        Assert.Contains("If you did not intend this", writer.ToString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void GetXboxPartnerWarning_OmittingDefaultUrlStillDetectsTheDefaultEndpoint()
-    {
-        Assert.Null(EndpointOverrideWarning.GetXboxPartnerWarning(
-            EndpointOverrideWarning.DefaultXboxPartnerBaseUrl, serviceName: "service", includeDefaultUrl: false));
-    }
-
-    [Fact]
-    public void GetXboxPartnerWarning_DefaultPresentationIsUnchanged()
+    public void GetXboxPartnerWarning_DefaultPresentationIsNeutral()
     {
         Assert.Equal(
             string.Join(
                 Environment.NewLine,
-                "Warning: the XboxPartner gateway is overridden to 'https://nodpublishers.com' " +
+                "Warning: the service endpoint is overridden to 'https://nodpublishers.com' " +
                     "(configuration key 'XboxPartner:BaseUrl').",
-                "         Requests and your access token will be sent to that host instead of the default gateway " +
-                    $"'{EndpointOverrideWarning.DefaultXboxPartnerBaseUrl}'.",
+                "         Requests and your access token will be sent to that host instead of the default endpoint.",
                 "         If you did not intend this, inspect appsettings.json, any appsettings.{environment}.json " +
                     "overlay, the XBOX_XBOXPARTNER__BASEURL environment variable, and the --base-url option."),
             EndpointOverrideWarning.GetXboxPartnerWarning("https://nodpublishers.com"));
@@ -215,6 +189,7 @@ public class EndpointOverrideWarningTests
     [Theory]
     [InlineData("https://evil.example.com")]
     [InlineData("http://localhost:54848")]
+    [InlineData("https://nodpublishers.com/custom")]
     public void WriteXboxPartnerWarningIfOverridden_OverriddenGatewayWritesTheWarning(string baseUrl)
     {
         using var writer = new StringWriter();
@@ -225,6 +200,9 @@ public class EndpointOverrideWarningTests
         Assert.Contains(baseUrl, warning, StringComparison.Ordinal);
         Assert.Contains(EndpointOverrideWarning.XboxPartnerConfigurationKey, warning, StringComparison.Ordinal);
         Assert.Contains("--base-url", warning, StringComparison.Ordinal);
+        Assert.Contains("Requests and your access token will be sent to that host", warning, StringComparison.Ordinal);
+        Assert.Contains("XBOX_XBOXPARTNER__BASEURL", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain(EndpointOverrideWarning.DefaultXboxPartnerBaseUrl, warning, StringComparison.Ordinal);
     }
 
     [Theory]

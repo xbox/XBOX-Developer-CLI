@@ -16,7 +16,7 @@ internal sealed class XboxPartnerApiException : Exception
         TimeSpan? retryAfter = null,
         Exception? innerException = null)
         : base(
-            $"XboxPartner request to '{requestUri}' failed with HTTP {(int)statusCode}"
+            $"The request failed with HTTP {(int)statusCode}"
             + (string.IsNullOrWhiteSpace(reasonPhrase) ? "." : $" ({reasonPhrase}).")
             + (innerException is null ? string.Empty : " The response body could not be read.")
             + (innerException is InvalidOperationException ? $" {innerException.Message}" : string.Empty),

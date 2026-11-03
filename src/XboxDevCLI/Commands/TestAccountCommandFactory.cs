@@ -17,12 +17,11 @@ namespace XboxDevCLI.Commands;
 /// <remarks>
 /// <c>test-account</c> sits at the root rather than under <c>xbl</c> for the same reason
 /// <c>sandbox</c> does: test accounts belong to the Partner Center seller, not to one service,
-/// and are used across Store, XBOX Live, and sandbox testing. Nesting them under one service
+/// and are used across Store, XBOX services, and sandbox testing. Nesting them under one service
 /// would suggest a scope they do not have.
 /// </remarks>
 internal static partial class TestAccountCommandFactory
 {
-    private const string GetEndpoint = $"/{XboxPartnerClient.TestAccountBatchesPath}/{{batchId}}";
     private const string InteractionRequiredCode = "authentication_interaction_required";
     private const string AccessDeniedCode = "test_account_access_denied";
 
@@ -112,7 +111,7 @@ internal static partial class TestAccountCommandFactory
             Scope: "XBOX test account batches for the selected seller.",
             Output:
                 "A JSON object with a batches array by default. Table output shows one row per batch and adds " +
-                "SANDBOXES with --include-sandboxes; the batch count goes to stderr.",
+                "SANDBOXES with --include-sandboxes; the batch count goes to stderr. " + ListProgress.HelpOutput,
             Examples:
             [
                 "xbox test-account batch list --mine --limit 5",
@@ -190,9 +189,7 @@ internal static partial class TestAccountCommandFactory
                 "xbox test-account batch get 123456",
                 "xbox test-account batch get 123456 --output table",
             ],
-            endpoint: GetEndpoint,
-            table: XboxPartnerCommandSupport.TestAccountBatchView,
-            learnMore: []));
+            table: XboxPartnerCommandSupport.TestAccountBatchView));
         command.Arguments.Add(batchIdArgument);
         sellerOption.AddTo(command);
         command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
@@ -294,8 +291,7 @@ internal static partial class TestAccountCommandFactory
                     parseResult,
                     configuration,
                     client,
-                    XboxPartnerCommandSupport.ResolveBaseUrl(
-                        configuration, serviceName: "service", includeDefaultUrl: false),
+                    XboxPartnerCommandSupport.ResolveBaseUrl(configuration),
                     cancellationToken).ConfigureAwait(false);
             }
             catch
@@ -341,8 +337,14 @@ internal static partial class TestAccountCommandFactory
             async () =>
             {
                 TestAccountBatchFilter request = expired ? filter with { Top = null } : filter;
-                string response = await client.ListTestAccountBatchesAsync(sellerId, request, cancellationToken)
-                    .ConfigureAwait(false);
+                string response;
+                using (var progress = ListProgress.Start("Reading test account batches", stderr))
+                {
+                    // With --expired, most of what's read is dropped afterward, so the line shows only time.
+                    response = await client.ListTestAccountBatchesAsync(
+                        sellerId, request, cancellationToken, expired ? null : progress.PageRead).ConfigureAwait(false);
+                }
+
                 return expired
                     ? TestAccountLookup.FilterExpired(response, Dependencies.GetUtcNow(), filter.Top)
                     : response;
@@ -480,6 +482,17 @@ internal static partial class TestAccountCommandFactory
         string? responseBody,
         TestAccountRequest request)
     {
+        // The formatter adds the Retry-After wait to every 429; these name only the cause.
+        if (statusCode == HttpStatusCode.TooManyRequests)
+        {
+            return ReadProblemString(responseBody, "code") switch
+            {
+                XboxPartnerErrorGuidance.RateLimitedCode => XboxPartnerErrorGuidance.RateLimitedHint,
+                "downstream_throttled" => "The test account service is throttling requests.",
+                _ => null,
+            };
+        }
+
         if (request is TestAccountRequest.Create or TestAccountRequest.Job)
         {
             return DescribeCreationFailure(statusCode, responseBody, request);
@@ -550,8 +563,10 @@ internal static partial class TestAccountCommandFactory
                 ? value.GetString()
                 : null;
         }
-        catch (JsonException)
+        catch (Exception exception) when (exception is JsonException or ArgumentException or InvalidOperationException)
         {
+            // ArgumentException: a body with invalid UTF-16, such as an unpaired surrogate.
+            // InvalidOperationException: a string value whose escapes decode to one.
             return null;
         }
     }

@@ -35,10 +35,10 @@ internal static class GetSchemasCommandFactory
             Description = "Directory for XSD files. Default: omitted; selected XSDs use stdout.",
         };
 
-        var command = new Command("get", "Get XBOX Live configuration document schemas");
+        var command = new Command("get", "Get XBOX services configuration document schemas");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "XBOX Live configuration schemas.",
+            Scope: "XBOX services configuration schemas.",
             Output: "Schema metadata as JSON or a table; selected XSD content is raw by default.",
             Examples:
             [
@@ -117,7 +117,7 @@ internal static class GetSchemasCommandFactory
                     .ConfigureAwait(false);
                 string[] types = JsonSerializer.Deserialize<string[]>(typesJson, JsonOptions)
                     ?? throw new JsonException(
-                        "XboxPartner returned an invalid schema type list.");
+                        "The schema type list response was invalid.");
                 if (string.IsNullOrWhiteSpace(destination))
                 {
                     stdout.WriteLine(tableView is not null
@@ -161,7 +161,7 @@ internal static class GetSchemasCommandFactory
                         versionsJson,
                         JsonOptions) ??
                     throw new JsonException(
-                        "XboxPartner returned an invalid schema version list.");
+                        "The schema version list response was invalid.");
                 stdout.WriteLine(tableView is not null
                     ? XboxPartnerTableFormatter.FormatRows(
                         tableView,
@@ -309,7 +309,7 @@ internal static class GetSchemasCommandFactory
                 JsonSerializer.Deserialize<XconSchemaVersion[]>(
                     versionsJson,
                     JsonOptions) ??
-                throw new JsonException("XboxPartner returned an invalid schema version list.");
+                throw new JsonException("The schema version list response was invalid.");
             foreach (XconSchemaVersion schemaVersion in versions)
             {
                 byte[] content = await client

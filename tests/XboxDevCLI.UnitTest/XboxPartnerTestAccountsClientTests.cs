@@ -90,13 +90,16 @@ public class XboxPartnerTestAccountsClientTests
             Response(HttpStatusCode.OK, """{"batches":[],"continuationToken":"t2"}"""),
             Response(HttpStatusCode.OK, """{"batches":[{"id":2},{"id":1}]}"""));
         using var client = CreateClient(handler);
+        var pages = new List<int>();
 
         string response = await client.ListTestAccountBatchesAsync(
             1234567,
             new TestAccountBatchFilter(Mine: true, Top: 25, IncludeSandboxes: true),
-            CancellationToken.None);
+            CancellationToken.None,
+            pages.Add);
 
         Assert.Equal("""{"batches":[{"id":3},{"id":2},{"id":1}]}""", response);
+        Assert.Equal([1, 0, 2], pages);
         const string Filters = "?sellerId=1234567&mine=true&top=25&includeSandboxes=true";
         Assert.Equal(
             new[]

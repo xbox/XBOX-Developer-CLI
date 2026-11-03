@@ -27,7 +27,7 @@ A key is the name of an option that commands take as a context value:
 | Key | Option | Used by |
 | --- | --- | --- |
 | `playfab-title-id` | `--playfab-title-id` | [`playfab`](playfab.md) commands |
-| `sandbox` | `--sandbox` | [`xbl`](xbl.md) `configuration get`, `publish start`, and `publish status` |
+| `sandbox-id` | `--sandbox-id` | [`xbl`](xbl.md) `configuration get`, `publish start`, and `publish status` |
 | `seller-id` | `--seller-id` | [`game`](game.md), [`sandbox`](sandbox.md), [`test-account`](test-account.md), and [`xbl`](xbl.md) commands |
 
 No other option takes a saved value or a variable; `--confirm` and `--body` never do.
@@ -37,7 +37,7 @@ No other option takes a saved value or a variable; `--confirm` and `--body` neve
 When a command takes one of these options and you don't pass it, the CLI fills it in, as if
 you'd typed it, from the first of:
 
-1. The `XBOX_` variable named after the option: `XBOX_PLAYFAB_TITLE_ID`, `XBOX_SANDBOX`, or
+1. The `XBOX_` variable named after the option: `XBOX_PLAYFAB_TITLE_ID`, `XBOX_SANDBOX_ID`, or
    `XBOX_SELLER_ID`. A blank one counts as unset.
 2. The value `context set` saved for the signed-in account in the selected profile.
 

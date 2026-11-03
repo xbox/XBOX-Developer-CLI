@@ -18,7 +18,7 @@ public class CommitDocumentsCommandTests
     public void Command_ReportsAnScidThatIsntAGuidAsAParseError()
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            ["xbl", "document", "commit", "--scid", "notaguid", "--sandbox", "XDKS.1", "--file", "a.json"],
+            ["xbl", "document", "commit", "--scid", "notaguid", "--sandbox-id", "XDKS.1", "--file", "a.json"],
             Program.NoResponseFileConfig);
 
         Assert.Contains(result.Errors, error => error.Message.Contains("notaguid", StringComparison.Ordinal));
@@ -76,23 +76,23 @@ public class CommitDocumentsCommandTests
     {
         ParseResult validSandbox = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
-            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1 " +
+            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 " +
             "--file nsal.xml --file titlepriv.xml --validate-only");
         ParseResult validAccount = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
             "--type account --file accountconfig.xml");
         ParseResult missingFiles = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
-            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1");
+            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1");
         ParseResult missingScid = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
-            "--sandbox XDKS.1 --file nsal.xml");
+            "--sandbox-id XDKS.1 --file nsal.xml");
         ParseResult mixedScope = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
-            "--type account --sandbox XDKS.1 --file accountconfig.xml");
+            "--type account --sandbox-id XDKS.1 --file accountconfig.xml");
         ParseResult unsafeSandbox = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
-            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox ../outside " +
+            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id ../outside " +
             "--file nsal.xml");
         ParseResult removedAccountId = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
@@ -100,7 +100,7 @@ public class CommitDocumentsCommandTests
             "--file accountconfig.xml");
         ParseResult invalidEtagFileName = Program.BuildRootCommand().Parse(
             "xbl document commit --seller-id 2 " +
-            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox CON " +
+            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id CON " +
             "--file nsal.xml");
 
         Assert.Empty(validSandbox.Errors);
@@ -340,7 +340,7 @@ public class CommitDocumentsCommandTests
         var exception = Assert.Throws<InvalidDataException>(
             () => CommitDocumentsCommandFactory.ValidateDocumentFileName(name));
 
-        Assert.Contains("not supported by XCon", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("Document file name is not supported", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -487,7 +487,7 @@ public class CommitDocumentsCommandTests
     }
 
     [Fact]
-    public async Task RunAsync_NamesSingleInvalidXconDocument()
+    public async Task RunAsync_NamesSingleInvalidDocument()
     {
         string directory = CreateTemporaryDirectory();
         try
@@ -498,8 +498,8 @@ public class CommitDocumentsCommandTests
                 """
                 {
                   "status": 400,
-                  "title": "Xbox downstream request failed.",
-                  "detail": "XCon returned HTTP 400: Invalid Document Name."
+                  "title": "Document validation failed.",
+                  "detail": "Invalid Document Name."
                 }
                 """,
                 HttpStatusCode.BadRequest);
@@ -526,10 +526,11 @@ public class CommitDocumentsCommandTests
             using JsonDocument error = JsonDocument.Parse(stderr.ToString());
             string detail = error.RootElement.GetProperty("detail").GetString()!;
             Assert.Contains(
-                "XCon rejected the selected document name 'accesspolicies.xml'",
+                "The selected document name 'accesspolicies.xml' was rejected.",
                 detail,
                 StringComparison.Ordinal);
             Assert.Contains("--file <path>", detail, StringComparison.Ordinal);
+            Assert.StartsWith("Invalid Document Name.", detail, StringComparison.Ordinal);
         }
         finally
         {
@@ -576,7 +577,6 @@ public class CommitDocumentsCommandTests
             Assert.Equal(1, exitCode);
             Assert.Null(handler.LastRequest);
             Assert.Contains("50 MiB", stderr.ToString(), StringComparison.Ordinal);
-            Assert.Contains("generated XCon ZIP", stderr.ToString(), StringComparison.Ordinal);
         }
         finally
         {
@@ -726,8 +726,8 @@ public class CommitDocumentsCommandTests
     }
 
     [Theory]
-    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","DocumentName":"achievements2017.xml","Error":"NamespaceDocTypeMismatch","Message":"The root namespace doesn't match the document type."},{"Severity":"Warning","Message":"Check the title."}],"CanCommit":false,"Committed":false}""", "XBOX Live can't commit these documents:")]
-    [InlineData(false, """{"validationInfo":[{"severity":"Error","documentName":"achievements2017.xml","error":"NamespaceDocTypeMismatch","message":"The root namespace doesn't match the document type."},{"severity":"Warning","message":"Check the title."}],"canCommit":false,"committed":false}""", "XBOX Live didn't commit these documents:")]
+    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","DocumentName":"achievements2017.xml","Error":"NamespaceDocTypeMismatch","Message":"The root namespace doesn't match the document type."},{"Severity":"Warning","Message":"Check the title."}],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents:")]
+    [InlineData(false, """{"validationInfo":[{"severity":"Error","documentName":"achievements2017.xml","error":"NamespaceDocTypeMismatch","message":"The root namespace doesn't match the document type."},{"severity":"Warning","message":"Check the title."}],"canCommit":false,"committed":false}""", "XBOX services didn't commit these documents:")]
     public async Task RunAsync_WritesValidationMessagesToStderrAndFails_WhenXconRefusesTheDocuments(
         bool validateOnly,
         string responseBody,
@@ -818,12 +818,12 @@ public class CommitDocumentsCommandTests
     }
 
     [Theory]
-    [InlineData(true, """{"ValidationInfo":[],"CanCommit":false,"Committed":false}""", "XBOX Live can't commit these documents.")]
-    [InlineData(false, """{"ValidationInfo":[],"CanCommit":true,"Committed":false}""", "XBOX Live didn't commit these documents.")]
-    [InlineData(false, """{"ValidationInfo":[{"Severity":"Error","Error":"FilesNotChangedCommit","Message":"Unchanged."}],"CanCommit":false,"Committed":false}""", "XBOX Live didn't commit these documents:")]
-    [InlineData(false, """{"ValidationInfo":[{"Severity":"Warning","Error":"FilesNotChangedCommit","Message":"No files changed."},{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX Live didn't commit these documents:")]
-    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX Live can't commit these documents:\nError: SchemaError")]
-    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Message":" "}],"CanCommit":false,"Committed":false}""", "XBOX Live can't commit these documents.")]
+    [InlineData(true, """{"ValidationInfo":[],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents.")]
+    [InlineData(false, """{"ValidationInfo":[],"CanCommit":true,"Committed":false}""", "XBOX services didn't commit these documents.")]
+    [InlineData(false, """{"ValidationInfo":[{"Severity":"Error","Error":"FilesNotChangedCommit","Message":"Unchanged."}],"CanCommit":false,"Committed":false}""", "XBOX services didn't commit these documents:")]
+    [InlineData(false, """{"ValidationInfo":[{"Severity":"Warning","Error":"FilesNotChangedCommit","Message":"No files changed."},{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX services didn't commit these documents:")]
+    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents:\nError: SchemaError")]
+    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Message":" "}],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents.")]
     public async Task RunAsync_FailsWithASummary_WhenXconRefusesTheDocumentsWithoutAnError(
         bool validateOnly,
         string responseBody,
@@ -894,7 +894,7 @@ public class CommitDocumentsCommandTests
             Assert.Equal(1, exitCode);
             Assert.Equal(
                 [
-                    "XBOX Live can't commit these documents:",
+                    "XBOX services can't commit these documents:",
                     "Error: nsal [2J.xml: Line one  Warning: forged line (Bad Key)",
                 ],
                 stderr.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));

@@ -315,7 +315,7 @@ the body file out of source control, and delete it once it's uploaded.
 ```
 
 ```bash
-xbox --playfab-title-id ABC123 playfab mps certificate upload --body-file ./certificate.json
+xbox --playfab-title-id ABC123 playfab mps certificate upload --body-file certificate.json
 ```
 
 To build the body without writing the secret to another file, pipe it to
@@ -323,7 +323,7 @@ To build the body without writing the secret to another file, pipe it to
 its own arguments, so the value stays out of process listings:
 
 ```bash
-jq -n --rawfile value ./api-key.txt \
+jq -n --rawfile value api-key.txt \
   '{GameSecret: {Name: "nod-arena-api-key", Value: ($value | rtrimstr("\n"))}}' \
   | xbox --playfab-title-id ABC123 playfab mps secret upload --body-file -
 ```

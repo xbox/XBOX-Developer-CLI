@@ -157,6 +157,8 @@ internal static partial class TestAccountCommandFactory
             [
                 "The password and security answer are read from --password-file, --security-answer-file, " +
                 "stdin, or a prompt; never from an option value or an environment variable.",
+                TestAccountSecretReader.PasswordRequirements +
+                " The password must not exactly match the security answer.",
                 "Waits up to 5 minutes by default, polling as the service's Retry-After asks. Exit codes: 0 " +
                 "succeeded or accepted with --no-wait; 1 nothing was created; 2 the job failed; 3 the " +
                 "outcome is unknown, so check before creating again; 4 the batch exists but the wait ended " +
@@ -249,8 +251,7 @@ internal static partial class TestAccountCommandFactory
                 },
                 request =>
                 {
-                    request.Password = TestAccountSecretReader.Read(
-                        passwordFile, "--password-file", "Password", dependencies);
+                    request.Password = TestAccountSecretReader.ReadPassword(passwordFile, dependencies);
                     request.SecurityAnswer = TestAccountSecretReader.Read(
                         securityAnswerFile,
                         "--security-answer-file",

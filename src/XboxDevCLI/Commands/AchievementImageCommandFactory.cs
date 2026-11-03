@@ -53,13 +53,13 @@ internal static class AchievementImageCommandFactory
         var command = new Command("upload", "Upload and register an achievement image");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.RemoteMutation,
-            Scope: "An XBOX Live title; --scid identifies its service configuration, and --seller-id selects its authorized seller.",
+            Scope: "An XBOX title; --scid identifies its service configuration, and --seller-id selects its authorized seller.",
             Output: "The registered image object as JSON (default), including iconImageId for achievements2017.xml, or a one-row table.",
             Examples:
             [
                 "xbox xbl achievement-image upload --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --file achievement-1920x1080.png --seller-id 1234567",
             ],
-            SafetyDetails: "Registers a new image in production through a direct Blob upload. The CLI restarts upload once only when the backend service requires a new upload session; it never retries registration after a timeout or temporary failure. If the outcome is unknown, inspect registered metadata and CDN images by running the printed read-only get or list command, and reuse an asset ID if you can identify your upload. Otherwise retry the upload.",
+            SafetyDetails: "Registers a new image in production through a direct Blob upload. The CLI restarts upload once only when the service requires a new upload session; it never retries registration after a timeout or temporary failure. If the outcome is unknown, inspect registered metadata and CDN images by running the printed read-only get or list command, and reuse an asset ID if you can identify your upload. Otherwise retry the upload.",
             Table: ImageRecordTable));
         sellerOption.AddTo(command);
         command.Options.Add(scidOption);
@@ -85,7 +85,7 @@ internal static class AchievementImageCommandFactory
     {
         using var progress = new AchievementImageUploadProgress(
             Console.Error,
-            Environment.UserInteractive && !Console.IsErrorRedirected,
+            ProgressLine.StderrIsTerminal,
             Path.GetFileName(path),
             new FileInfo(path).Length);
         using var blobClient = Program.AchievementImageUploadClientFactory?.Invoke()
@@ -115,7 +115,7 @@ internal static class AchievementImageCommandFactory
         var command = new Command("get", "Get an already registered achievement image");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "One image in an XBOX Live title; --scid identifies its service configuration.",
+            Scope: "One image in an XBOX title; --scid identifies its service configuration.",
             Output: "The registered image object as JSON (default), including iconImageId for achievements2017.xml, or a one-row table.",
             Examples:
             [
@@ -149,8 +149,9 @@ internal static class AchievementImageCommandFactory
         var command = new Command("list", "List registered achievement images for a SCID");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "Registered images in an XBOX Live title; --scid identifies its service configuration.",
-            Output: "A JSON array of registered images with iconImageId for achievements2017.xml (default), or a table.",
+            Scope: "Registered images in an XBOX title; --scid identifies its service configuration.",
+            Output: "A JSON array of registered images with iconImageId for achievements2017.xml (default), or a table. " +
+                ListProgress.HelpOutput,
             Examples:
             [
                 "xbox xbl achievement-image list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --seller-id 1234567 --output json-compact",
@@ -167,8 +168,12 @@ internal static class AchievementImageCommandFactory
                 parseResult,
                 sellerOption,
                 scidOption,
-                (client, sellerId, scid, token) =>
-                    client.ListAchievementImagesAsync(sellerId, scid, token),
+                async (client, sellerId, scid, token) =>
+                {
+                    using var progress = ListProgress.Start("Reading achievement images");
+                    return await client.ListAchievementImagesAsync(sellerId, scid, token, progress.PageRead)
+                        .ConfigureAwait(false);
+                },
                 action: "list",
                 cancellationToken).ConfigureAwait(false));
         return command;
@@ -178,7 +183,7 @@ internal static class AchievementImageCommandFactory
     {
         var option = new Option<Guid>("--scid")
         {
-            Description = "Service configuration ID of the XBOX Live title. No default.",
+            Description = "Service configuration ID of the XBOX title. No default.",
             Required = true,
         };
         option.Validators.Add(result =>
@@ -215,9 +220,16 @@ internal static class AchievementImageCommandFactory
             sellerId = await sellerOption.GetSellerIdAsync(
                 parseResult, configuration, client, baseUrl, cancellationToken);
             Guid scid = parseResult.GetValue(scidOption);
+            string operation = action switch
+            {
+                "upload" => "Uploading achievement image",
+                "get" => "Reading achievement image",
+                "list" => "Listing achievement images",
+                _ => throw new InvalidOperationException("Unknown achievement image operation."),
+            };
             Program.WriteVerbose(
                 parseResult.GetValue(Program.VerboseOption),
-                () => $"POST XboxPartner achievement image {action} endpoint for {scid:D}" +
+                () => $"{operation} for SCID {scid:D}" +
                     (sellerId is { } id ? $" (seller {id})" : string.Empty));
             TResult result = await send(
                 client, sellerId, scid, cancellationToken)

@@ -61,7 +61,10 @@ dotnet publish src/XboxDevCLI/XboxDevCLI.csproj --configuration Release \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
-Each release packages these as `xbox-<rid>.zip`. See
+Publishing also puts `LICENSE` and `NOTICE.md` beside the executable. A self-contained publish
+appends the third-party notices of the .NET runtime it bundles to that `NOTICE.md`.
+
+Each release packages the publish folder as `xbox-<rid>.zip`. See
 [Installation](../installation.md) for the downloadable archive names.
 
 ## PlayFab code generation

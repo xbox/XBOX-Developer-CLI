@@ -95,10 +95,9 @@ public class XboxPartnerTableFormatterTests
     [InlineData("""{"games":[{"xboxTitleId":"1234567G"}]}""")]
     public void FormatGames_RejectsInvalidGameFields(string responseBody)
     {
-        var exception = Assert.Throws<InvalidDataException>(() =>
+        Assert.Throws<InvalidDataException>(() =>
             XboxPartnerCommandSupport.ParseGameResponse(responseBody));
 
-        Assert.Contains("XboxPartner", exception.Message, StringComparison.Ordinal);
         Assert.Throws<InvalidDataException>(() =>
             XboxPartnerTableFormatter.FormatGames(responseBody));
         Assert.Throws<InvalidDataException>(() =>

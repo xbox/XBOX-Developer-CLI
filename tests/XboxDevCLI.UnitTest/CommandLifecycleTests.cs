@@ -123,7 +123,7 @@ public class CommandLifecycleTests
         Assert.Equal(HelpCategory.Core, CommandMetadataRegistry.GetMetadata(xboxLive).Category);
         using var rootHelp = new StringWriter();
         CommandHelpWriter.WriteRoot(rootHelp, root, "xbox", width: 200);
-        Assert.Contains("Manage XBOX Live resources [Experimental]", rootHelp.ToString());
+        Assert.Contains("Manage XBOX services configuration [Experimental]", rootHelp.ToString());
 
         foreach (var path in new[] { "", "configuration list", "configuration get", "schema get",
                      "document download", "document commit", "publish start", "publish status" })

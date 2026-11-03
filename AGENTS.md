@@ -10,6 +10,8 @@ informational commands write text for people.
 - Call the product the **XBOX CLI**, or the **XBOX Developer CLI** when it needs to be more
   specific. Don't call it "XBOX Dev CLI" or "XboxDevCLI" in prose.
 - Write the brand as **XBOX** in prose, never "Xbox".
+- Call XBOX's online services **XBOX services**, as in "XBOX services configuration," not
+  "XBOX Live", except in a literal name such as Partner Center's **Xbox Live configuration** page.
 - Keep identifiers exactly as they are: the `xbox` command, `XboxDevCLI` in namespaces
   and paths, repository names, `aka.ms/xbox-cli` links, configuration keys, and generated
   PlayFab source. New URLs and repository names use lowercase kebab case.
@@ -58,7 +60,7 @@ admin rights, and nothing on the server side stops a mistake. Before you run `xb
 | Path | Holds |
 |------|-------|
 | `src/XboxDevCLI/` | The CLI |
-| `tests/` | Unit tests, property-based fuzz tests, and an opt-in live E2E harness |
+| `tests/` | Unit tests, property-based fuzz tests, and opt-in end-to-end tests |
 | `tools/` | Generators for the PlayFab models and the Unicode width table |
 | `docs/` | Docs for people using the CLI, with `contributing/` for contributors |
 
@@ -70,16 +72,25 @@ admin rights, and nothing on the server side stops a mistake. Before you run `xb
   in `tests/XboxDevCLI.UnitTest/`.
 - Tests that redirect `Console.Out` or `Console.Error` join
   `[Collection("ConsoleRedirect")]`, because console streams are process-global.
-- The E2E harness runs offline checks during normal tests; live tests skip unless
-  `E2E_GITHUB_ENVIRONMENT` is set. See
+- The E2E harness in `tests/XboxDevCLI.EndToEndTests/` runs offline checks during normal
+  tests; live tests skip unless `E2E_GITHUB_ENVIRONMENT` is set. See
   [Testing and coverage](docs/contributing/testing.md#live-end-to-end-tests)
   before opting in to real services.
+- The end-to-end tests in `tests/XboxDevCLI.E2ETest/` run the CLI against production as the
+  signed-in account, so they run only commands that read, and `xbl document commit` and
+  `xbl publish start` with `--validate-only`, which XBOX services validate without storing anything.
+  A new test must do the same. The test files are the record of what runs, so `Cli.cs` has no
+  allowlist of commands: don't add one or any other guard, and don't ask for one in a review. See
+  [Testing and coverage](docs/contributing/testing.md#end-to-end-tests-with-your-own-account).
 - Measure coverage with
   `dotnet test --collect:"XPlat Code Coverage" --settings coverage.runsettings`. Checked-in
   generated sources are excluded. Changes keep overall line coverage at or above **70%**,
   and coverage of changed lines at or above **80%**.
 - Releases are single-file executables, so use `AppContext.BaseDirectory`, never
   `Assembly.Location`, which is empty there and fails the publish with IL3000.
+- `NOTICE.md` lists every package the CLI ships, with its version, license, and copyright.
+  Update it whenever a package is added, removed, or updated, including a transitive one; a
+  unit test fails until it matches the build.
 
 ## Architecture
 
@@ -104,6 +115,9 @@ admin rights, and nothing on the server side stops a mistake. Before you run `xb
   `api-policy set --overwrite`, both on the title.
 - Data output stays machine-readable JSON and honors `--output` (`-o`) and `--data-only`.
   Results go to stdout; failures and diagnostics go to stderr.
+- Show progress for a long operation with `ProgressLine` in `src/XboxDevCLI/Output/`, which
+  draws on stderr only when it's a terminal, and erases itself when disposed. A command that
+  reads every page of a list uses `ListProgress`, and adds `ListProgress.HelpOutput` to its Help.
 - Static offline data belongs in `src/XboxDevCLI/Resources/` as an `EmbeddedResource`.
 
 ### Table output

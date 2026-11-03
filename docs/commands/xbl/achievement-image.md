@@ -1,12 +1,12 @@
 ---
-title: XBOX Live achievement images
-description: Upload, get, list, and download XBOX Live achievement images.
+title: Achievement images
+description: Upload, get, list, and download XBOX achievement images.
 ---
 
-# XBOX Live achievement images
+# Achievement images
 
 `xbox xbl achievement-image upload` **creates and registers** a PNG image for
-one XBOX Live title. `--scid` identifies the title's service configuration.
+one XBOX title. `--scid` identifies the title's service configuration.
 Upload returns the registered `assetId` and its `iconImageId` for achievement
 configuration. Use `get` to verify a known image and `list` to view all registered images.
 `download` saves full images and thumbnails locally.
@@ -22,7 +22,7 @@ configuration. Use `get` to verify a known image and `list` to view all register
 
 | Option | Command | Required | Description |
 | --- | --- | --- | --- |
-| `--scid <guid>` | all | Yes | Nonzero service configuration ID of the XBOX Live title. |
+| `--scid <guid>` | all | Yes | Nonzero service configuration ID of the XBOX title. |
 | `--seller-id <id>` | all | No | Authorized positive seller ID; otherwise uses configured or saved selection, then the developer's only authorized seller. |
 | `--file <path>` | `upload` | Yes | Local PNG with a `.png` filename, exactly **1920 × 1080 pixels**, at most **20 MiB (20,971,520 bytes)**. The CLI checks extension, file size, and PNG header dimensions before upload; the service validates the image content. |
 | `--asset-id <guid>` | `get`, `download` | For `get`; one of `--asset-id` or `--all` for `download` | Nonzero asset ID returned by `upload` or found with `list`. |
@@ -30,7 +30,7 @@ configuration. Use `get` to verify a known image and `list` to view all register
 | `--dest <directory>` | `download` | Yes | Save each image and its thumbnail in a subfolder named for its asset ID. |
 | `--output <format>` | all | No | `json` (default), `json-compact`, or `table`. |
 
-See [XBOX Live](../xbl.md#shared-behavior) for seller selection and
+See [XBOX services configuration](../xbl.md#shared-behavior) for seller selection and
 other shared behavior.
 
 ## Examples

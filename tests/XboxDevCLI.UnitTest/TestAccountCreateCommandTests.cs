@@ -356,7 +356,9 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_ThrottledIsNotRetriedAndExitsOne()
     {
-        var handler = new ScriptedHandler(Problem(HttpStatusCode.TooManyRequests, "downstream_throttled"));
+        HttpResponseMessage response = Problem(HttpStatusCode.TooManyRequests, "downstream_throttled");
+        response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
+        var handler = new ScriptedHandler(response);
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -364,6 +366,8 @@ public class TestAccountCreateCommandTests : IDisposable
         Assert.Single(handler.Requests);
         Assert.Empty(result.Stdout);
         Assert.Contains("\"code\": \"downstream_throttled\"", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("\"retryAfterSeconds\": 30", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("The test account service is throttling requests. Try again in 30 seconds.", result.Stderr, StringComparison.Ordinal);
         Assert.DoesNotContain("it is unknown whether", result.Stderr, StringComparison.Ordinal);
     }
 
@@ -822,6 +826,155 @@ public class TestAccountCreateCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Create_ServicePasswordRejectionPreservesDiagnosticsWithoutRetrying()
+    {
+        var response = Respond(
+            HttpStatusCode.BadRequest,
+            $$"""{"status":400,"title":"Failed","detail":"{{TestAccountSecretReader.PasswordRequirements}}","code":"test_account_password_invalid"}""");
+        response.Headers.Add("x-ms-correlation-id", "server-correlation");
+        var handler = new ScriptedHandler(response);
+
+        Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Single(handler.Requests);
+        using JsonDocument problem = JsonDocument.Parse(
+            result.Stderr[result.Stderr.IndexOf('{')..]);
+        Assert.Equal(400, problem.RootElement.GetProperty("status").GetInt32());
+        Assert.Equal("test_account_password_invalid", problem.RootElement.GetProperty("code").GetString());
+        Assert.StartsWith(
+            TestAccountSecretReader.PasswordRequirements,
+            problem.RootElement.GetProperty("detail").GetString(),
+            StringComparison.Ordinal);
+        Assert.Contains("x-ms-correlation-id: server-correlation", result.Stderr, StringComparison.Ordinal);
+        AssertNoSecrets(result);
+    }
+
+    [Fact]
+    public async Task Create_HelpExplainsPasswordRequirementsWithoutReadingSecrets()
+    {
+        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+
+        Invocation result = await InvokeAsync(["test-account", "batch", "create", "--help"], handler);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Empty(handler.Requests);
+        Assert.Contains("Password must be 8 to 16 characters", result.Stdout, StringComparison.Ordinal);
+        Assert.Contains("Underscore does not count as a symbol.", result.Stdout, StringComparison.Ordinal);
+        AssertNoSecrets(result);
+    }
+
+    [Fact]
+    public async Task Create_ShowsRequirementsBeforePromptingAndSendsPasswordForServiceValidation()
+    {
+        const string password = "Abcdefg_";
+        var secrets = new Queue<string>([password, password, Answer, Answer]);
+        var prompts = new List<string>();
+        TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
+            interactive: true,
+            masked: prompt =>
+            {
+                Console.Error.WriteLine("Masked prompt opened.");
+                prompts.Add(prompt);
+                return secrets.Dequeue();
+            });
+        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+
+        Invocation result = await InvokeAsync(
+            ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
+             "--count", "1", "--sandbox-id", "ABCD.1", "--confirm", "--no-wait"],
+            handler);
+
+        Assert.True(result.ExitCode == 0, result.Stderr);
+        Assert.Empty(secrets);
+        Assert.Single(prompts, prompt => prompt == "Password: ");
+        Assert.Single(prompts, prompt => prompt == "Confirm password: ");
+        Assert.Contains("Underscore does not count as a symbol.", result.Stderr, StringComparison.Ordinal);
+        Assert.True(
+            result.Stderr.IndexOf(TestAccountSecretReader.PasswordRequirements, StringComparison.Ordinal) <
+            result.Stderr.IndexOf("Masked prompt opened.", StringComparison.Ordinal));
+        using JsonDocument body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+        Assert.Equal(password, body.RootElement.GetProperty("password").GetString());
+        Assert.DoesNotContain(password, result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain(password, result.Stdout, StringComparison.Ordinal);
+        AssertNoSecrets(result);
+    }
+
+    [Fact]
+    public async Task Create_PasswordFromFileOrStdinIsSentForServiceValidation()
+    {
+        const string password = "Abcdefg_";
+        File.WriteAllText(_passwordFile, password);
+        TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(stdin: password);
+
+        foreach (string source in new[] { _passwordFile, "-" })
+        {
+            var response = Respond(
+                HttpStatusCode.BadRequest,
+                $$"""{"status":400,"title":"Failed","detail":"{{TestAccountSecretReader.PasswordRequirements}}","code":"test_account_password_invalid"}""");
+            var handler = new ScriptedHandler(response);
+            string[] args = CreateArgs("--confirm", "--no-wait");
+            args[Array.IndexOf(args, "--password-file") + 1] = source;
+
+            Invocation result = await InvokeAsync(args, handler);
+
+            Assert.Equal(1, result.ExitCode);
+            using JsonDocument body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+            Assert.Equal(password, body.RootElement.GetProperty("password").GetString());
+            Assert.Empty(result.Stdout);
+            Assert.Contains(TestAccountSecretReader.PasswordRequirements, result.Stderr, StringComparison.Ordinal);
+            Assert.DoesNotContain(password, result.Stderr, StringComparison.Ordinal);
+            AssertNoSecrets(result);
+        }
+    }
+
+    [Theory]
+    [InlineData("file")]
+    [InlineData("stdin")]
+    [InlineData("prompt")]
+    public async Task Create_EmptyPasswordFailsBeforeSubmission(string source)
+    {
+        File.WriteAllText(_passwordFile, string.Empty);
+        TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
+            interactive: source == "prompt", masked: _ => string.Empty);
+        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+
+        Invocation result = await InvokeAsync(
+            ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
+             "--count", "1", "--sandbox-id", "ABCD.1", "--confirm", "--no-wait",
+             "--security-answer-file", _answerFile,
+             .. (source == "prompt" ? Array.Empty<string>() : new[] { "--password-file", source == "stdin" ? "-" : _passwordFile })],
+            handler);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(handler.Requests);
+        Assert.Empty(result.Stdout);
+        Assert.Contains("The password must not be empty.", result.Stderr, StringComparison.Ordinal);
+        AssertNoSecrets(result);
+    }
+
+    [Fact]
+    public async Task Create_PasswordMatchingSecurityAnswerIsSentForServiceValidation()
+    {
+        const string answer = "Abcdef12";
+        File.WriteAllText(_passwordFile, "Abcdef12");
+        File.WriteAllText(_answerFile, answer);
+        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+
+        Invocation result = await InvokeAsync(CreateArgs("--confirm", "--no-wait"), handler);
+
+        Assert.Equal(0, result.ExitCode);
+        using JsonDocument body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+        Assert.Equal("Abcdef12", body.RootElement.GetProperty("password").GetString());
+        Assert.Equal(answer, body.RootElement.GetProperty("securityAnswer").GetString());
+
+        Assert.DoesNotContain(answer, result.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain(answer, result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("Abcdef12", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Create_ReadsThePasswordFromStandardInput()
     {
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(stdin: Password + "\n");
@@ -1080,6 +1233,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData("downstream_request_rejected", HttpStatusCode.BadGateway, false, null)]
     [InlineData("downstream_request_rejected", HttpStatusCode.NotFound, false, "No such job")]
     [InlineData("downstream_throttled", HttpStatusCode.ServiceUnavailable, false, "throttling")]
+    [InlineData("rate_limited", HttpStatusCode.TooManyRequests, true, "too many requests")]
     [InlineData("downstream_service_failed", HttpStatusCode.BadGateway, true, null)]
     [InlineData("downstream_service_failed", HttpStatusCode.BadGateway, false, "Retry.")]
     [InlineData("downstream_gateway_timeout", HttpStatusCode.BadGateway, false, "Retry.")]

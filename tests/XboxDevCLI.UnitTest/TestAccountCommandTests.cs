@@ -406,6 +406,60 @@ public class TestAccountCommandTests
         Assert.Equal("The test account service did not respond in time. Retry.", hint);
     }
 
+    [Theory]
+    [InlineData("""{"code":"rate_limited"}""", XboxPartnerErrorGuidance.RateLimitedHint)]
+    [InlineData("""{"code":"downstream_throttled"}""", "The test account service is throttling requests.")]
+    [InlineData("""{"code":"another_code"}""", null)]
+    [InlineData("{}", null)]
+    [InlineData("not JSON", null)]
+    [InlineData("", null)]
+    public void DescribeFailure_ThrottledOnlyNamesAKnownCause(string body, string? expected)
+    {
+        foreach (TestAccountCommandFactory.TestAccountRequest request in
+            Enum.GetValues<TestAccountCommandFactory.TestAccountRequest>())
+        {
+            Assert.Equal(expected, TestAccountCommandFactory.DescribeFailure(
+                HttpStatusCode.TooManyRequests, body, request));
+        }
+    }
+
+    [Theory]
+    [InlineData("test-account", "batch", "list")]
+    [InlineData("test-account", "batch", "get", "42")]
+    [InlineData("test-account", "get", "ABCDEF-tester00007@xboxtest.com")]
+    [InlineData("test-account", "job", "get", "job-1", "--batch-id", "42")]
+    [InlineData("test-account", "batch", "update", "42", "--tag", "nightly", "--confirm", "--no-wait")]
+    [InlineData("test-account", "batch", "delete", "42", "--confirm", "--no-wait")]
+    [InlineData("xbl", "configuration", "get", "--scid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--sandbox-id", "ABCDEF.1")]
+    public async Task Throttled_ReportsTheWaitWithoutRetrying(params string[] args)
+    {
+        foreach (string body in new[] { """{"code":"rate_limited"}""", """{"code":"downstream_throttled"}""", """{"code":"another_code"}""", "" })
+        {
+            HttpResponseMessage response = Response(HttpStatusCode.TooManyRequests, body);
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(45));
+            var handler = new XboxPartnerHttpMessageHandler(response);
+
+            Invocation result = await InvokeAsync([.. args, "--seller-id", "1234567"], handler);
+
+            Assert.Equal(1, result.ExitCode);
+            Assert.Empty(result.Stdout);
+            Assert.Single(handler.Requests);
+            using JsonDocument document = JsonDocument.Parse(result.Stderr[result.Stderr.IndexOf('{', StringComparison.Ordinal)..]);
+            JsonElement error = document.RootElement;
+            Assert.Equal(429, error.GetProperty("status").GetInt32());
+            Assert.Equal(45, error.GetProperty("retryAfterSeconds").GetInt64());
+            Assert.EndsWith("Try again in 45 seconds.", error.GetProperty("detail").GetString(), StringComparison.Ordinal);
+            Assert.DoesNotContain("XboxPartner", error.GetProperty("detail").GetString(), StringComparison.OrdinalIgnoreCase);
+            if (body.Contains("rate_limited", StringComparison.Ordinal))
+            {
+                string detail = error.GetProperty("detail").GetString()!;
+                int first = detail.IndexOf(XboxPartnerErrorGuidance.RateLimitedHint, StringComparison.Ordinal);
+                Assert.True(first >= 0, detail);
+                Assert.Equal(-1, detail.IndexOf(XboxPartnerErrorGuidance.RateLimitedHint, first + 1, StringComparison.Ordinal));
+            }
+        }
+    }
+
     private static XboxPartnerHttpMessageHandler Respond(HttpStatusCode statusCode, string body) =>
         new(Response(statusCode, body));
 
@@ -455,7 +509,7 @@ public class TestAccountCommandTests
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("nodpublishers.com", Assert.Single(handler.Requests).RequestUri?.Host);
-        Assert.Contains("Warning: the service is overridden to 'https://nodpublishers.com'", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("Warning: the service endpoint is overridden to 'https://nodpublishers.com'", result.Stderr, StringComparison.Ordinal);
         Assert.Contains("XboxPartner:BaseUrl", result.Stderr, StringComparison.Ordinal);
         Assert.Contains("Requests and your access token will be sent to that host", result.Stderr, StringComparison.Ordinal);
         Assert.Contains("XBOX_XBOXPARTNER__BASEURL", result.Stderr, StringComparison.Ordinal);

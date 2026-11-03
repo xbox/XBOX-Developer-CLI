@@ -1,6 +1,6 @@
 ---
 title: Testing and coverage
-description: Build and test the CLI, and measure its code coverage against the project's bar.
+description: Build and test the CLI, measure its code coverage against the project's bar, and run its end-to-end tests.
 ---
 
 # Testing and coverage
@@ -20,7 +20,9 @@ dotnet test
 
 The unit tests are xUnit tests under `tests/XboxDevCLI.UnitTest/`. The offline tests
 in `tests/XboxDevCLI.EndToEndTests/` run too; its live tests, which sign in as a service
-principal and call real services, skip unless `E2E_GITHUB_ENVIRONMENT` is set.
+principal and call real services, skip unless `E2E_GITHUB_ENVIRONMENT` is set. The tests in
+`tests/XboxDevCLI.E2ETest/`, which run as your own account, skip until you
+[set them up](#end-to-end-tests-with-your-own-account).
 
 Tests that redirect `Console.Out` or `Console.Error` must join the
 `[Collection("ConsoleRedirect")]` xUnit collection. Console streams are
@@ -105,6 +107,39 @@ OIDC request permission. The example runs only on manual dispatch, not on pushes
 requests, and does not provision titles, sellers, permissions, or fixtures. Currently only
 configuration validation and the authentication scenario run; the four service scenarios
 remain disabled in code.
+
+## End-to-end tests with your own account
+
+The end-to-end tests in `tests/XboxDevCLI.E2ETest/` run an `xbox` executable against production
+Partner Center and XBOX services, as the user account it's signed in with rather than a service
+principal. They run only commands that read, and `xbl document commit` and `xbl publish start` with
+`--validate-only`, which XBOX services validate without storing anything. Until their settings are
+set, `dotnet test` skips them.
+
+To run them with your own account:
+
+1. Build the CLI, and sign in with the executable you'll test:
+
+   ```bash
+   dotnet build
+   export XBOXDEVCLI_E2E_CLI="$PWD/src/XboxDevCLI/bin/Debug/net10.0/xbox"
+   "$XBOXDEVCLI_E2E_CLI" auth login
+   ```
+
+2. Set the other `XBOXDEVCLI_E2E_*` environment variables that
+   `tests/XboxDevCLI.E2ETest/E2ESettings.cs` lists. They name the account you signed in with; a
+   seller, game, development sandbox, achievement image, and test account batch that the tests
+   read, so each must already exist; and a keyword that, among the seller's games, only that game's
+   name contains.
+3. Run the tests:
+
+   ```bash
+   dotnet test tests/XboxDevCLI.E2ETest
+   ```
+
+Two of the tests read every page of the seller's games, so they take longer for a seller with many
+games. To make missing settings fail the tests instead of skipping them, set
+`XBOXDEVCLI_E2E_REQUIRED=true`.
 
 ## Code coverage
 

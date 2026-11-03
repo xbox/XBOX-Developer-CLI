@@ -415,8 +415,8 @@ public class GameCreationCommandTests
         Assert.Equal(3, handler.Requests.Count);
         Assert.Single(handler.Requests, request => request.Method == HttpMethod.Post);
         Assert.Contains("job job-1 completed.", result.Stderr);
-        Assert.Contains("POST https://gateway.example/xboxpartner/v1/games", result.Stderr);
-        Assert.Contains("GET https://gateway.example/xboxpartner/v1/jobs/job-1", result.Stderr);
+        Assert.Contains("Submitting game creation for seller seller-1.", result.Stderr);
+        Assert.Contains("Reading game creation job job-1.", result.Stderr);
         Assert.Contains("succeeded", result.Stdout);
         Assert.DoesNotContain("\r", result.Stderr.Replace(Environment.NewLine, "\n"));
     }
@@ -537,6 +537,9 @@ public class GameCreationCommandTests
         Assert.Contains("submitted, but its status could not be read", result.Stderr);
         Assert.Contains("game job get job-1", result.Stderr);
         Assert.Contains("response-correlation", result.Stderr);
+        Assert.Single(result.Stderr.Split(Environment.NewLine),
+            line => line.Contains("HTTP 500", StringComparison.Ordinal));
+        Assert.Contains("Error detail: boom", result.Stderr, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -553,6 +556,66 @@ public class GameCreationCommandTests
         Assert.Contains("game list", result.Stderr);
         Assert.DoesNotContain("game job get", result.Stderr);
         Assert.Contains("response-correlation", result.Stderr);
+    }
+
+    [Fact]
+    public async Task UnsafeSubmittedJobId_IsSanitizedOnStderrAndRecoveryListsGames()
+    {
+        const string unsafeAccepted =
+            """{"jobId":"\u001b[31mjob-1\r\nForged: done","status":"notStarted","result":"pending","game":null,"errors":null}""";
+        var submitted = Response(unsafeAccepted);
+        submitted.Headers.Remove("x-ms-correlation-id");
+        submitted.Headers.TryAddWithoutValidation("x-ms-correlation-id", "corr\u001b[2J-1");
+        var handler = new XboxPartnerHttpMessageHandler(
+            submitted, Response("""{"title":"boom"}""", HttpStatusCode.InternalServerError));
+
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("Game creation job submitted: [31mjob-1Forged: done (Correlation ID: corr[2J-1)", result.Stderr);
+        Assert.Contains("Waiting for game creation job [31mjob-1Forged: done...", result.Stderr);
+        Assert.DoesNotContain("\u001b", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain(
+            result.Stderr.Split('\n'), line => line.TrimEnd('\r').StartsWith("Forged", StringComparison.Ordinal));
+        Assert.Contains("game list", result.Stderr);
+        Assert.Contains("The job ID can't be shown safely", result.Stderr);
+        Assert.DoesNotContain("Check its status with", result.Stderr);
+        Assert.DoesNotContain("game job get", result.Stderr);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Contains("%1B%5B31mjob-1%0D%0AForged", handler.Requests[1].RequestUri!.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task UnsafeCompletedJobId_IsSanitizedOnCompletionLine()
+    {
+        const string unsafeFailed =
+            """{"jobId":"job-2\u001b]0;title\u0007\r\nForged","status":"completed","result":"failed","game":null,"errors":null}""";
+        var handler = Handler(Accepted, unsafeFailed);
+
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("Game creation job job-2]0;titleForged completed without creating the game.", result.Stderr);
+        Assert.DoesNotContain("\u001b", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("\u0007", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("game job get job-1", result.Stderr);
+    }
+
+    [Fact]
+    public async Task UnsafeSubmittedJobId_WithFailedJob_RecoveryListsGames()
+    {
+        const string unsafeFailed =
+            """{"jobId":"\u001b[31mjob-3\r\nForged","status":"completed","result":"failed","game":null,"errors":null}""";
+        var handler = Handler(unsafeFailed);
+
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
+
+        Assert.Equal(2, result.ExitCode);
+        Assert.Contains("The job ID can't be shown safely, so list recent games to review it.", result.Stderr);
+        Assert.Contains("game list", result.Stderr);
+        Assert.DoesNotContain("game job get", result.Stderr);
+        Assert.DoesNotContain("Don't resubmit", result.Stderr);
+        Assert.DoesNotContain("\u001b", result.Stderr, StringComparison.Ordinal);
     }
 
     [Fact]

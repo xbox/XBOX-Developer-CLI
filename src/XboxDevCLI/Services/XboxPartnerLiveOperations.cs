@@ -72,7 +72,7 @@ internal sealed partial class XboxPartnerClient
             catch (Exception ex) when (ex is JsonException or ArgumentException)
             {
                 throw new InvalidDataException(
-                    "The XboxPartner image upload initialization response was invalid.", ex);
+                    "The image upload initialization response was invalid.", ex);
             }
 
             if (initialization.XfusId == Guid.Empty ||
@@ -82,7 +82,7 @@ internal sealed partial class XboxPartnerClient
                 initialization.ExpiresAt <= DateTimeOffset.UtcNow)
             {
                 throw new InvalidDataException(
-                    "The XboxPartner image upload initialization response was invalid or expired.");
+                    "The image upload initialization response was invalid or expired.");
             }
 
             file.Position = 0;
@@ -209,7 +209,8 @@ internal sealed partial class XboxPartnerClient
     public async Task<XboxLiveAchievementImageCollection> ListAchievementImagesAsync(
         long? sellerId,
         Guid scid,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int>? pageRead = null)
     {
         ValidateSellerId(sellerId);
         ValidateRequiredGuid(scid, nameof(scid));
@@ -227,7 +228,8 @@ internal sealed partial class XboxPartnerClient
                     token is null ? AchievementImagesPageSize : null,
                     token))),
             cancellationToken,
-            readItem: rawImage => images.Add(ParseListedAchievementImage(rawImage))).ConfigureAwait(false);
+            readItem: rawImage => images.Add(ParseListedAchievementImage(rawImage)),
+            pageRead: pageRead).ConfigureAwait(false);
 
         return new XboxLiveAchievementImageCollection(images, "[" + string.Join(',', rawImages) + "]");
     }
@@ -244,7 +246,7 @@ internal sealed partial class XboxPartnerClient
         catch (Exception ex) when (ex is JsonException or ArgumentException)
         {
             throw new InvalidDataException(
-                "The XboxPartner achievement image response was not valid JSON.", ex);
+                "The achievement image response was not valid JSON.", ex);
         }
     }
 
@@ -256,7 +258,7 @@ internal sealed partial class XboxPartnerClient
             if (document.RootElement.ValueKind != JsonValueKind.Object)
             {
                 throw new InvalidDataException(
-                    "The XboxPartner achievement image response must contain an assetId.");
+                    "The achievement image response must contain an assetId.");
             }
 
             XboxLiveAchievementImage? image =
@@ -267,7 +269,7 @@ internal sealed partial class XboxPartnerClient
         catch (Exception ex) when (ex is JsonException or ArgumentException)
         {
             throw new InvalidDataException(
-                "The XboxPartner achievement image response was not valid JSON.", ex);
+                "The achievement image response was not valid JSON.", ex);
         }
     }
 
@@ -276,20 +278,21 @@ internal sealed partial class XboxPartnerClient
         if (image is null || image.AssetId == Guid.Empty)
         {
             throw new InvalidDataException(
-                "The XboxPartner achievement image response must contain an assetId.");
+                "The achievement image response must contain an assetId.");
         }
 
         if (image.Scid == Guid.Empty)
         {
             throw new InvalidDataException(
-                "The XboxPartner achievement image response must contain a scid.");
+                "The achievement image response must contain a scid.");
         }
     }
 
     public async Task<string> GetXboxLiveConfigurationsAsync(
         long? sellerId,
         Guid scid,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int>? pageRead = null)
     {
         ValidateSellerId(sellerId);
         ValidateRequiredGuid(scid, nameof(scid));
@@ -304,7 +307,8 @@ internal sealed partial class XboxPartnerClient
                     scid,
                     token is null ? ListPageSize : null,
                     token))),
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            pageRead: pageRead).ConfigureAwait(false);
         return "[" + string.Join(',', configurations) + "]";
     }
 
@@ -405,7 +409,7 @@ internal sealed partial class XboxPartnerClient
             string.IsNullOrWhiteSpace(view))
         {
             throw new InvalidDataException(
-                "XboxPartner returned document content without valid metadata.");
+                "The document response did not contain valid metadata.");
         }
 
         return new XboxPartnerDocumentArchive(content, eTag, version, view);

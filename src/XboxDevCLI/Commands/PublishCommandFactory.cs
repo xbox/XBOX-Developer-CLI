@@ -25,13 +25,12 @@ internal static class PublishCommandFactory
         var sellerOption = new XdtsSellerOption();
         var scidOption = CreateRequiredGuidOption("--scid", "-s", "The service configuration ID.");
         var sandboxOption = CreateRequiredSandboxOption(
-            "--sandbox",
-            "-d",
-            "The destination sandbox whose published configuration will be updated.")
+            "--sandbox-id",
+            "The destination sandbox ID whose published configuration will be updated.")
             .AsContextValue(ContextEndpoint.XboxPartner);
         var sourceSandboxOption = CreateOptionalSandboxOption(
-            "--source-sandbox",
-            "The source sandbox. Default: --sandbox.");
+            "--source-sandbox-id",
+            "The source sandbox ID. Default: --sandbox-id.");
         var validateOnlyOption = new Option<bool>("--validate-only", "-v")
         {
             Description = "Validate without publishing. Default: false, which starts publishing.",
@@ -64,7 +63,7 @@ internal static class PublishCommandFactory
 
         var command = new Command(
             "start",
-            "Publish XBOX Live configuration documents");
+            "Publish XBOX services configuration documents");
         command.Validators.Add(result =>
         {
             if (result.GetValue(republishOption) && result.GetValue(validateOnlyOption))
@@ -75,7 +74,7 @@ internal static class PublishCommandFactory
             if (string.Equals(result.GetValue(sandboxOption), TitleWideSandbox, StringComparison.OrdinalIgnoreCase))
             {
                 string[] given = [
-                    .. result.GetResult(sourceSandboxOption) is { Implicit: false } ? ["--source-sandbox"] : Array.Empty<string>(),
+                    .. result.GetResult(sourceSandboxOption) is { Implicit: false } ? ["--source-sandbox-id"] : Array.Empty<string>(),
                     .. result.GetResult(configSetOption) is { Implicit: false } ? ["--configset"] : Array.Empty<string>(),
                 ];
                 if (given.Length > 0)
@@ -88,17 +87,17 @@ internal static class PublishCommandFactory
         });
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.RemoteMutation,
-            Scope: "One XBOX Live configuration set promoted from a source sandbox to a destination sandbox.",
-            Output: "The publish operation result as JSON or a table. XBOX Live's validation " +
-                "diagnostics, such as warnings, go to stderr.",
+            Scope: "One XBOX services configuration set promoted from a source sandbox to a destination sandbox.",
+            Output: "The publish operation result as JSON or a table. Validation diagnostics from " +
+                "XBOX services, such as warnings, go to stderr.",
             Examples:
             [
-                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1",
-                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox STAGE.0 --sandbox RETAIL --validate-only",
-                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox STAGE.0 --sandbox RETAIL --confirm",
-                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox STAGE.0 --sandbox TARGET.0 --validate-only --output table",
-                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox STAGE.0 --sandbox RETAIL --configset 42 --confirm",
-                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1 --republish",
+                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1",
+                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id STAGE.0 --sandbox-id RETAIL --validate-only",
+                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id STAGE.0 --sandbox-id RETAIL --confirm",
+                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id STAGE.0 --sandbox-id TARGET.0 --validate-only --output table",
+                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id STAGE.0 --sandbox-id RETAIL --configset 42 --confirm",
+                "xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --republish",
             ],
             LearnMore:
             [
@@ -107,10 +106,10 @@ internal static class PublishCommandFactory
             ],
             SafetyDetails:
                 "Without --validate-only, starts publishing configuration to the destination sandbox. " +
-                "Publishing from a different --source-sandbox also replaces the destination's global " +
+                "Publishing from a different --source-sandbox-id also replaces the destination's global " +
                 "title storage files with the source's and deletes files only the destination holds. " +
                 "Publishing to RETAIL, CERT, CERT.DEBUG, or HIDDEN (title-wide), or from a different " +
-                "--source-sandbox, requires --confirm (--yes, -y) or terminal confirmation. " +
+                "--source-sandbox-id, requires --confirm (--yes, -y) or terminal confirmation. " +
                 "Agent approval is still required.",
             Table: XboxPartnerCommandSupport.PublishTableView));
         sellerOption.AddTo(command);
@@ -339,7 +338,7 @@ internal static class PublishCommandFactory
         if (string.IsNullOrWhiteSpace(result.Status))
         {
             throw new InvalidDataException(
-                "The XboxPartner publish response did not contain a status.");
+                "The publish response did not contain a status.");
         }
 
         return result;
@@ -457,8 +456,8 @@ internal static class PublishCommandFactory
     }
 
     /// <summary>
-    /// Writes XBOX Live's validation diagnostics, such as the warning for a first RETAIL publish
-    /// without an embargo, to stderr. The JSON output keeps them too.
+    /// Writes the validation diagnostics from XBOX services, such as the warning for a first RETAIL
+    /// publish without an embargo, to stderr. The JSON output keeps them too.
     /// </summary>
     private static void WriteDiagnostics(XboxLivePublishResponse result, TextWriter stderr)
     {
@@ -489,7 +488,7 @@ internal static class PublishCommandFactory
             string? error = ReadString(diagnostic, "Error");
             string? document = ReadString(diagnostic, "DocumentName");
             string? message = ReadString(diagnostic, "Message");
-            var line = new System.Text.StringBuilder("XBOX Live ")
+            var line = new System.Text.StringBuilder("XBOX services ")
                 .Append(XboxPartnerCommandSupport.ForTerminal(severity).ToLowerInvariant());
             if (error is not null)
             {
@@ -549,11 +548,11 @@ internal static class PublishCommandFactory
 
     private static Option<string> CreateRequiredSandboxOption(
         string name,
-        string alias,
         string description)
     {
-        var option = new Option<string>(name, alias)
+        var option = new Option<string>(name)
         {
+            HelpName = "id",
             Description = description,
             Required = true,
         };
@@ -574,6 +573,7 @@ internal static class PublishCommandFactory
     {
         var option = new Option<string?>(name)
         {
+            HelpName = "id",
             Description = description,
         };
         option.Validators.Add(result =>

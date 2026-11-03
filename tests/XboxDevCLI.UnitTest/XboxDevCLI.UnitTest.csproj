@@ -21,6 +21,7 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.0.1" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
     <!-- The release build can't restore Moq newer than 4.20.1, and 4.20.0 and 4.20.1 ship
          SponsorLink. 4.18.1 is the newest version it can restore without it. -->
     <PackageReference Include="Moq" Version="4.18.1" />

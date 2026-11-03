@@ -20,7 +20,7 @@ internal sealed class XdtsSellerOption
     /// <summary>
     /// The seller: <c>--seller-id</c>, which <see cref="ContextResolver"/> fills in from
     /// <c>XBOX_SELLER_ID</c> or saved context, or <c>null</c>, for the developer's only seller.
-    /// The other parameters are the ones the XBOX Live commands pass; reading it needs none.
+    /// The other parameters are the ones the <c>xbl</c> commands pass; reading it needs none.
     /// </summary>
     public Task<long?> GetSellerIdAsync(
         ParseResult parseResult,
