@@ -20,7 +20,7 @@ sandboxes in your Partner Center account. `xbox sandbox list` shows which sandbo
 ## Commands
 
 Each command runs the same command of `XblPCSandbox.exe`, the PC Sandbox Switcher from the GDK
-and the XBOX Live developer tools, so the CLI behaves the way the
+and the XBOX services development tools, so the CLI behaves the way the
 [tool's documentation](https://learn.microsoft.com/gaming/gdk/docs/tools/tools-services/live-pc-sandbox-switcher)
 describes.
 
@@ -62,7 +62,7 @@ The CLI looks for `XblPCSandbox.exe` in this order:
 3. Each folder on `PATH`.
 
 The tool ships with the GDK. You can also get it from `XboxLiveTools.zip` on the
-[XBOX Live developer tools releases](https://github.com/microsoft/xbox-live-developer-tools/releases)
+[XBOX services development tools releases](https://github.com/microsoft/xbox-live-developer-tools/releases)
 page. Gaming Services must be installed.
 
 ## Options

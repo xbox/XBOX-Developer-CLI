@@ -65,8 +65,11 @@ A command takes its PlayFab title from the first of these that's set:
 3. A default saved with [`xbox context set`](commands/context.md), in the `default` profile
    or in the profile that `--profile <name>` or `XBOX_PROFILE` selects.
 
-The seller and the XBOX Live sandbox work the same way, with `XBOX_SELLER_ID` and
-`XBOX_SANDBOX`.
+The seller works the same way, with `XBOX_SELLER_ID`. For sandbox IDs, only
+`xbl configuration get`, `xbl publish start`, and `xbl publish status` read
+`XBOX_SANDBOX_ID` or the saved `sandbox-id` value. `game create`,
+`test-account batch create`, and the `xbl document` commands also accept `--sandbox-id`,
+but don't read it from the environment or saved context; pass the flag explicitly.
 
 Run `xbox context get --output json-compact` to see what's saved. A command that changes
 something writes each value it didn't get from its own command line to stderr, such as
@@ -100,6 +103,22 @@ may change. Check their exit code, not their output. See
 
 Help marks experimental commands, whose interface may change based on feedback. See
 [Experimental commands](cli-command-lifecycle.md).
+
+### Rate limits
+
+When an XBOX service request returns HTTP 429 with a `Retry-After` header, the error says how
+many seconds to wait, rounded up to a whole second with a minimum of 1. Structured errors
+from XBOX services also include that wait as `retryAfterSeconds`, even when the response
+body is empty or unreadable. Commands that normally print plain text errors, such as
+`seller list` and `game list`, keep that format and include the wait in the message.
+
+A 429 with error code `rate_limited` means you sent too many requests in a short time; the
+error says so before the wait. If a script runs these commands, slow it down. Other 429s mean
+a service is throttling requests.
+
+Without a header, no wait duration is invented. A single request is not retried
+automatically; commands that explicitly wait for a job keep their documented polling
+behavior. Before retrying a change, follow the approval and unknown outcome rules above.
 
 ## Finding the right PlayFab API
 

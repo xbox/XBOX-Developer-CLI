@@ -417,6 +417,22 @@ public class CommandSurfaceTests
         });
     }
 
+    [Fact]
+    public void SandboxOptions_UseConsistentIdentifierNames()
+    {
+        var options = EnumerateCommands(Program.BuildRootCommand())
+            .SelectMany(command => command.Options)
+            .Where(option => option.Name.Split('-').Contains("sandbox"))
+            .ToArray();
+
+        Assert.NotEmpty(options);
+        Assert.All(options, option =>
+        {
+            Assert.EndsWith("-sandbox-id", option.Name, StringComparison.Ordinal);
+            Assert.Empty(option.Aliases);
+        });
+    }
+
     /// <summary>
     /// Every Help example parses to the command that shows it, so an example can't outlive an
     /// option or path it uses. Quoted arguments are read as a shell would.

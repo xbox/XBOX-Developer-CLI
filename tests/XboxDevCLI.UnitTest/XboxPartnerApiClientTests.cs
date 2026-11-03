@@ -47,13 +47,16 @@ public class XboxPartnerApiClientTests
             Page("""{"configurations":[{"sandbox":"XDKS.1"}],"continuationToken":"t1"}"""),
             Page("""{"configurations":[{"sandbox":"ABCDEF.1"},{"sandbox":"TESTSB.42"}]}"""));
         using var client = CreateClient(handler);
+        var pages = new List<int>();
 
         string result = await client.GetXboxLiveConfigurationsAsync(
             null,
             Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
-            CancellationToken.None);
+            CancellationToken.None,
+            pages.Add);
 
         Assert.Equal("""[{"sandbox":"XDKS.1"},{"sandbox":"ABCDEF.1"},{"sandbox":"TESTSB.42"}]""", result);
+        Assert.Equal([1, 2], pages);
         Assert.Equal(
             new[]
             {
@@ -81,7 +84,7 @@ public class XboxPartnerApiClientTests
                 CancellationToken.None));
 
         Assert.Equal(
-            "The XboxPartner configuration list response repeated a continuation token.",
+            "The configuration list response repeated a continuation token.",
             exception.Message);
         Assert.Equal(2, handler.Requests.Count);
         Assert.Equal(
@@ -103,7 +106,7 @@ public class XboxPartnerApiClientTests
                 Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
                 CancellationToken.None));
 
-        Assert.Equal($"The XboxPartner configuration list response {expected}", exception.Message);
+        Assert.Equal($"The configuration list response {expected}", exception.Message);
         Assert.Equal(body, exception.RawResponse);
         Assert.Equal(
             Assert.Single(Assert.Single(handler.Requests).Headers["x-ms-correlation-id"]),
@@ -813,6 +816,188 @@ public class XboxPartnerApiClientTests
         Assert.Equal(exception.Message, XboxPartnerCommandErrorFormatter.Format(exception, compact: true));
     }
 
+    [Theory]
+    [InlineData(29.2, 30L)]
+    [InlineData(120.0, 120L)]
+    [InlineData(0.0, 1L)]
+    [InlineData(-1.0, 1L)]
+    [InlineData(3000000000.0, 3000000000L)]
+    public void XboxPartnerCommandErrorFormatter_ReportsRoundedRetrySeconds(double seconds, long expected)
+    {
+        var exception = new XboxPartnerApiException(
+            HttpStatusCode.TooManyRequests,
+            "Too Many Requests",
+            """{"title":"Throttled","detail":"Slow down.","code":"another_code"}""",
+            new Uri("https://nodpublishers.com/request"),
+            retryAfter: TimeSpan.FromSeconds(seconds));
+
+        using var document = JsonDocument.Parse(XboxPartnerCommandErrorFormatter.Format(exception, compact: true));
+        JsonElement error = document.RootElement;
+        Assert.Equal(expected, error.GetProperty("retryAfterSeconds").GetInt64());
+        Assert.Equal("another_code", error.GetProperty("code").GetString());
+        Assert.Equal(
+            $"Slow down. Try again in {expected} {(expected == 1 ? "second" : "seconds")}.",
+            error.GetProperty("detail").GetString());
+    }
+
+    private const string ThrottledPlain =
+        "The request failed with HTTP 429 (Too Many Requests). The response body could not be read.";
+    private const string ThrottledStructured = "The service returned HTTP 429 (Too Many Requests).";
+
+    [Theory]
+    [InlineData("", ThrottledPlain)]
+    [InlineData("not JSON", ThrottledPlain)]
+    [InlineData("[]", ThrottledPlain)]
+    [InlineData("null", ThrottledPlain)]
+    [InlineData("\ud800", ThrottledPlain)]
+    [InlineData("{}", ThrottledStructured)]
+    [InlineData("""{"stackTrace":"private","detail":"private","code":"private"}""", ThrottledStructured)]
+    public void XboxPartnerCommandErrorFormatter_ThrottledFallbackKeepsStructuredWait(string body, string statusSentence)
+    {
+        var exception = new XboxPartnerApiException(
+            HttpStatusCode.TooManyRequests,
+            "Too Many Requests",
+            body,
+            new Uri("https://nodpublishers.com/request"),
+            retryAfter: TimeSpan.FromSeconds(30),
+            innerException: new IOException("private"));
+
+        foreach (bool compact in new[] { true, false })
+        {
+            string formatted = XboxPartnerCommandErrorFormatter.Format(
+                exception, compact, additionalDetail: "CREDENTIAL123",
+                sensitiveValues: ["CREDENTIAL123"],
+                fallbackTitle: "Operation failed");
+            using var document = JsonDocument.Parse(formatted);
+            JsonElement error = document.RootElement;
+            Assert.Equal(429, error.GetProperty("status").GetInt32());
+            Assert.Equal("Operation failed", error.GetProperty("title").GetString());
+            Assert.Equal(30, error.GetProperty("retryAfterSeconds").GetInt64());
+            Assert.Equal(
+                $"{statusSentence} [redacted] Try again in 30 seconds.",
+                error.GetProperty("detail").GetString());
+            Assert.DoesNotContain("private", formatted, StringComparison.Ordinal);
+            Assert.DoesNotContain("CREDENTIAL123", formatted, StringComparison.Ordinal);
+            Assert.False(error.TryGetProperty("code", out _));
+            Assert.Equal(!compact, formatted.Contains('\n'));
+        }
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.TooManyRequests, null)]
+    [InlineData(HttpStatusCode.BadGateway, 30.0)]
+    public void XboxPartnerCommandErrorFormatter_OnlyAddsRetrySecondsForThrottlingWithAHeader(
+        HttpStatusCode status, double? seconds)
+    {
+        var exception = new XboxPartnerApiException(
+            status, null, """{"detail":"Request rejected."}""",
+            new Uri("https://nodpublishers.com/request"),
+            retryAfter: seconds is { } value ? TimeSpan.FromSeconds(value) : null);
+
+        using var document = JsonDocument.Parse(XboxPartnerCommandErrorFormatter.Format(exception, compact: true));
+
+        Assert.False(document.RootElement.TryGetProperty("retryAfterSeconds", out _));
+        Assert.Equal(
+            status == HttpStatusCode.TooManyRequests
+                ? "Request rejected. Wait before retrying."
+                : "Request rejected.",
+            document.RootElement.GetProperty("detail").GetString());
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("not JSON")]
+    [InlineData("[]")]
+    [InlineData("{}")]
+    [InlineData("""{"stackTrace":"private"}""")]
+    public void XboxPartnerCommandErrorFormatter_FallbackPreservesHttpDetails(string body)
+    {
+        var exception = new XboxPartnerApiException(
+            HttpStatusCode.ServiceUnavailable,
+            "Maintenance until 12:00",
+            body,
+            new Uri("https://nodpublishers.com/request"),
+            "CORRELATION123");
+
+        string formatted = XboxPartnerCommandErrorFormatter.Format(exception, compact: true);
+
+        Assert.Contains("HTTP 503 (Maintenance until 12:00).", formatted, StringComparison.Ordinal);
+        Assert.Equal("Maintenance until 12:00", exception.ReasonPhrase);
+        Assert.Equal("CORRELATION123", exception.CorrelationId);
+        Assert.Equal(body, exception.ResponseBody);
+        Assert.DoesNotContain("private", formatted, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void XboxPartnerCommandErrorFormatter_EmptyReasonKeepsNumericStatus(string? reason)
+    {
+        var exception = new XboxPartnerApiException(
+            HttpStatusCode.ServiceUnavailable,
+            reason,
+            string.Empty,
+            new Uri("https://nodpublishers.com/request"));
+
+        Assert.Contains(
+            "HTTP 503.",
+            XboxPartnerCommandErrorFormatter.Format(exception, compact: true),
+            StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("{}")]
+    [InlineData("""{"headers":{"Authorization":"private"}}""")]
+    public void XboxPartnerCommandErrorFormatter_PreservesExplicitFallbackPresentation(string body)
+    {
+        var exception = new XboxPartnerApiException(
+            HttpStatusCode.ServiceUnavailable,
+            "Maintenance until 12:00",
+            body,
+            new Uri("https://nodpublishers.com/request"));
+
+        string formatted = XboxPartnerCommandErrorFormatter.Format(
+            exception,
+            compact: true,
+            sensitiveValues: ["CREDENTIAL123"],
+            fallbackTitle: "Operation failed",
+            fallbackDetail: "The operation failed with HTTP 503. CREDENTIAL123");
+
+        Assert.Contains("The operation failed with HTTP 503. [redacted]", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain("CREDENTIAL123", formatted, StringComparison.Ordinal);
+        Assert.DoesNotContain("private", formatted, StringComparison.Ordinal);
+        if (body.Length > 0)
+        {
+            using var document = JsonDocument.Parse(formatted);
+            Assert.Equal("Operation failed", document.RootElement.GetProperty("title").GetString());
+            Assert.Equal(503, document.RootElement.GetProperty("status").GetInt32());
+        }
+    }
+
+    [Fact]
+    public void XboxPartnerCommandErrorFormatter_PreservesServerProblemDetails()
+    {
+        var exception = new XboxPartnerApiException(
+            HttpStatusCode.BadRequest,
+            "Bad Request",
+            """{"title":"Invalid document","detail":"The document name was rejected.","code":"invalid_document","errors":{"Document":["The document name is not allowed."]}}""",
+            new Uri("https://nodpublishers.com/request"));
+
+        using var document = JsonDocument.Parse(
+            XboxPartnerCommandErrorFormatter.Format(
+                exception, compact: true,
+                fallbackTitle: "Operation failed", fallbackDetail: "The operation failed."));
+        JsonElement error = document.RootElement;
+
+        Assert.Equal(400, error.GetProperty("status").GetInt32());
+        Assert.Equal("Invalid document", error.GetProperty("title").GetString());
+        Assert.Equal("The document name was rejected.", error.GetProperty("detail").GetString());
+        Assert.Equal("invalid_document", error.GetProperty("code").GetString());
+        Assert.Equal("The document name is not allowed.", error.GetProperty("errors").GetProperty("Document")[0].GetString());
+    }
+
     [Fact]
     public void XboxPartnerCommandErrorFormatter_PreservesSafeProblemDetails()
     {
@@ -965,7 +1150,7 @@ public class XboxPartnerApiClientTests
 
         Assert.Equal(400, root.GetProperty("status").GetInt32());
         Assert.Equal("One or more validation errors occurred.", root.GetProperty("title").GetString());
-        Assert.Equal(exception.Message, root.GetProperty("detail").GetString());
+        Assert.Equal("The service returned HTTP 400 (Bad Request).", root.GetProperty("detail").GetString());
         Assert.Equal(["PNG could not be read."],
             root.GetProperty("errors").GetProperty("File").EnumerateArray().Select(x => x.GetString()));
         Assert.Equal(["A SCID is required.", "Use a valid GUID."],
@@ -1069,7 +1254,7 @@ public class XboxPartnerApiClientTests
             exception, compact: true, "Image requirements.",
             omitAdditionalDetailWithFieldErrors: true));
         Assert.False(document.RootElement.TryGetProperty("errors", out _));
-        Assert.Equal("XboxPartner request failed",
+        Assert.Equal("Request failed",
             document.RootElement.GetProperty("title").GetString());
         Assert.Contains("Image requirements.",
             document.RootElement.GetProperty("detail").GetString(), StringComparison.Ordinal);
@@ -1105,12 +1290,34 @@ public class XboxPartnerApiClientTests
         using var document = JsonDocument.Parse(formatted);
 
         Assert.Equal(
-            "XboxPartner request failed",
+            "Request failed",
             document.RootElement.GetProperty("title").GetString());
-        Assert.Equal(exception.Message, document.RootElement.GetProperty("detail").GetString());
+        Assert.Equal(
+            "The service returned HTTP 502 (Bad Gateway).",
+            document.RootElement.GetProperty("detail").GetString());
         Assert.DoesNotContain("secret", formatted, StringComparison.Ordinal);
         Assert.DoesNotContain("sensitive", formatted, StringComparison.Ordinal);
         Assert.DoesNotContain("leaky", formatted, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void XboxPartnerCommandErrorFormatter_StatesStatusWhenObjectHasNoDetail()
+    {
+        var exception = new XboxPartnerApiException(
+            (HttpStatusCode)503,
+            reasonPhrase: null,
+            """{"code":"Unavailable"}""",
+            new Uri("https://gateway.example/xboxpartner/v1/xboxlive/sandboxes"));
+
+        using var document = JsonDocument.Parse(
+            XboxPartnerCommandErrorFormatter.Format(exception, compact: true, additionalDetail: "Retry later."));
+
+        Assert.Equal(503, document.RootElement.GetProperty("status").GetInt32());
+        Assert.Equal("Request failed", document.RootElement.GetProperty("title").GetString());
+        Assert.Equal(
+            "The service returned HTTP 503. Retry later.",
+            document.RootElement.GetProperty("detail").GetString());
+        Assert.Equal("Unavailable", document.RootElement.GetProperty("code").GetString());
     }
 
     [Fact]
@@ -1254,12 +1461,12 @@ public class XboxPartnerApiClientTests
     {
         var publish = Program.BuildRootCommand().Parse(
             "xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee " +
-            "--sandbox RETAIL --source-sandbox XDKS.1");
+            "--sandbox-id RETAIL --source-sandbox-id XDKS.1");
         var status = Program.BuildRootCommand().Parse(
-            "xbl publish status --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox RETAIL");
+            "xbl publish status --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id RETAIL");
         var commit = Program.BuildRootCommand().Parse(
             "xbl document commit --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee " +
-            "--sandbox XDKS.1 --file achievements.xml --validate-only");
+            "--sandbox-id XDKS.1 --file achievements.xml --validate-only");
 
         Assert.Empty(publish.Errors);
         Assert.Empty(status.Errors);
@@ -1267,16 +1474,16 @@ public class XboxPartnerApiClientTests
 
         Assert.NotEmpty(Program.BuildRootCommand().Parse(
             "xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee " +
-            "--sandbox RETAIL --source-sandbox XDKS.1 --user-id 1").Errors);
+            "--sandbox-id RETAIL --source-sandbox-id XDKS.1 --user-id 1").Errors);
         Assert.NotEmpty(Program.BuildRootCommand().Parse(
             "xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee " +
             "--from XDKS.1 --to RETAIL").Errors);
         Assert.NotEmpty(Program.BuildRootCommand().Parse(
             "xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee " +
-            "--sandbox RETAIL --source-sandbox XDKS.1 --source-view working").Errors);
+            "--sandbox-id RETAIL --source-sandbox-id XDKS.1 --source-view working").Errors);
         Assert.NotEmpty(Program.BuildRootCommand().Parse(
             "xbl publish status --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee " +
-            "--sandbox RETAIL --user-email developer@example.com").Errors);
+            "--sandbox-id RETAIL --user-email developer@example.com").Errors);
     }
 
     [Fact]
@@ -1481,8 +1688,8 @@ public class XboxPartnerApiClientTests
                 "xbl", "publish", "start",
                 "--seller-id", "12345",
                 "--scid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "--source-sandbox", "XDKS.1",
-                "--sandbox", "RETAIL",
+                "--source-sandbox-id", "XDKS.1",
+                "--sandbox-id", "RETAIL",
                 "--output", "table",
                 "--confirm",
             ],
@@ -1523,7 +1730,7 @@ public class XboxPartnerApiClientTests
                 "xbl", "publish", "start",
                 "--seller-id", "12345",
                 "--scid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "--sandbox", "XDKS.1",
+                "--sandbox-id", "XDKS.1",
             ],
             handler);
 
@@ -1631,8 +1838,8 @@ public class XboxPartnerApiClientTests
                 "xbl", "publish", "start",
                 "--seller-id", "12345",
                 "--scid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "--source-sandbox", "xdks.1",
-                "--sandbox", "XDKS.1",
+                "--source-sandbox-id", "xdks.1",
+                "--sandbox-id", "XDKS.1",
             ],
             handler);
 
@@ -1814,7 +2021,7 @@ public class XboxPartnerApiClientTests
 
     [Theory]
     [InlineData(HttpStatusCode.GatewayTimeout, """{"title":"Gateway Timeout","code":"downstream_timeout"}""", "\"downstream_timeout\"")]
-    [InlineData(HttpStatusCode.OK, "[]", "Request failed: The XboxPartner configuration list response must contain the configurations array.")]
+    [InlineData(HttpStatusCode.OK, "[]", "Request failed: The configuration list response must contain the configurations array.")]
     public async Task ConfigurationsList_FailureOnALaterPageWritesTheCorrelationIdAndNothingToStdout(
         HttpStatusCode statusCode,
         string body,
@@ -1958,7 +2165,7 @@ public class XboxPartnerApiClientTests
             Assert.Equal(0, result.ExitCode);
             Assert.Equal("""["userstats"]""" + Environment.NewLine, result.Stdout);
             Assert.Contains(
-                "XboxPartner gateway is overridden",
+                "service endpoint is overridden",
                 result.Stderr,
                 StringComparison.Ordinal);
             Assert.NotNull(handler.RequestUri);

@@ -154,7 +154,9 @@ xbox game get 1234ABCD --details --seller-id 1234567
 ```
 
 `game list` and `game get` read the catalog 100 games at a time, following every page, and
-print one complete list. Partner Center can't search by title ID, Store ID, or name, but the
+print one complete list. A large catalog can take a few minutes to read, so the CLI shows
+its [progress](../commands.md#progress) on stderr while it reads. Partner Center can't search by
+title ID, Store ID, or name, but the
 service reads a game by its Store ID or title ID directly, so a lookup usually
 takes one request. When it can't, and for `--keyword`, the CLI reads every page,
 except that a Store ID lookup stops at its first match. These
@@ -196,8 +198,9 @@ PowerShell on Windows and for a POSIX shell such as bash or zsh elsewhere, so th
 pasted as they are.
 
 Submission is never retried. A wait timeout does not cancel the job — check it with
-`game job get` instead of submitting again. If no job ID is available, inspect
-`game list` before trying again. **Do not resubmit an uncertain creation.**
+`game job get` instead of submitting again. If no job ID is available, or the job ID the
+service returned contains characters that can't be printed safely, inspect `game list`
+before trying again. **Do not resubmit an uncertain creation.**
 
 ## Checking a creation job
 

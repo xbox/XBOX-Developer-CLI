@@ -6,13 +6,13 @@ description: List, get, and create the XBOX sandboxes available to the signed-in
 # Sandbox
 
 Sandboxes are isolated environments in a Partner Center account. They isolate Store products,
-such as listings and installs, as well as XBOX Live services. Global sandboxes such as `RETAIL`
+such as listings and installs, as well as XBOX services. Global sandboxes such as `RETAIL`
 are managed by Microsoft; development sandboxes such as `ABCDEF.1` belong to your account. See
 [Sandboxes](https://learn.microsoft.com/gaming/game-publishing/concepts/sandboxes) in the Game
 Publishing Guide.
 
 These commands sit at the top level rather than under `xbl`, because a sandbox belongs to
-the Partner Center account rather than to XBOX Live configuration. They don't call a PlayFab
+the Partner Center account rather than to XBOX services configuration. They don't call a PlayFab
 API.
 
 ## Commands
@@ -42,7 +42,7 @@ the selected profile.
 carries no PlayFab response envelope.
 
 Pass a `sandboxId` returned by `list` to `get` or, exactly as listed, to other commands such
-as the [`xbl`](xbl.md) commands' `--sandbox` option.
+as the [`xbl`](xbl.md) commands' `--sandbox-id` option.
 
 ### Sandbox IDs
 
@@ -90,9 +90,9 @@ The list is returned in pages; the command follows every `continuationToken` its
 with one correlation ID for the whole listing. It fails rather than loop if a token
 repeats or the list doesn't end within 1,000 pages.
 
-The list now comes from Partner Center rather than from XBOX Live. It shows the same sandboxes
-as the Sandboxes page in Partner Center. This changes it in three ways for scripts written
-against earlier versions:
+The list now comes from Partner Center rather than from XBOX services. It shows the same
+sandboxes as the Sandboxes page in Partner Center. This changes it in three ways for scripts
+written against earlier versions:
 
 - Each entry is an object rather than a sandbox name string. Read `sandboxId` for the name.
 - A seller is required. Earlier versions used a developer's only seller when

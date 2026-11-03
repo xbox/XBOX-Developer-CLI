@@ -11,7 +11,7 @@ in them. They never change individual accounts, and they never return passwords.
 
 `test-account` is a root command rather than part of `xbl` for the same reason
 [`sandbox`](sandbox.md) is: test accounts belong to the Partner Center seller, not to one
-service, and are used across Store, XBOX Live, and sandbox testing.
+service, and are used across Store, XBOX services, and sandbox testing.
 
 ## Commands
 
@@ -129,8 +129,12 @@ below, `detail` ends with a hint about what to check. A 400 gets none, and neith
 that already asks you to sign in again. When a request returns an error, or `batch list` gets a
 response it can't read, stderr starts with an `x-ms-correlation-id: <id>` line before the error.
 
-Other failures print plain text, not JSON: an error response whose body is not a JSON object
-(such as an HTML page from a proxy) prints its message and the hint, and the remaining
+HTTP 429 errors include the wait from `Retry-After` as `retryAfterSeconds`, even when the
+body is empty or unreadable. See [Rate limits](../cli-for-agents.md#rate-limits).
+
+Other failures print plain text, not JSON: except for a 429 with that header, an error
+response whose body is not a JSON object (such as an HTML page from a proxy) prints its
+message and the hint, and the remaining
 failures (sign in, network, seller lookup, or a response that is not valid JSON) print a
 `Request failed: <message>` line. Scripts should check the exit code before parsing stderr.
 
@@ -139,6 +143,7 @@ failures (sign in, network, seller lookup, or a response that is not valid JSON)
 | 400 | A filter was rejected, or no seller was selected and the developer has several; pass `--seller-id`. |
 | 403 | The signed in developer is not a member of this seller or lacks the Partner Center test account role for it; for `batch get`, the batch belongs to a different seller (pass `--seller-id`), or another developer created it and the developer lacks seller wide test account read permission; for `test-account get`, `--seller-id` helps only when the account belongs to another seller; or the sign in needs to be refreshed, as the error detail says. |
 | 404 | No batch with that ID exists, or test accounts aren't available yet. |
+| 429 | With code `rate_limited`, you sent too many requests in a short time (this also applies to `test-account get`). If a script runs these commands, slow it down. The error says how long to wait; see [Rate limits](../cli-for-agents.md#rate-limits). |
 | 502 | The service could not complete the request; retry first. Signing in again does not help. Some service versions also return 502, rather than 403, when the developer lacks the test account role or, for `batch get`, when another developer created the batch. |
 | 503 | Test accounts are disabled or not configured for this service. |
 | 504 | The service did not answer in time; retry. |
@@ -255,6 +260,16 @@ so they stay out of shell history, process listings, and logs. Each comes from, 
 Without a terminal and without the file option, the command fails before sending anything. Text
 read from a file or stdin is decoded as UTF-8. The CLI never prints either value.
 
+Password must be 8 to 16 characters and contain at least three of these four categories:
+lowercase letters, uppercase letters, numbers, and symbols. Underscore does not count as a
+symbol. The password must not exactly match the security answer.
+
+The CLI shows these requirements before prompting for a password and rejects an empty password
+before submitting the creation request. The service validates all other password rules,
+including whether the password matches the security answer. A password rejection ends the
+command with exit code 1. Service rejections include the service error details. The CLI does
+not retry the request.
+
 ### Waiting and exit codes
 
 While waiting, the CLI polls the job as the service's `Retry-After` asks, kept between 2 seconds
@@ -339,6 +354,7 @@ not support yet.
 | `test_account_create_outcome_unknown` | Exit code 3; see [When the outcome is unknown](#when-the-outcome-is-unknown). |
 | `downstream_request_rejected` | The request was rejected without naming a field, for example because the `--email-prefix` group is not one of your sandbox groups (the part of a sandbox ID before the dot), or the security question or answer is too long. On `job get` or `job wait`, a `404` with this code means no such job exists in that batch. |
 | `downstream_throttled` | Requests are being throttled and nothing was created. Wait, then try again. |
+| `rate_limited` | 429: you sent too many requests in a short time and nothing was created. See [Rate limits](../cli-for-agents.md#rate-limits). |
 | Any other code, or none, on a 5xx | Exit code 3, because a batch may exist; see [When the outcome is unknown](#when-the-outcome-is-unknown). |
 | `feature_disabled`, `service_configuration_invalid` | 503: test account creation is turned off or not configured. Exit code 1. |
 | `invalid_request`, or a `400` with no code | The request was malformed or a value is not allowed; `detail` or `errors` names the field. |
@@ -488,6 +504,7 @@ Failures write the same sanitized JSON error as other commands. These codes add 
 | `test_account_keyword_invalid` | 400: a `--tag` value is not allowed. |
 | `test_account_access_denied` | The developer lacks the Partner Center role to manage test accounts for this seller. With `--allow-not-mine`, changing a batch you did not create was refused. |
 | `downstream_throttled` | Requests are being throttled. Wait, then try again. |
+| `rate_limited` | 429: you sent too many requests in a short time. See [Rate limits](../cli-for-agents.md#rate-limits). |
 | `test_account_update_outcome_unknown` | 502: exit code 3. |
 | `feature_disabled`, `service_configuration_invalid` | 503: test accounts are turned off or not configured. Exit code 1. |
 
@@ -569,6 +586,7 @@ Failures write the same sanitized JSON error as other commands. These codes add 
 | `test_account_batch_busy` | 409: a job is running on the batch, which includes a delete already in progress. Wait until `batch get` shows `jobId` as `null`. A `jobId` that never clears may be a stalled job. |
 | `test_account_access_denied` | The developer lacks the Partner Center role to manage test accounts for this seller. With `--allow-not-mine`, deleting a batch you did not create was refused. |
 | `downstream_throttled` | Requests are being throttled. Wait, then try again. |
+| `rate_limited` | 429: you sent too many requests in a short time. See [Rate limits](../cli-for-agents.md#rate-limits). |
 | `test_account_delete_outcome_unknown` | 502 or 504: exit code 3. A 504 with no code is treated the same. |
 | `feature_disabled`, `service_configuration_invalid` | 503: test accounts are turned off or not configured. Exit code 1. |
 

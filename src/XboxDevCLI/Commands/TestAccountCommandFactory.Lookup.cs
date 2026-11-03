@@ -44,9 +44,7 @@ internal static partial class TestAccountCommandFactory
                 $"xbox test-account get ABCD-tester00000@{TestAccountLookup.Domain}",
                 $"xbox test-account get ABCD-tester00000@{TestAccountLookup.Domain} --output table",
             ],
-            endpoint: $"/{XboxPartnerClient.TestAccountBatchesPath} then /{XboxPartnerClient.TestAccountBatchesPath}/{{batchId}}",
-            table: XboxPartnerCommandSupport.TestAccountLookupView,
-            learnMore: []));
+            table: XboxPartnerCommandSupport.TestAccountLookupView));
         command.Arguments.Add(emailArgument);
         sellerOption.AddTo(command);
         command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>

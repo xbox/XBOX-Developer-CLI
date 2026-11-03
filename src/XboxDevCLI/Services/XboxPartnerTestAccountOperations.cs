@@ -15,7 +15,8 @@ internal sealed partial class XboxPartnerClient
     public async Task<string> ListTestAccountBatchesAsync(
         long? sellerId,
         TestAccountBatchFilter filter,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<int>? pageRead = null)
     {
         ArgumentNullException.ThrowIfNull(filter);
         ValidateSellerId(sellerId);
@@ -39,7 +40,8 @@ internal sealed partial class XboxPartnerClient
                 return (HttpMethod.Get, TestAccountBatchesPath + BuildQueryString([.. filters, paging]), null);
             },
             cancellationToken,
-            serviceName: null).ConfigureAwait(false);
+            serviceName: null,
+            pageRead: pageRead).ConfigureAwait(false);
         return "{\"batches\":[" + string.Join(',', batches) + "]}";
     }
 

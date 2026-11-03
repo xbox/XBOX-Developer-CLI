@@ -47,7 +47,8 @@ internal static class GameCommandFactory
             Scope:
                 "All games belonging to the seller selected by --seller-id, XBOX_SELLER_ID, or 'context set'.",
             Output:
-                "JSON by default; --output table groups games by TITLE ID, while --details shows one indented block per game. Result count and query duration are written to stderr for both human-readable views.",
+                "JSON by default; --output table groups games by TITLE ID, while --details shows one indented block per game. Result count and query duration are written to stderr for both human-readable views. " +
+                ListProgress.HelpOutput,
             Examples:
             [
                 "xbox game list --seller-id 1234567",
@@ -109,7 +110,8 @@ internal static class GameCommandFactory
             Scope:
                 "Games belonging to the seller selected by --seller-id, XBOX_SELLER_ID, or 'context set'.",
             Output:
-                "A games collection in JSON; --output table groups by TITLE ID, while --details shows one indented block per game. Result count and query duration are written to stderr for both human-readable views.",
+                "A games collection in JSON; --output table groups by TITLE ID, while --details shows one indented block per game. Result count and query duration are written to stderr for both human-readable views. " +
+                ListProgress.HelpOutput,
             Examples:
             [
                 "xbox game get --store-id 9N0000000000 --seller-id 1234567",
@@ -167,11 +169,12 @@ internal static class GameCommandFactory
             sellerIdOption,
             baseUrlOption,
             clientFactory,
-            (client, baseUrl, sellerId) =>
+            (client, baseUrl, sellerId, pageRead) =>
                 client.GetGamesAsync(
                     baseUrl,
                     sellerId,
-                    cancellationToken: cancellationToken),
+                    cancellationToken: cancellationToken,
+                    pageRead: pageRead),
             (json, result, elapsed) =>
                 XboxPartnerCommandSupport.WriteGameOutput(
                     json,
@@ -243,14 +246,15 @@ internal static class GameCommandFactory
             sellerIdOption,
             baseUrlOption,
             clientFactory,
-            (client, baseUrl, sellerId) =>
+            (client, baseUrl, sellerId, pageRead) =>
                 client.GetGamesAsync(
                     baseUrl,
                     sellerId,
                     titleId: titleId,
                     storeId: storeId,
                     keyword: keyword,
-                    cancellationToken: cancellationToken),
+                    cancellationToken: cancellationToken,
+                    pageRead: pageRead),
             (json, result, elapsed) =>
                 XboxPartnerCommandSupport.WriteGameOutput(
                     json,
@@ -304,7 +308,7 @@ internal static class GameCommandFactory
         Option<string?> sellerIdOption,
         Option<string?> baseUrlOption,
         Func<IConfiguration, IXboxPartnerClient>? clientFactory,
-        Func<IXboxPartnerClient, string, string, Task<string>> request,
+        Func<IXboxPartnerClient, string, string, Action<int>, Task<string>> request,
         Action<string, ParseResult, TimeSpan> writeOutput,
         CancellationToken cancellationToken)
     {
@@ -320,7 +324,12 @@ internal static class GameCommandFactory
                 ? new XboxPartnerClient(configuration, authenticationService: Program.GetAuthentication(parseResult))
                 : clientFactory(configuration);
             var sellerId = await XboxPartnerCommandSupport.GetSellerIdAsync(parseResult, sellerIdOption);
-            var response = await request(client, baseUrl, sellerId);
+            string response;
+            using (var progress = ListProgress.Start("Reading games"))
+            {
+                response = await request(client, baseUrl, sellerId, progress.PageRead);
+            }
+
             stopwatch.Stop();
             writeOutput(response, parseResult, stopwatch.Elapsed);
             return 0;
@@ -359,7 +368,7 @@ internal static class GameCommandFactory
         catch (TaskCanceledException exception) when (!cancellationToken.IsCancellationRequested)
         {
             return XboxPartnerCommandSupport.WriteLocalError(
-                new TimeoutException("The XboxPartner request timed out.", exception));
+                new TimeoutException("The request timed out.", exception));
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -418,8 +427,7 @@ internal static class GameCommandFactory
 
                     cancellationToken.ThrowIfCancellationRequested();
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption),
-                        () => $"POST {url}/xboxpartner/v1/games " +
-                            $"({XboxPartnerClient.SellerIdHeader}: {sellerId})");
+                        () => $"Submitting game creation for seller {sellerId}.");
                     XboxPartnerGameCreationJob job;
                     try
                     {
@@ -442,10 +450,12 @@ internal static class GameCommandFactory
                         throw;
                     }
 
-                    var correlation = string.IsNullOrWhiteSpace(job.CorrelationId)
+                    var correlationId = XboxPartnerCommandSupport.ForTerminal(job.CorrelationId);
+                    var correlation = string.IsNullOrWhiteSpace(correlationId)
                         ? string.Empty
-                        : $" (Correlation ID: {job.CorrelationId})";
-                    Console.Error.WriteLine($"Game creation job submitted: {job.JobId}{correlation}");
+                        : $" (Correlation ID: {correlationId})";
+                    Console.Error.WriteLine(
+                        $"Game creation job submitted: {XboxPartnerCommandSupport.ForTerminal(job.JobId)}{correlation}");
                     return await WaitForJobAsync(
                         result, client, url, sellerId, job, dependencies, cancellationToken);
                 },
@@ -499,8 +509,8 @@ internal static class GameCommandFactory
                 {
                     var id = result.GetValue(jobId)!;
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption),
-                        () => $"GET {url}/xboxpartner/v1/jobs/{Uri.EscapeDataString(id)} " +
-                            $"({XboxPartnerClient.SellerIdHeader}: {sellerId})");
+                        () => $"Reading game creation job {XboxPartnerCommandSupport.ForTerminal(id)} " +
+                            $"for seller {sellerId}.");
                     var job = await client.GetGameCreationJobAsync(url, sellerId, id, cancellationToken);
 
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption), () => "Request succeeded.");
@@ -531,10 +541,15 @@ internal static class GameCommandFactory
         CancellationToken cancellationToken)
     {
         var recovery = BuildGameRecoveryCommand(result, sellerId, baseUrl, initial.JobId);
+        var displayJobId = XboxPartnerCommandSupport.ForTerminal(initial.JobId);
+        string RecoveryLine(string lead, string unsafeIdAdvice) => CanPrintJobId(initial.JobId)
+            ? $"{lead} with: {recovery}"
+            : $"The job ID can't be shown safely, so {unsafeIdAdvice} Run: {recovery}";
+        const string UnknownOutcomeAdvice = "list games to see whether the game was created. Don't resubmit.";
         var verbose = result.GetValue(Program.VerboseOption);
         if (!initial.Completed)
         {
-            Console.Error.WriteLine($"Waiting for game creation job {initial.JobId}...");
+            Console.Error.WriteLine($"Waiting for game creation job {displayJobId}...");
         }
 
         XboxPartnerGameCreationJob? completed;
@@ -545,7 +560,7 @@ internal static class GameCommandFactory
                 requestToken =>
                 {
                     Program.WriteVerbose(verbose,
-                        () => $"GET {baseUrl}/xboxpartner/v1/jobs/{Uri.EscapeDataString(initial.JobId)}");
+                        () => $"Reading game creation job {displayJobId}.");
                     return client.GetGameCreationJobAsync(baseUrl, sellerId, initial.JobId, requestToken);
                 },
                 dependencies.DelayAsync, cancellationToken, dependencies.GetUtcNow);
@@ -553,10 +568,16 @@ internal static class GameCommandFactory
         catch (Exception exception) when (XboxPartnerCommandSupport.IsRequestError(exception))
         {
             Console.Error.WriteLine(
-                exception is OperationCanceledException
-                    ? $"Stopped waiting for job {initial.JobId}; it may still be running."
-                    : $"The game was submitted, but its status could not be read: {XboxPartnerCommandSupport.ForTerminal(exception.Message)}");
-            Console.Error.WriteLine($"Check its status with: {recovery}");
+                exception switch
+                {
+                    OperationCanceledException =>
+                        $"Stopped waiting for job {displayJobId}; it may still be running.",
+                    XboxPartnerApiException =>
+                        "The game was submitted, but its status could not be read.",
+                    _ =>
+                        $"The game was submitted, but its status could not be read: {XboxPartnerCommandSupport.ForTerminal(exception.Message)}",
+                });
+            Console.Error.WriteLine(RecoveryLine("Check its status", UnknownOutcomeAdvice));
             XboxPartnerCommandSupport.WriteRequestError(exception, result, cancellationToken);
             return 1;
         }
@@ -565,18 +586,19 @@ internal static class GameCommandFactory
         {
             WriteJobResponse(initial.RawResponse, result);
             Console.Error.WriteLine(
-                $"Job {initial.JobId} is still running after {XboxPartnerJobPoller.DefaultTimeout.TotalSeconds:0} seconds.");
-            Console.Error.WriteLine($"Check its status with: {recovery}");
+                $"Job {displayJobId} is still running after {XboxPartnerJobPoller.DefaultTimeout.TotalSeconds:0} seconds.");
+            Console.Error.WriteLine(RecoveryLine("Check its status", UnknownOutcomeAdvice));
             return 0;
         }
 
         WriteJobResponse(completed.RawResponse, result);
+        var completedJobId = XboxPartnerCommandSupport.ForTerminal(completed.JobId);
         Console.Error.WriteLine(completed.Succeeded
-            ? $"Game creation job {completed.JobId} completed."
-            : $"Game creation job {completed.JobId} completed without creating the game.");
+            ? $"Game creation job {completedJobId} completed."
+            : $"Game creation job {completedJobId} completed without creating the game.");
         if (!completed.Succeeded)
         {
-            Console.Error.WriteLine($"Review the job with: {recovery}");
+            Console.Error.WriteLine(RecoveryLine("Review the job", "list recent games to review it."));
         }
 
         return completed.Succeeded ? 0 : 2;
@@ -654,11 +676,17 @@ internal static class GameCommandFactory
             dataOnly: false));
     }
 
+    private static bool CanPrintJobId(string jobId) => XboxPartnerCommandSupport.ForTerminal(jobId) == jobId;
+
+    // A job ID that would change when printed safely can't be pasted back as the same ID, so
+    // recovery lists games instead of naming a different job.
     private static string BuildGameRecoveryCommand(
         ParseResult result, string sellerId, string baseUrl, string? jobId = null) =>
         XboxPartnerCommandSupport.BuildRecoveryCommand(
             result,
-            $"game {(jobId is null ? "list" : $"job get {ShellQuoting.Quote(jobId)}")}",
+            jobId is null || !CanPrintJobId(jobId)
+                ? "game list"
+                : $"game job get {ShellQuoting.Quote(jobId)}",
             sellerId,
             baseUrl);
 }

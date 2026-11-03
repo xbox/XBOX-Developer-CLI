@@ -411,6 +411,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [InlineData(HttpStatusCode.Forbidden, "test_account_sandbox_access_denied", "does not grant access to a sandbox")]
     [InlineData(HttpStatusCode.BadRequest, "test_account_keyword_invalid", "Check the --tag values.")]
     [InlineData(HttpStatusCode.NotFound, "test_account_batch_not_found", "Check the batch ID")]
+    [InlineData(HttpStatusCode.TooManyRequests, "rate_limited", "You sent too many requests")]
     [InlineData(HttpStatusCode.MethodNotAllowed, null, "Updating test account batches may be unavailable.")]
     public async Task Update_RefusalExitsOneWithAHint(HttpStatusCode status, string? code, string hint)
     {

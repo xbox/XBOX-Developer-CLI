@@ -49,7 +49,7 @@ public class HelpCommandTests
         Assert.DoesNotContain(oldOption, flag.Stdout, StringComparison.Ordinal);
         if (path == "xbl document commit")
         {
-            Assert.Contains("Repeat --file", flag.Stdout, StringComparison.Ordinal);
+            Assert.Contains("Repeat --file", NormalizeWhitespace(flag.Stdout), StringComparison.Ordinal);
         }
     }
 
@@ -845,6 +845,7 @@ public class HelpCommandTests
         Assert.Contains("table", normalizedSchemas, StringComparison.Ordinal);
 
         Assert.Equal(0, documents.ExitCode);
+        Assert.Contains("--sandbox-id <id>", normalizedDocuments, StringComparison.Ordinal);
         Assert.Contains("Default: sandbox.", normalizedDocuments, StringComparison.Ordinal);
         Assert.Contains("Default: working.", normalizedDocuments, StringComparison.Ordinal);
         Assert.Contains("Default: latest version.", normalizedDocuments, StringComparison.Ordinal);
@@ -869,6 +870,7 @@ public class HelpCommandTests
         string normalizedStatus = NormalizeWhitespace(status.Stdout);
 
         Assert.Equal(0, commit.ExitCode);
+        Assert.Contains("--sandbox-id <id>", normalizedCommit, StringComparison.Ordinal);
         Assert.Contains("Default: sandbox.", normalizedCommit, StringComparison.Ordinal);
         Assert.Contains(
             "Default: false, which commits documents.",
@@ -882,7 +884,7 @@ public class HelpCommandTests
         Assert.Contains("working and published", normalizedConfigurations, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("TABLE OUTPUT", normalizedConfigurations, StringComparison.Ordinal);
         Assert.Equal(0, configuration.ExitCode);
-        Assert.Contains("--sandbox", normalizedConfiguration, StringComparison.Ordinal);
+        Assert.Contains("--sandbox-id <id>", normalizedConfiguration, StringComparison.Ordinal);
         Assert.Contains("No default.", normalizedConfiguration, StringComparison.Ordinal);
         Assert.Contains("TABLE OUTPUT", normalizedConfiguration, StringComparison.Ordinal);
 
@@ -896,12 +898,14 @@ public class HelpCommandTests
             normalizedPublish,
             StringComparison.Ordinal);
         Assert.DoesNotContain("--source-view", normalizedPublish, StringComparison.Ordinal);
-        Assert.Contains("--sandbox", normalizedPublish, StringComparison.Ordinal);
+        Assert.Contains("--sandbox-id <id>", normalizedPublish, StringComparison.Ordinal);
+        Assert.Contains("--source-sandbox-id <id>", normalizedPublish, StringComparison.Ordinal);
         Assert.DoesNotContain("--from", normalizedPublish, StringComparison.Ordinal);
         Assert.DoesNotContain("--to", normalizedPublish, StringComparison.Ordinal);
         Assert.Contains("TABLE OUTPUT", normalizedPublish, StringComparison.Ordinal);
 
         Assert.Equal(0, status.ExitCode);
+        Assert.Contains("--sandbox-id <id>", normalizedStatus, StringComparison.Ordinal);
         Assert.Contains("No default.", normalizedStatus, StringComparison.Ordinal);
         Assert.Contains("TABLE OUTPUT", normalizedStatus, StringComparison.Ordinal);
         Assert.DoesNotContain("--user-id", normalizedStatus, StringComparison.Ordinal);

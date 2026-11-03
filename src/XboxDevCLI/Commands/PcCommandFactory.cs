@@ -55,8 +55,8 @@ internal static class PcCommandFactory
     }
 
     private static string ToolLocationNote =>
-        $"Runs {PcSandbox.ToolFileName}, the PC Sandbox Switcher from the GDK and the XBOX Live " +
-        $"developer tools, found through {PcSandbox.ToolPathConfigurationKey}, next to the CLI, " +
+        $"Runs {PcSandbox.ToolFileName}, the PC Sandbox Switcher from the GDK and the XBOX services " +
+        $"development tools, found through {PcSandbox.ToolPathConfigurationKey}, next to the CLI, " +
         "or on PATH.";
 
     private static Command CreateGetCommand(PcSandboxDependencies dependencies)

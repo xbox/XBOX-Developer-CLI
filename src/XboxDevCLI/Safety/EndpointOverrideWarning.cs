@@ -32,18 +32,18 @@ internal static class EndpointOverrideWarning
     /// </summary>
     internal const string DefaultBaseUrlTemplate = "https://xboxdevcli.playfabapi.com";
 
-    /// <summary>Configuration key holding the XboxPartner gateway base URL.</summary>
+    /// <summary>Configuration key holding the service base URL.</summary>
     internal const string XboxPartnerConfigurationKey = "XboxPartner:BaseUrl";
 
     /// <summary>
-    /// The XboxPartner gateway shipped in <c>appsettings.json</c>, compiled in for the same
+    /// The service URL shipped in <c>appsettings.json</c>, compiled in for the same
     /// reason as <see cref="DefaultBaseUrlTemplate"/>.
     /// </summary>
     /// <remarks>
     /// This is a tamper-detection baseline only; it is never a fallback.
     /// <c>XboxPartnerCommandSupport.ResolveBaseUrl</c> still fails when the configuration key is
     /// missing or blank, so the shipped appsettings.json remains the single source of the
-    /// gateway URL and a deployment can still be retargeted without a rebuild.
+    /// service URL and a deployment can still be retargeted without a rebuild.
     /// </remarks>
     internal const string DefaultXboxPartnerBaseUrl = "https://p-xbsvc.xboxpartner.mainp.azureplayfab.com";
 
@@ -118,13 +118,10 @@ internal static class EndpointOverrideWarning
     }
 
     /// <summary>
-    /// Builds the warning text for an overridden XboxPartner gateway, or returns <c>null</c>
-    /// when the effective gateway is the shipped default.
+    /// Builds the warning text for an overridden service endpoint, or returns <c>null</c>
+    /// when the effective endpoint is the shipped default.
     /// </summary>
-    internal static string? GetXboxPartnerWarning(
-        string? baseUrl,
-        string serviceName = "XboxPartner gateway",
-        bool includeDefaultUrl = true)
+    internal static string? GetXboxPartnerWarning(string? baseUrl)
     {
         if (string.Equals(
                 (baseUrl ?? string.Empty).Trim().TrimEnd('/'),
@@ -136,16 +133,15 @@ internal static class EndpointOverrideWarning
 
         return string.Join(
             Environment.NewLine,
-            $"Warning: the {serviceName} is overridden to '{DescribeTarget(baseUrl)}' " +
+            $"Warning: the service endpoint is overridden to '{DescribeTarget(baseUrl)}' " +
             $"(configuration key '{XboxPartnerConfigurationKey}').",
-            "         Requests and your access token will be sent to that host instead of the default " +
-            (includeDefaultUrl ? $"gateway '{DefaultXboxPartnerBaseUrl}'." : "endpoint."),
+            "         Requests and your access token will be sent to that host instead of the default endpoint.",
             "         If you did not intend this, inspect appsettings.json, any appsettings.{environment}.json " +
             "overlay, the XBOX_XBOXPARTNER__BASEURL environment variable, and the --base-url option.");
     }
 
     /// <summary>
-    /// Writes the XboxPartner override warning to <paramref name="writer"/> when the gateway has
+    /// Writes the XboxPartner override warning to <paramref name="writer"/> when the endpoint has
     /// been repointed. Called from <c>XboxPartnerCommandSupport.ResolveBaseUrl</c>, which is the
     /// single point where the option and configuration sources converge, so the warning covers
     /// <c>--base-url</c> as well and is emitted before any request carries a token. Best-effort:
@@ -153,13 +149,11 @@ internal static class EndpointOverrideWarning
     /// </summary>
     internal static void WriteXboxPartnerWarningIfOverridden(
         string? baseUrl,
-        TextWriter writer,
-        string serviceName = "XboxPartner gateway",
-        bool includeDefaultUrl = true)
+        TextWriter writer)
     {
         try
         {
-            var warning = GetXboxPartnerWarning(baseUrl, serviceName, includeDefaultUrl);
+            var warning = GetXboxPartnerWarning(baseUrl);
             if (warning == null)
             {
                 return;

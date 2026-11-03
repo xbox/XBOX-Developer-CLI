@@ -20,7 +20,7 @@ earlier ones**:
 3. Environment variables: `XBOX_` and the key's path. See [Environment variables](#environment-variables).
 4. CLI option overrides.
 
-The seller, PlayFab title, and XBOX Live sandbox aren't configuration. They're context values,
+The seller, PlayFab title, and XBOX sandbox aren't configuration. They're context values,
 resolved from their flag, then `XBOX_` plus the option's name, such as `XBOX_SELLER_ID`, then the
 value saved with [`xbox context set`](commands/context.md). Configuration files don't set them.
 See [Saved context](#saved-context).
@@ -65,7 +65,7 @@ Useful environment variables include:
 |----------------------|-------------------------------|
 | `XBOX_PLAYFAB_TITLE_ID` | The PlayFab title, a context value |
 | `XBOX_SELLER_ID` | The Partner Center seller, a context value |
-| `XBOX_SANDBOX` | The XBOX Live sandbox, a context value |
+| `XBOX_SANDBOX_ID` | The XBOX sandbox, a context value |
 | `XBOX_PROFILE` | The profile saved context values come from, when `--profile` isn't given. Refused in a service-principal mode, which has no saved context |
 | `XBOX_AZUREAD__CLIENTID` | `AzureAd:ClientId` |
 | `XBOX_AZUREAD__TENANTID` | `AzureAd:TenantId` |

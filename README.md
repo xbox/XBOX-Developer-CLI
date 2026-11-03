@@ -139,6 +139,10 @@ Command arguments, PlayFab payloads, title IDs, identities, tokens, and local pa
 collected. Opt out with `XBOX_TELEMETRY_OPTOUT=1` or `--disable-telemetry`; see
 [docs/telemetry.md](docs/telemetry.md) for the full policy.
 
+Microsoft handles this data as described in the
+[Microsoft privacy statement](https://go.microsoft.com/fwlink/?LinkID=824704); see
+[PRIVACY.md](PRIVACY.md) for the privacy notice.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development, architecture, generators,

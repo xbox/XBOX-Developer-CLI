@@ -137,7 +137,7 @@ internal static partial class PcSandbox
         }
 
         throw new FileNotFoundException(
-            $"{ToolFileName} was not found next to the CLI or on PATH. Install the XBOX Live developer " +
+            $"{ToolFileName} was not found next to the CLI or on PATH. Install the XBOX services development " +
             "tools (XboxLiveTools.zip from https://github.com/microsoft/xbox-live-developer-tools/releases), " +
             $"then add its folder to PATH or set {ToolPathConfigurationKey} " +
             "(environment variable XBOX_XBLPCSANDBOX__PATH).");

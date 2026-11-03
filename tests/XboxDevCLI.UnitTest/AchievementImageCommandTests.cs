@@ -751,11 +751,13 @@ public sealed class AchievementImageCommandTests
             ]),
         };
         using var client = CreateClient(handler);
+        var pages = new List<int>();
         XboxLiveAchievementImageCollection result = await client.ListAchievementImagesAsync(
-            12345, Guid.Parse(Scid), CancellationToken.None);
+            12345, Guid.Parse(Scid), CancellationToken.None, pages.Add);
 
         Assert.Equal([Guid.Parse(AssetId), Guid.Parse(otherAssetId)],
             result.Images.Select(image => image.AssetId));
+        Assert.Equal([1, 1], pages);
         Assert.Equal("[" + Image + "," + second + "]", result.RawResponse);
         Assert.Equal(2, handler.Requests.Count);
         using var firstBody = JsonDocument.Parse(handler.Requests[0].Body!);
@@ -1740,8 +1742,7 @@ public sealed class AchievementImageCommandTests
             Assert.Equal(
                 (action == "list" ? "[" + ImageWithIconImageId + "]" : ImageWithIconImageId) +
                 Environment.NewLine, result.Out);
-            Assert.Contains($"achievement image {action} endpoint for {Scid}",
-                result.Error, StringComparison.Ordinal);
+            Assert.Contains(Scid, result.Error, StringComparison.Ordinal);
             Assert.DoesNotContain("caller-token", result.Error, StringComparison.Ordinal);
             Assert.DoesNotContain("opaque-upload-secret", result.Error, StringComparison.Ordinal);
             Assert.DoesNotContain("sig=secret", result.Error, StringComparison.Ordinal);

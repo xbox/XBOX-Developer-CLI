@@ -118,7 +118,7 @@ public class PublishCommandTests
     [Fact]
     public async Task Command_ToRetailWithoutATerminal_RefusesBeforeAnyRequest()
     {
-        var run = await RunAsync(new Prompt(interactive: false), "--sandbox", "RETAIL", "--source-sandbox", "XDKS.1");
+        var run = await RunAsync(new Prompt(interactive: false), "--sandbox-id", "RETAIL", "--source-sandbox-id", "XDKS.1");
 
         Assert.Equal(1, run.ExitCode);
         Assert.Null(run.Handler.RequestBody);
@@ -130,7 +130,7 @@ public class PublishCommandTests
     public async Task Command_CrossSandboxAnsweredYes_ShowsTheStorageWarningOnceBeforeAsking()
     {
         var prompt = new Prompt(interactive: true, "y");
-        var run = await RunAsync(prompt, "--source-sandbox", "XDKS.1", "--sandbox", "TESTSB.42");
+        var run = await RunAsync(prompt, "--source-sandbox-id", "XDKS.1", "--sandbox-id", "TESTSB.42");
 
         Assert.Equal(0, run.ExitCode);
         Assert.NotNull(run.Handler.RequestBody);
@@ -142,7 +142,7 @@ public class PublishCommandTests
     [Fact]
     public async Task Command_CrossSandboxConfirmed_ShowsTheStorageWarningOnce()
     {
-        var run = await RunAsync(new Prompt(interactive: false), "--source-sandbox", "XDKS.1", "--sandbox", "TESTSB.42", "--confirm");
+        var run = await RunAsync(new Prompt(interactive: false), "--source-sandbox-id", "XDKS.1", "--sandbox-id", "TESTSB.42", "--confirm");
 
         Assert.Equal(0, run.ExitCode);
         Assert.Equal(1, Occurrences(run.Stderr, "global title storage files"));
@@ -156,7 +156,7 @@ public class PublishCommandTests
     public async Task Command_AnsweredNo_PublishesNothing()
     {
         var prompt = new Prompt(interactive: true, "n");
-        var run = await RunAsync(prompt, "--sandbox", "HIDDEN");
+        var run = await RunAsync(prompt, "--sandbox-id", "HIDDEN");
 
         Assert.Equal(1, run.ExitCode);
         Assert.Equal(1, prompt.Reads);
@@ -180,13 +180,13 @@ public class PublishCommandTests
     }
 
     [Theory]
-    [InlineData("HIDDEN", "--source-sandbox ALL", "--source-sandbox")]
+    [InlineData("HIDDEN", "--source-sandbox-id ALL", "--source-sandbox-id")]
     [InlineData("hidden", "--configset 14", "--configset")]
-    [InlineData("Hidden", "--source-sandbox HIDDEN --configset 14", "--source-sandbox and --configset")]
+    [InlineData("Hidden", "--source-sandbox-id HIDDEN --configset 14", "--source-sandbox-id and --configset")]
     public void Parse_RejectsASourceOrVersionOnATitleWidePublish(string sandbox, string options, string remove)
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            $"xbl publish start --scid {Scid} --sandbox {sandbox} {options}",
+            $"xbl publish start --scid {Scid} --sandbox-id {sandbox} {options}",
             Program.NoResponseFileConfig);
 
         Assert.Contains(
@@ -197,9 +197,9 @@ public class PublishCommandTests
     }
 
     [Theory]
-    [InlineData("--sandbox HIDDEN")]
-    [InlineData("--sandbox HIDDEN --validate-only")]
-    [InlineData("--sandbox XDKS.1 --source-sandbox STAGE.0 --configset 14")]
+    [InlineData("--sandbox-id HIDDEN")]
+    [InlineData("--sandbox-id HIDDEN --validate-only")]
+    [InlineData("--sandbox-id XDKS.1 --source-sandbox-id STAGE.0 --configset 14")]
     public void Parse_AllowsTitleWideWithoutASourceOrVersion(string options)
     {
         ParseResult result = Program.BuildRootCommand().Parse(
@@ -213,7 +213,7 @@ public class PublishCommandTests
     public async Task Command_TitleWideWithAVersion_FailsBeforeAnyRequest()
     {
         var prompt = new Prompt(interactive: false);
-        var run = await RunAsync(prompt, "--sandbox", "HIDDEN", "--configset", "14", "--confirm");
+        var run = await RunAsync(prompt, "--sandbox-id", "HIDDEN", "--configset", "14", "--confirm");
 
         Assert.Equal(1, run.ExitCode);
         Assert.Equal(0, prompt.Reads);
@@ -232,7 +232,7 @@ public class PublishCommandTests
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-        var run = await RunAsync(prompt, [], cancellation.Token, "--sandbox", "RETAIL")
+        var run = await RunAsync(prompt, [], cancellation.Token, "--sandbox-id", "RETAIL")
             .WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Equal(1, run.ExitCode);
@@ -249,7 +249,7 @@ public class PublishCommandTests
     public async Task Command_Confirmed_PublishesWithoutAsking(string confirm)
     {
         var prompt = new Prompt(interactive: false);
-        var run = await RunAsync(prompt, "--sandbox", "RETAIL", "--source-sandbox", "XDKS.1", confirm);
+        var run = await RunAsync(prompt, "--sandbox-id", "RETAIL", "--source-sandbox-id", "XDKS.1", confirm);
 
         Assert.Equal(0, run.ExitCode);
         Assert.Equal(0, prompt.Reads);
@@ -263,7 +263,7 @@ public class PublishCommandTests
     public async Task Command_ConfirmedBeforeTheCommand_PublishesWithoutAsking()
     {
         var prompt = new Prompt(interactive: false);
-        var run = await RunAsync(prompt, ["--confirm"], "--sandbox", "CERT");
+        var run = await RunAsync(prompt, ["--confirm"], "--sandbox-id", "CERT");
 
         Assert.Equal(0, run.ExitCode);
         Assert.NotNull(run.Handler.RequestBody);
@@ -273,7 +273,7 @@ public class PublishCommandTests
     public async Task Command_ToADevelopmentSandbox_NeedsNoConfirmation()
     {
         var prompt = new Prompt(interactive: false);
-        var run = await RunAsync(prompt, "--sandbox", "XDKS.1", "--republish");
+        var run = await RunAsync(prompt, "--sandbox-id", "XDKS.1", "--republish");
 
         Assert.Equal(0, run.ExitCode);
         Assert.Equal(0, prompt.Reads);
@@ -284,7 +284,7 @@ public class PublishCommandTests
     [Fact]
     public async Task Command_ValidateOnly_NeedsNoConfirmation()
     {
-        var run = await RunAsync(new Prompt(interactive: false), "--sandbox", "RETAIL", "--source-sandbox", "XDKS.1", "--validate-only");
+        var run = await RunAsync(new Prompt(interactive: false), "--sandbox-id", "RETAIL", "--source-sandbox-id", "XDKS.1", "--validate-only");
 
         Assert.Equal(0, run.ExitCode);
         using JsonDocument body = JsonDocument.Parse(run.Handler.RequestBody!);
@@ -295,7 +295,7 @@ public class PublishCommandTests
     public void Parse_RejectsRepublishWithValidateOnly()
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            $"xbl publish start --scid {Scid} --sandbox XDKS.1 --republish --validate-only",
+            $"xbl publish start --scid {Scid} --sandbox-id XDKS.1 --republish --validate-only",
             Program.NoResponseFileConfig);
 
         Assert.Contains(
@@ -324,9 +324,9 @@ public class PublishCommandTests
         Assert.Contains("FirstRetailPublishWithoutEffectiveEmbargo", stdout, StringComparison.Ordinal);
         Assert.Equal(
             [
-                "XBOX Live warning (FirstRetailPublishWithoutEffectiveEmbargo): This is the first RETAIL publish, and no embargo is set.",
-                "XBOX Live information in achievements2017.xml: Lineone",
-                "XBOX Live diagnostic (NoSeverity)",
+                "XBOX services warning (FirstRetailPublishWithoutEffectiveEmbargo): This is the first RETAIL publish, and no embargo is set.",
+                "XBOX services information in achievements2017.xml: Lineone",
+                "XBOX services diagnostic (NoSeverity)",
             ],
             Lines(stderr));
     }

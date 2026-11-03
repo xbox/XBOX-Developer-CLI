@@ -15,9 +15,10 @@ internal static class GetConfigurationCommandFactory
     {
         var sellerOption = new XdtsSellerOption();
         var scidOption = CreateRequiredGuidOption();
-        var sandboxOption = new Option<string>("--sandbox", "-d")
+        var sandboxOption = new Option<string>("--sandbox-id")
         {
-            Description = "The case-sensitive sandbox name.",
+            HelpName = "id",
+            Description = "The case-sensitive sandbox ID.",
             Required = true,
         }.AsContextValue(ContextEndpoint.XboxPartner);
         sandboxOption.Validators.Add(result =>
@@ -26,7 +27,7 @@ internal static class GetConfigurationCommandFactory
             if (string.IsNullOrWhiteSpace(value) || value.Any(char.IsWhiteSpace))
             {
                 result.AddError(
-                    "--sandbox must be non-empty and cannot contain whitespace.");
+                    "--sandbox-id must be non-empty and cannot contain whitespace.");
             }
         });
 
@@ -35,14 +36,14 @@ internal static class GetConfigurationCommandFactory
             "Get working and published configuration state for one sandbox");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "One XBOX Live title and sandbox.",
+            Scope: "One XBOX title and sandbox.",
             Output:
                 "One JSON object by default. Table output shows working and published versions, " +
                 "their associated commit times, and whether working changes are unpublished.",
             Examples:
             [
-                "xbox xbl configuration get --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox STAGE.0",
-                "xbox xbl configuration get --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox STAGE.0 --output table",
+                "xbox xbl configuration get --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id STAGE.0",
+                "xbox xbl configuration get --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id STAGE.0 --output table",
             ],
             LearnMore:
             [
@@ -76,7 +77,7 @@ internal static class GetConfigurationCommandFactory
 
                 Program.WriteVerbose(
                     verbose,
-                    () => $"Get XBOX Live configuration state for {scid:D} in {sandbox}");
+                    () => $"Get XBOX services configuration state for {scid:D} in {sandbox}");
                 return await RunAsync(
                     client,
                     sellerId,

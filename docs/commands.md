@@ -28,7 +28,7 @@ See [Experimental commands](cli-command-lifecycle.md).
 | [`pc`](commands/pc.md) | Get or switch the XBOX sandbox this Windows PC uses (Experimental). |
 | [`test-account`](commands/test-account.md) | Create, update, and delete XBOX test account batches, follow their creation jobs, read batches, and look up an account's batch and whether its access expired. |
 | [`playfab`](commands/playfab.md) | Inspect and manage PlayFab services. |
-| [`xbl`](commands/xbl.md) | Manage XBOX Live resources (Experimental). |
+| [`xbl`](commands/xbl.md) | Manage XBOX services configuration (Experimental). |
 
 ## Support commands
 
@@ -60,7 +60,7 @@ These options are available to all commands.
 
 See [Configuration](configuration.md) for how command-line options layer on top of
 configuration files and environment variables, and [Context](commands/context.md) for how the
-seller, PlayFab title, and XBOX Live sandbox resolve. See [Telemetry](telemetry.md) for
+seller, PlayFab title, and XBOX sandbox resolve. See [Telemetry](telemetry.md) for
 telemetry behavior and opt-out details.
 
 ## Output model
@@ -77,6 +77,15 @@ provided.
 File operations, such as `playfab file upload`, `download`, and `delete`, aren't data
 commands. They write nothing to stdout, report what they did on stderr, and signal success
 through the exit code. See [Files](commands/playfab/file.md#output).
+
+### Progress
+
+List commands that read their results a page at a time, such as `game list`, show their
+progress on one line of stderr while they read, and so does `game get`:
+`Reading games... 1646 found, 25 pages, 84s`. `xbl achievement-image upload` shows its upload
+the same way. The line appears only when stderr is a terminal, and it's erased before the
+command writes its result or an error. When stderr is redirected to a file or pipe, nothing is
+drawn.
 
 ### Exit codes and errors
 

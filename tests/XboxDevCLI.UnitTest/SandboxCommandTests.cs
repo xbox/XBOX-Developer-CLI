@@ -204,7 +204,7 @@ public class SandboxCommandTests
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
         Assert.Equal(2, handler.Requests.Count);
-        Assert.Contains("repeated a sandbox list continuation token", result.Stderr);
+        Assert.Contains("sandbox list response repeated a continuation token", result.Stderr);
         Assert.Contains("x-ms-correlation-id: response-correlation", result.Stderr);
     }
 
@@ -408,8 +408,8 @@ public class SandboxCommandTests
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.NotFound, "404 Not Found")]
-    [InlineData(HttpStatusCode.BadRequest, "rejected the request")]
+    [InlineData(HttpStatusCode.NotFound, "HTTP 404")]
+    [InlineData(HttpStatusCode.BadRequest, "request was rejected")]
     public async Task Get_GatewayErrorWritesStderrOnly(HttpStatusCode status, string message)
     {
         var handler = new XboxPartnerHttpMessageHandler(
@@ -527,7 +527,7 @@ public class SandboxCommandTests
 
     [Theory]
     [InlineData(HttpStatusCode.Conflict, "may already exist")]
-    [InlineData(HttpStatusCode.BadRequest, "rejected the request")]
+    [InlineData(HttpStatusCode.BadRequest, "request was rejected")]
     [InlineData(HttpStatusCode.TooManyRequests, "throttled")]
     public async Task Create_DefiniteRejectionIsNotReportedAsUncertain(HttpStatusCode status, string message)
     {
@@ -646,7 +646,7 @@ public class SandboxCommandTests
         Assert.Empty(result.Stdout);
         Assert.Single(handler.Requests);
         Assert.Contains("Sandbox creation job submitted: job[2JFAKE (Correlation ID: corr]0;title)", result.Stderr);
-        Assert.Contains("returned an invalid sandbox creation job", result.Stderr);
+        Assert.Contains("sandbox creation job response was invalid", result.Stderr);
         Assert.Contains("Do not resubmit.", result.Stderr);
         Assert.DoesNotContain('\u001b', result.Stderr);
         Assert.DoesNotContain('\u0007', result.Stderr);
@@ -665,7 +665,7 @@ public class SandboxCommandTests
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
 
         Assert.Equal(SandboxCommandFactory.WaitEndedExitCode, result.ExitCode);
-        Assert.Contains("its status could not be read:", result.Stderr);
+        Assert.Contains("its status could not be read.", result.Stderr);
         Assert.Contains("(Bad[2J Gateway)", result.Stderr);
         Assert.DoesNotContain('\u001b', result.Stderr);
         Assert.DoesNotContain('\u0007', result.Stderr);
@@ -738,7 +738,7 @@ public class SandboxCommandTests
         var result = await InvokeAsync(handler, args);
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("Gateway detail: Bad[2JFAKE line", result.Stderr);
+        Assert.Contains("Error detail: Bad[2JFAKE line", result.Stderr);
         Assert.DoesNotContain('\u001b', result.Stderr);
         Assert.DoesNotContain('\u0007', result.Stderr);
         Assert.DoesNotContain(
@@ -810,7 +810,7 @@ public class SandboxCommandTests
         Assert.Equal(SandboxCommandFactory.OutcomeUnknownExitCode, result.ExitCode);
         Assert.Single(handler.Requests);
         Assert.Empty(result.Stdout);
-        Assert.Contains("returned an invalid sandbox creation job", result.Stderr);
+        Assert.Contains("sandbox creation job response was invalid", result.Stderr);
         Assert.Contains("Do not resubmit.", result.Stderr);
     }
 
@@ -875,7 +875,7 @@ public class SandboxCommandTests
         Assert.Equal(SandboxCommandFactory.OutcomeUnknownExitCode, result.ExitCode);
         Assert.Empty(result.Stdout);
         Assert.Single(handler.Requests);
-        Assert.Contains("returned an invalid sandbox creation job", result.Stderr);
+        Assert.Contains("sandbox creation job response was invalid", result.Stderr);
         Assert.Contains("Check whether it exists with: xbox sandbox get ABCDEF.1", result.Stderr);
     }
 
@@ -902,6 +902,9 @@ public class SandboxCommandTests
         Assert.Equal(2, handler.Requests.Count);
         Assert.Contains("The sandbox was submitted, but its status could not be read", result.Stderr);
         Assert.Contains("Check whether it exists with: xbox sandbox get ABCDEF.1", result.Stderr);
+        Assert.Single(result.Stderr.Split(Environment.NewLine),
+            line => line.Contains("HTTP 502", StringComparison.Ordinal));
+        Assert.Contains("Error detail: Down.", result.Stderr, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -995,15 +998,15 @@ public class SandboxCommandTests
     }
 
     [Fact]
-    public async Task Create_VerboseLogsEveryRequest()
+    public async Task Create_VerboseDescribesEveryOperation()
     {
         var handler = Handler(Accepted, Succeeded, Sandbox);
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm", "--verbose"]);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Contains("POST https://gateway.example/xboxpartner/v1/sandboxes (X-DeveloperAccountId: seller-1)", result.Stderr);
-        Assert.Contains("GET https://gateway.example/xboxpartner/v1/sandboxes/jobs/a1b2c3d4-0000-4000-8000-000000000001", result.Stderr);
-        Assert.Contains("GET https://gateway.example/xboxpartner/v1/sandboxes/ABCDEF.1", result.Stderr);
+        Assert.Contains("Submitting sandbox creation for seller seller-1.", result.Stderr);
+        Assert.Contains("Reading sandbox creation job a1b2c3d4-0000-4000-8000-000000000001.", result.Stderr);
+        Assert.Contains("Reading sandbox ABCDEF.1.", result.Stderr);
     }
 
     [Fact]

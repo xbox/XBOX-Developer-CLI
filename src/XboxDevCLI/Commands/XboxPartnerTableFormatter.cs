@@ -25,7 +25,7 @@ internal static class XboxPartnerTableFormatter
         catch (JsonException exception)
         {
             throw new InvalidDataException(
-                "The XboxPartner configuration response was not a valid JSON array.",
+                "The configuration response was not a valid JSON array.",
                 exception);
         }
 
@@ -46,7 +46,7 @@ internal static class XboxPartnerTableFormatter
         catch (JsonException exception)
         {
             throw new InvalidDataException(
-                "The XboxPartner configuration response was not a valid JSON object.",
+                "The configuration response was not a valid JSON object.",
                 exception);
         }
 
@@ -125,7 +125,7 @@ internal static class XboxPartnerTableFormatter
         }
 
         throw new InvalidDataException(
-            "The XboxPartner game response contained an invalid 'xboxTitleId' value.");
+            "The game response contained an invalid 'xboxTitleId' value.");
     }
 
     /// <summary>
@@ -277,7 +277,7 @@ internal static class XboxPartnerTableFormatter
         if (string.IsNullOrWhiteSpace(configuration.Sandbox))
         {
             throw new InvalidDataException(
-                "The XboxPartner configuration response contained an invalid sandbox.");
+                "The configuration response contained an invalid sandbox.");
         }
 
         return
@@ -309,7 +309,7 @@ internal static class XboxPartnerTableFormatter
         catch (Exception exception) when (exception is JsonException or ArgumentException)
         {
             throw new InvalidDataException(
-                $"The XboxPartner {resource} response was not valid JSON.",
+                $"The {resource} response was not valid JSON.",
                 exception);
         }
     }
@@ -321,21 +321,21 @@ internal static class XboxPartnerTableFormatter
         if (root.ValueKind != JsonValueKind.Object)
         {
             throw new InvalidDataException(
-                "The XboxPartner response must be a JSON object.");
+                "The response must be a JSON object.");
         }
 
         if (!root.TryGetProperty(collectionProperty, out var collection)
             || collection.ValueKind != JsonValueKind.Array)
         {
             throw new InvalidDataException(
-                $"The XboxPartner response property '{collectionProperty}' must be an array.");
+                $"The response property '{collectionProperty}' must be an array.");
         }
 
         var items = collection.EnumerateArray().ToArray();
         if (Array.Exists(items, item => item.ValueKind != JsonValueKind.Object))
         {
             throw new InvalidDataException(
-                $"The XboxPartner response property '{collectionProperty}' must contain only objects.");
+                $"The response property '{collectionProperty}' must contain only objects.");
         }
 
         return items;

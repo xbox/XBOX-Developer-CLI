@@ -16,6 +16,28 @@ namespace XboxDevCLI.UnitTest;
 public class XboxPartnerCommandTests
 {
     [Theory]
+    [InlineData("seller", "list")]
+    [InlineData("game", "list")]
+    [InlineData("game", "get", "1234ABCD")]
+    public async Task Throttled_ReportsTheWait(params string[] args)
+    {
+        var client = new FakeXboxPartnerClient
+        {
+            Exception = new XboxPartnerApiException(
+                HttpStatusCode.TooManyRequests, "Too Many Requests", string.Empty,
+                new Uri("https://nodpublishers.com/request"),
+                retryAfter: TimeSpan.FromSeconds(29.2)),
+        };
+
+        var result = await InvokeAsync(
+            client, args[0] == "game" ? [.. args, "--seller-id", "1234567"] : args);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Contains("The request was throttled. Try again in 30 seconds.", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task SellerList_UnexpectedFailurePrintsOnlyTheMessage(bool authenticationFailure)
@@ -45,7 +67,7 @@ public class XboxPartnerCommandTests
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        Assert.Equal("The XboxPartner request timed out." + Environment.NewLine, result.Stderr);
+        Assert.Equal("The request timed out." + Environment.NewLine, result.Stderr);
     }
 
     [Theory]
@@ -112,7 +134,7 @@ public class XboxPartnerCommandTests
     }
 
     [Fact]
-    public async Task SellerList_NotFoundExplainsDeploymentInsteadOfNoSellers()
+    public async Task SellerList_NotFoundReturnsFailureAndStatus()
     {
         var client = new FakeXboxPartnerClient
         {
@@ -126,8 +148,8 @@ public class XboxPartnerCommandTests
         var result = await InvokeAsync(client, ["seller", "list"]);
 
         Assert.Equal(1, result.ExitCode);
-        Assert.Contains("deployment or base URL issue", result.Stderr, StringComparison.Ordinal);
-        Assert.Contains("HTTP 200 with an empty sellers array", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("The seller list could not be retrieved.", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("HTTP 404 (Not Found)", result.Stderr, StringComparison.Ordinal);
         Assert.DoesNotContain("no sellers are associated", result.Stderr, StringComparison.OrdinalIgnoreCase);
     }
 
@@ -207,8 +229,10 @@ public class XboxPartnerCommandTests
         Assert.DoesNotContain("<html>", result.Stderr, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public void ResolveBaseUrl_WithoutConfigurationOrOptionReportsAnActionableError()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void ResolveBaseUrl_WithoutConfigurationOrOptionReportsAnActionableError(bool withOption)
     {
         var baseUrlOption = XboxPartnerCommandSupport.CreateBaseUrlOption();
         var command = new Command("probe");
@@ -216,13 +240,16 @@ public class XboxPartnerCommandTests
         var configuration = new ConfigurationBuilder().Build();
 
         var exception = Assert.Throws<InvalidOperationException>(
-            () => XboxPartnerCommandSupport.ResolveBaseUrl(
-                command.Parse([]),
-                baseUrlOption,
-                configuration));
+            () => withOption
+                ? XboxPartnerCommandSupport.ResolveBaseUrl(command.Parse([]), baseUrlOption, configuration)
+                : XboxPartnerCommandSupport.ResolveBaseUrl(configuration));
 
         Assert.Contains("XboxPartner:BaseUrl", exception.Message, StringComparison.Ordinal);
-        Assert.Contains("--base-url", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("XBOX_XBOXPARTNER__BASEURL", exception.Message, StringComparison.Ordinal);
+        if (withOption)
+        {
+            Assert.Contains("--base-url", exception.Message, StringComparison.Ordinal);
+        }
     }
 
     [Fact]
@@ -363,6 +390,36 @@ public class XboxPartnerCommandTests
         Assert.Equal("http://localhost:54848", baseUrl);
     }
 
+    [Fact]
+    public void ResolveBaseUrl_ConfigurationOnlyOverloadWarnsWhenOverridden()
+    {
+        var configuration = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["XboxPartner:BaseUrl"] = "https://nodpublishers.com/custom/",
+            })
+            .Build();
+        var originalError = Console.Error;
+        using var stderr = new StringWriter();
+        string baseUrl;
+        try
+        {
+            Console.SetError(stderr);
+            baseUrl = XboxPartnerCommandSupport.ResolveBaseUrl(configuration);
+        }
+        finally
+        {
+            Console.SetError(originalError);
+        }
+
+        Assert.Equal("https://nodpublishers.com/custom", baseUrl);
+        string warning = stderr.ToString();
+        Assert.Contains("Warning: the service endpoint is overridden", warning, StringComparison.Ordinal);
+        Assert.Contains(baseUrl, warning, StringComparison.Ordinal);
+        Assert.Contains("your access token", warning, StringComparison.Ordinal);
+        Assert.DoesNotContain(EndpointOverrideWarning.DefaultXboxPartnerBaseUrl, warning, StringComparison.Ordinal);
+    }
+
     /// <summary>
     /// The gateway URL the commands under test resolve to, read from the shipped
     /// appsettings.json rather than hardcoded, so these tests stay aligned with whatever
@@ -451,7 +508,8 @@ public class XboxPartnerCommandTests
             string? titleId = null,
             string? storeId = null,
             string? keyword = null,
-            CancellationToken cancellationToken = default)
+            CancellationToken cancellationToken = default,
+            Action<int>? pageRead = null)
         {
             OnRequest?.Invoke();
             if (Exception != null)

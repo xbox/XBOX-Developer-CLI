@@ -73,7 +73,8 @@ internal sealed partial class XboxPartnerClient
     public async Task<string> ListSandboxesAsync(
         string baseUrl,
         string sellerId,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        Action<int>? pageRead = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sellerId);
         _ = BuildRequestUri(baseUrl, SandboxesPath);
@@ -96,18 +97,20 @@ internal sealed partial class XboxPartnerClient
                 HttpMethod.Get, correlationId: correlationId);
             try
             {
+                int before = sandboxes.Count;
                 continuationToken = ReadSandboxPage(response.Body, sandboxes);
+                pageRead?.Invoke(sandboxes.Count - before);
                 if (continuationToken is not null && !seenTokens.Add(continuationToken))
                 {
                     throw new InvalidDataException(
-                        "The XboxPartner gateway repeated a sandbox list continuation token, so the list " +
+                        "The sandbox list response repeated a continuation token, so the list " +
                         "could not be completed.");
                 }
 
                 if (continuationToken is not null && pages >= MaxSandboxListPages)
                 {
                     throw new InvalidDataException(
-                        $"The XboxPartner sandbox list did not end after {MaxSandboxListPages} pages, so it was stopped.");
+                        $"The sandbox list did not end after {MaxSandboxListPages} pages, so it was stopped.");
                 }
             }
             catch (InvalidDataException exception)
@@ -139,14 +142,14 @@ internal sealed partial class XboxPartnerClient
         }
         catch (JsonException exception)
         {
-            throw new InvalidDataException("The XboxPartner sandbox list response was not valid JSON.", exception);
+            throw new InvalidDataException("The sandbox list response was not valid JSON.", exception);
         }
 
         if (page is not JsonObject root
             || !root.TryGetPropertyValue("sandboxes", out var items)
             || items is not JsonArray array)
         {
-            throw new InvalidDataException("The XboxPartner sandbox list response must contain a sandboxes array.");
+            throw new InvalidDataException("The sandbox list response must contain a sandboxes array.");
         }
 
         foreach (var item in array)
@@ -158,7 +161,7 @@ internal sealed partial class XboxPartnerClient
                 || string.IsNullOrWhiteSpace(text))
             {
                 throw new InvalidDataException(
-                    "The XboxPartner sandbox list response contained an entry with no 'sandboxId'.");
+                    "The sandbox list response contained an entry with no 'sandboxId'.");
             }
 
             sandboxes.Add(sandbox.DeepClone());
@@ -177,7 +180,7 @@ internal sealed partial class XboxPartnerClient
         }
 
         throw new InvalidDataException(
-            "The XboxPartner sandbox list response contained an invalid 'continuationToken'.");
+            "The sandbox list response contained an invalid 'continuationToken'.");
     }
 }
 

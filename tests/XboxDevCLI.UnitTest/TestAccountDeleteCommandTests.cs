@@ -219,6 +219,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [InlineData(HttpStatusCode.Conflict, "test_account_batch_busy", "once its jobId is null")]
     [InlineData(HttpStatusCode.NotFound, "test_account_batch_not_found", "already deleted is not found")]
     [InlineData(HttpStatusCode.ServiceUnavailable, "feature_disabled", "Test accounts are disabled.")]
+    [InlineData(HttpStatusCode.TooManyRequests, "rate_limited", "You sent too many requests")]
     [InlineData(HttpStatusCode.NotFound, null, "Deleting test account batches may be unavailable.")]
     public async Task Delete_RefusalExitsOneWithAHint(HttpStatusCode status, string? code, string hint)
     {

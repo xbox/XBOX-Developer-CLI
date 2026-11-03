@@ -337,16 +337,19 @@ public class XboxPartnerClientTests
             OkResponse("""{"games":[{"productId":"b"},{"productId":"c"}]}"""));
         using var httpClient = new HttpClient(handler);
         using var client = CreateClient(httpClient);
+        var pages = new List<int>();
 
         var result = await client.GetGamesAsync(
             "http://localhost:54848",
             "1234567",
-            keyword: "headless game");
+            keyword: "headless game",
+            pageRead: pages.Add);
 
         // Games keep the gateway's exact text, escapes included.
         Assert.Equal(
             """{"games":[{"productId":"a","name":"Nod Ar\u00e9na"},{"productId":"b"},{"productId":"c"}]}""",
             result);
+        Assert.Equal([1, 0, 2], pages);
         Assert.Equal(
             new[]
             {
@@ -361,6 +364,22 @@ public class XboxPartnerClientTests
             Assert.Equal(correlationId, Assert.Single(request.Headers["x-ms-correlation-id"]));
             Assert.Equal("1234567", Assert.Single(request.Headers["X-DeveloperAccountId"]));
         });
+    }
+
+    [Fact]
+    public async Task ListSandboxesAsync_ReportsHowManySandboxesEachPageHeld()
+    {
+        var handler = new XboxPartnerHttpMessageHandler(
+            OkResponse("""{"sandboxes":[{"sandboxId":"XDKS.1"},{"sandboxId":"ABCDEF.1"}],"continuationToken":"t1"}"""),
+            OkResponse("""{"sandboxes":[],"continuationToken":"t2"}"""),
+            OkResponse("""{"sandboxes":[{"sandboxId":"TESTSB.42"}]}"""));
+        using var httpClient = new HttpClient(handler);
+        using var client = CreateClient(httpClient);
+        var pages = new List<int>();
+
+        await client.ListSandboxesAsync("http://localhost:54848", "1234567", CancellationToken.None, pages.Add);
+
+        Assert.Equal([2, 0, 1], pages);
     }
 
     [Theory]
@@ -436,7 +455,7 @@ public class XboxPartnerClientTests
         var exception = await Assert.ThrowsAsync<XboxPartnerResponseException>(
             () => client.GetGamesAsync("http://localhost:54848", "1234567"));
 
-        Assert.Contains("XboxPartner game response", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("The game response", exception.Message, StringComparison.Ordinal);
         Assert.IsType<InvalidDataException>(exception.InnerException);
         Assert.Equal(body, exception.RawResponse);
         Assert.Equal(
@@ -531,13 +550,58 @@ public class XboxPartnerClientTests
 
         Assert.Equal(HttpStatusCode.NotFound, exception.StatusCode);
         Assert.Equal("Not Found", exception.ReasonPhrase);
-        Assert.Equal(
-            "XboxPartner request to 'http://localhost:54848/xboxpartner/v1/sellers' failed with HTTP 404 (Not Found).",
-            exception.Message);
+        Assert.Equal("The request failed with HTTP 404 (Not Found).", exception.Message);
         Assert.Equal("""{"detail":"missing"}""", exception.ResponseBody);
         Assert.Equal(
             "http://localhost:54848/xboxpartner/v1/sellers",
             exception.RequestUri.AbsoluteUri);
+    }
+
+    [Fact]
+    public async Task NonSuccessResponse_CarriesRetryAfterIntoTheGuidance()
+    {
+        var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Content = new StringContent("""{"code":"rate_limited","detail":"Too many requests."}"""),
+        };
+        response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
+        var handler = new MockHttpMessageHandler(response);
+        using var httpClient = new HttpClient(handler);
+        using var client = CreateClient(httpClient);
+
+        var exception = await Assert.ThrowsAsync<XboxPartnerApiException>(
+            () => client.GetGamesAsync("http://localhost:54848", "1234567"));
+
+        Assert.Equal(TimeSpan.FromSeconds(30), exception.RetryAfter);
+        Assert.Contains(
+            "Try again in 30 seconds.",
+            XboxPartnerErrorGuidance.Describe(exception, isAutomation: false),
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UnreadableErrorBody_KeepsTheStatusAndRetryAfter()
+    {
+        var configuration = CreateConfiguration(("XboxPartner:MaxResponseBytes", "3"));
+        var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+        {
+            Content = new StringContent("""{"code":"rate_limited"}"""),
+        };
+        response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
+        var handler = new MockHttpMessageHandler(response);
+        using var httpClient = new HttpClient(handler);
+        using var client = CreateClient(httpClient, configuration);
+
+        var exception = await Assert.ThrowsAsync<XboxPartnerApiException>(
+            () => client.GetGamesAsync("http://localhost:54848", "1234567"));
+
+        Assert.Equal(HttpStatusCode.TooManyRequests, exception.StatusCode);
+        Assert.Equal(TimeSpan.FromSeconds(30), exception.RetryAfter);
+        Assert.IsType<InvalidOperationException>(exception.InnerException);
+        Assert.Contains(
+            "Try again in 30 seconds.",
+            XboxPartnerErrorGuidance.Describe(exception, isAutomation: false),
+            StringComparison.Ordinal);
     }
 
     [Fact]

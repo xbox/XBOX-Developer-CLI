@@ -14,7 +14,7 @@ namespace XboxDevCLI.Commands;
 
 /// <summary>
 /// Builds the root sandbox namespace. Sandboxes belong to the Partner Center account and isolate
-/// Store products as well as XBOX Live services, so they are not nested under <c>xbl</c>.
+/// Store products as well as XBOX services, so they are not nested under <c>xbl</c>.
 /// </summary>
 internal static class SandboxCommandFactory
 {
@@ -80,9 +80,13 @@ internal static class SandboxCommandFactory
                 async (client, url, sellerId) =>
                 {
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption),
-                        () => $"GET {url}/xboxpartner/v1/sandboxes, following every page " +
-                            $"({XboxPartnerClient.SellerIdHeader}: {sellerId})");
-                    var json = await client.ListSandboxesAsync(url, sellerId, cancellationToken);
+                        () => $"Listing sandboxes for seller {sellerId}, following every page.");
+                    string json;
+                    using (var progress = ListProgress.Start("Reading sandboxes"))
+                    {
+                        json = await client.ListSandboxesAsync(url, sellerId, cancellationToken, progress.PageRead);
+                    }
+
                     var output = OutputOptions.From(result);
                     if (output.TableView is { } view)
                     {
@@ -101,7 +105,7 @@ internal static class SandboxCommandFactory
             Safety: CommandSafety.ReadOnly,
             Scope: "Sandboxes visible to the seller selected by --seller-id, XBOX_SELLER_ID, or 'context set', including global sandboxes.",
             Output: "A JSON array of sandbox objects with sandboxId, type (Shared, Isolated, or Unknown), " +
-                "sellerId, and global; table output has SANDBOX, TYPE, and GLOBAL columns.",
+                "sellerId, and global; table output has SANDBOX, TYPE, and GLOBAL columns. " + ListProgress.HelpOutput,
             Examples:
             [
                 "xbox sandbox list",
@@ -136,8 +140,7 @@ internal static class SandboxCommandFactory
                 {
                     XboxSandboxId.TryNormalizeForRead(result.GetValue(sandboxId), out var id);
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption),
-                        () => $"GET {url}/xboxpartner/v1/sandboxes/{id} " +
-                            $"({XboxPartnerClient.SellerIdHeader}: {sellerId})");
+                        () => $"Reading sandbox {id} for seller {sellerId}.");
                     var json = await client.GetSandboxAsync(url, sellerId, id, cancellationToken);
                     WriteSandbox(json, OutputOptions.From(result));
                     return 0;
@@ -199,8 +202,7 @@ internal static class SandboxCommandFactory
                     var recovery = XboxPartnerCommandSupport.BuildRecoveryCommand(
                         result, $"sandbox get {ShellQuoting.Quote(id)}", sellerId, url);
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption),
-                        () => $"POST {url}/xboxpartner/v1/sandboxes " +
-                            $"({XboxPartnerClient.SellerIdHeader}: {sellerId})");
+                        () => $"Submitting sandbox creation for seller {sellerId}.");
                     XboxPartnerSandboxCreationJob job;
                     var sent = false;
                     try
@@ -233,7 +235,7 @@ internal static class SandboxCommandFactory
                     if (!Guid.TryParse(job.JobId, out _) || (job.Completed && !job.Succeeded && !job.Failed))
                     {
                         Console.Error.WriteLine(
-                            "The gateway returned an invalid sandbox creation job; " +
+                            "The sandbox creation job response was invalid; " +
                             $"it is unknown whether sandbox {id} was created. Do not resubmit.");
                         Console.Error.WriteLine($"Check whether it exists with: {recovery}");
                         return OutcomeUnknownExitCode;
@@ -296,7 +298,7 @@ internal static class SandboxCommandFactory
                 requestToken =>
                 {
                     Program.WriteVerbose(verbose,
-                        () => $"GET {baseUrl}/xboxpartner/v1/sandboxes/jobs/{Uri.EscapeDataString(initial.JobId)}");
+                        () => $"Reading sandbox creation job {jobId}.");
                     return client.GetSandboxCreationJobAsync(baseUrl, sellerId, initial.JobId, requestToken);
                 },
                 dependencies.DelayAsync, cancellationToken, dependencies.GetUtcNow);
@@ -304,9 +306,15 @@ internal static class SandboxCommandFactory
         catch (Exception exception) when (XboxPartnerCommandSupport.IsRequestError(exception))
         {
             Console.Error.WriteLine(
-                exception is OperationCanceledException
-                    ? $"Stopped waiting for job {jobId}; it may still be running."
-                    : $"The sandbox was submitted, but its status could not be read: {XboxPartnerCommandSupport.ForTerminal(exception.Message)}");
+                exception switch
+                {
+                    OperationCanceledException =>
+                        $"Stopped waiting for job {jobId}; it may still be running.",
+                    XboxPartnerApiException =>
+                        "The sandbox was submitted, but its status could not be read.",
+                    _ =>
+                        $"The sandbox was submitted, but its status could not be read: {XboxPartnerCommandSupport.ForTerminal(exception.Message)}",
+                });
             Console.Error.WriteLine($"Check whether it exists with: {recovery}");
             XboxPartnerCommandSupport.WriteRequestError(exception, result, cancellationToken);
             return WaitEndedExitCode;
@@ -351,7 +359,7 @@ internal static class SandboxCommandFactory
                 }
 
                 Program.WriteVerbose(verbose,
-                    () => $"GET {baseUrl}/xboxpartner/v1/sandboxes/{sandboxId}");
+                    () => $"Reading sandbox {sandboxId}.");
                 var json = await client.GetSandboxAsync(baseUrl, sellerId, sandboxId, cancellationToken);
                 WriteSandbox(json, compact ? OutputOptions.JsonCompact : OutputOptions.Json);
                 return 0;
@@ -417,7 +425,7 @@ internal static class SandboxCommandFactory
         var sandbox = XboxPartnerCommandSupport.DeserializeResponse<XboxPartnerSandbox>(json, "sandbox");
         if (string.IsNullOrWhiteSpace(sandbox.SandboxId))
         {
-            throw new InvalidDataException("The XboxPartner sandbox response did not contain a 'sandboxId'.");
+            throw new InvalidDataException("The sandbox response did not contain a 'sandboxId'.");
         }
 
         if (output.TableView is { } view)

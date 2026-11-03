@@ -91,20 +91,20 @@ public class GetDocumentsCommandTests
     {
         ParseResult validSandbox = Program.BuildRootCommand().Parse(
             "xbl document download --seller-id 2 " +
-            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox XDKS.1 " +
+            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 " +
             "--dest output");
         ParseResult validAccount = Program.BuildRootCommand().Parse(
             "xbl document download --seller-id 2 " +
             "--type account --dest output");
         ParseResult missingScid = Program.BuildRootCommand().Parse(
             "xbl document download --seller-id 2 " +
-            "--sandbox XDKS.1 --dest output");
+            "--sandbox-id XDKS.1 --dest output");
         ParseResult mixedScope = Program.BuildRootCommand().Parse(
             "xbl document download --seller-id 2 " +
-            "--type account --sandbox XDKS.1 --dest output");
+            "--type account --sandbox-id XDKS.1 --dest output");
         ParseResult unsafeSandbox = Program.BuildRootCommand().Parse(
             "xbl document download --seller-id 2 " +
-            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox ../outside " +
+            "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id ../outside " +
             "--dest output");
         ParseResult removedAccountId = Program.BuildRootCommand().Parse(
             "xbl document download --seller-id 2 " +
@@ -122,7 +122,7 @@ public class GetDocumentsCommandTests
     public void Command_ReportsAnScidThatIsntAGuidAsAParseError()
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 --scid notaguid --sandbox XDKS.1 --dest output");
+            "xbl document download --seller-id 2 --scid notaguid --sandbox-id XDKS.1 --dest output");
 
         Assert.Contains(result.Errors, error => error.Message.Contains("notaguid", StringComparison.Ordinal));
     }
@@ -491,7 +491,7 @@ public class GetDocumentsCommandTests
                 "SANDBOX",
                 "--scid",
                 "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "--sandbox",
+                "--sandbox-id",
                 " XDKS.1 ",
                 "--view",
                 "PUBLISHED",

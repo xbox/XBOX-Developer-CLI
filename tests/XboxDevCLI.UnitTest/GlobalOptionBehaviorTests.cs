@@ -77,8 +77,8 @@ public class GlobalOptionBehaviorTests
             var result = await Program.Main(args);
 
             // --version is handled by the framework: it must exit cleanly (0) and print a
-            // non-empty version line. The exact value comes from the entry assembly (0.1.0
-            // for the published CLI), which differs under the test host, so we don't assert
+            // non-empty version line. The exact value comes from the entry assembly (the CLI's
+            // own version when published), which differs under the test host, so we don't assert
             // on the literal value here — the published value is covered by a build smoke.
             Assert.Equal(0, result);
             Assert.False(string.IsNullOrWhiteSpace(outWriter.ToString()),

@@ -201,7 +201,7 @@ whether the delete started, it exits with code 3 and prints the `batch get` comm
 to check before deleting again; see
 [Test account](commands/test-account.md#deleting-a-batch). There is no bulk delete.
 
-#### Publishing XBOX Live configuration to certification, RETAIL, or every sandbox asks first
+#### Publishing XBOX services configuration to certification, RETAIL, or every sandbox asks first
 
 `xbl publish start` is not a PlayFab operation, so the operation-name gate does not
 apply. A publish to RETAIL reaches players, a
@@ -216,7 +216,8 @@ A publish of unchanged configuration starts nothing, and XBOX keeps RETAIL locke
 product after a migration. `--republish` publishes in full even when nothing changed, and
 forces the selected configuration, by default RETAIL's latest working one, onto a locked
 RETAIL. A RETAIL publish from another sandbox also clears the lock, but it replaces RETAIL's
-working documents with that sandbox's. See [XBOX Live](commands/xbl.md#republishing).
+working documents with that sandbox's. See
+[XBOX services configuration](commands/xbl.md#republishing).
 
 #### Commands that change this PC
 
@@ -298,7 +299,7 @@ host after leading slashes or whitespace. Separate path segments with `/`.
 
 ## Which title or seller a command acts on
 
-A command takes its PlayFab title, seller, or XBOX Live sandbox from its flag, then its
+A command takes its PlayFab title, seller, or XBOX sandbox from its flag, then its
 environment variable (such as `XBOX_PLAYFAB_TITLE_ID` or `XBOX_SELLER_ID`), then the value saved
 with [`xbox context set`](commands/context.md) in the selected profile. Run `xbox context get`
 to see what's saved. Saved context is shared by every session of your OS user, and environment
@@ -379,9 +380,9 @@ API path, and full JSON body before running the command.
 the PlayFab `--confirm` gate; agents need explicit user approval. For uncertain
 outcomes, follow the printed read-only recovery command before considering
 another upload. See
-[XBOX Live achievement images](commands/xbl/achievement-image.md#production-safety-and-upload-recovery).
+[Achievement images](commands/xbl/achievement-image.md#production-safety-and-upload-recovery).
 
-`xbl publish start` with a `--source-sandbox` different from `--sandbox` also replaces the
+`xbl publish start` with a `--source-sandbox-id` different from `--sandbox-id` also replaces the
 destination's global title storage files with the source's and deletes files only the
 destination holds. Deleted files can't be recovered. See
 [Cross-sandbox publishing replaces global title storage files](commands/xbl.md#cross-sandbox-publishing-replaces-global-title-storage-files).
@@ -397,7 +398,7 @@ explicitly, and Help reports it:
 | [`game create`](commands/game.md) | Creates a Partner Center game. | `--confirm` (`--yes`, `-y`) or a terminal prompt; fails closed otherwise. |
 | [`sandbox create`](commands/sandbox.md) | Creates a Shared development sandbox. | `--confirm` (`--yes`, `-y`) or a terminal prompt; fails closed otherwise. |
 | [`test-account batch create`](commands/test-account.md) | Creates XBOX test accounts. | `--confirm` (`--yes`, `-y`) or a terminal prompt; fails closed otherwise. See [above](#creating-xbox-test-accounts-asks-first-and-is-never-retried). |
-| [`xbl publish start`](commands/xbl.md#publish) | Publishes XBOX Live configuration. | To RETAIL, CERT, CERT.DEBUG, or HIDDEN, or from another sandbox: `--confirm` (`--yes`, `-y`) or a terminal prompt; fails closed otherwise. See [above](#publishing-xbox-live-configuration-to-certification-retail-or-every-sandbox-asks-first). |
+| [`xbl publish start`](commands/xbl.md#publish) | Publishes XBOX services configuration. | To RETAIL, CERT, CERT.DEBUG, or HIDDEN, or from another sandbox: `--confirm` (`--yes`, `-y`) or a terminal prompt; fails closed otherwise. See [above](#publishing-xbox-services-configuration-to-certification-retail-or-every-sandbox-asks-first). |
 
 `game create` and `sandbox create` cannot be undone from the CLI; a test account batch can be
 removed with `test-account batch delete`. None retries its submission. When the outcome of a
