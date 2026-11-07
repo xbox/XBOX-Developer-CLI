@@ -76,15 +76,23 @@ IDs are at most 64 characters, are case-insensitive, and are normalized to upper
 
 ## Listing sandboxes
 
-`sandbox list` writes a JSON array with one object per sandbox, in the same shape `get`
-returns:
+`sandbox list` writes a JSON object with a `sandboxes` array. Each entry has the same
+shape `get` returns:
 
 ```json
-[
-  { "sandboxId": "RETAIL", "type": "Unknown", "sellerId": null, "global": true },
-  { "sandboxId": "ABCDEF.1", "type": "Shared", "sellerId": "1234567", "global": false }
-]
+{
+  "sandboxes": [
+    { "sandboxId": "RETAIL", "type": "Unknown", "sellerId": null, "global": true },
+    { "sandboxId": "ABCDEF.1", "type": "Shared", "sellerId": "1234567", "global": false }
+  ]
+}
 ```
+
+An empty listing is `{"sandboxes":[]}`. Both `--output json` and `--output json-compact`
+use this envelope; `--data-only` does not remove it.
+
+Earlier versions wrote a bare JSON array; scripts written against them must read
+`.sandboxes` instead.
 
 The list is returned in pages; the command follows every `continuationToken` itself,
 with one correlation ID for the whole listing. It fails rather than loop if a token

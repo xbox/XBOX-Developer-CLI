@@ -33,7 +33,7 @@ internal static class PlayFabCommandHelper
     /// </summary>
     public static PlayFabApiClient CreateClient(ParseResult parseResult)
     {
-        var config = Program.BuildConfiguration(parseResult);
+        var config = Program.GetConfiguration(parseResult);
 
         // Honours the same test seam as Program.InvokeApiAsync. Commands reaching the API through
         // this helper — file list among them — never touch that method, so without a shared seam

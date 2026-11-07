@@ -66,7 +66,7 @@ internal static class GetSchemasCommandFactory
             try
             {
                 var output = OutputOptions.From(parseResult);
-                var configuration = Program.BuildConfiguration(parseResult);
+                var configuration = Program.GetConfiguration(parseResult);
                 _ = XboxPartnerCommandSupport.ResolveBaseUrl(configuration);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
@@ -112,9 +112,14 @@ internal static class GetSchemasCommandFactory
         {
             if (schemaType is null)
             {
-                string typesJson = await client
-                    .GetSchemaTypesAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                string typesJson;
+                using (RequestProgress.Start("Getting schema types", stderr))
+                {
+                    typesJson = await client
+                        .GetSchemaTypesAsync(cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
                 string[] types = JsonSerializer.Deserialize<string[]>(typesJson, JsonOptions)
                     ?? throw new JsonException(
                         "The schema type list response was invalid.");
@@ -134,6 +139,7 @@ internal static class GetSchemasCommandFactory
                     destination,
                     output,
                     stdout,
+                    stderr,
                     cancellationToken).ConfigureAwait(false);
                 return 0;
             }
@@ -149,13 +155,19 @@ internal static class GetSchemasCommandFactory
                         destination,
                         output,
                         stdout,
+                        stderr,
                         cancellationToken).ConfigureAwait(false);
                     return 0;
                 }
 
-                string versionsJson = await client
-                    .GetSchemaVersionsAsync(normalizedType, cancellationToken)
-                    .ConfigureAwait(false);
+                string versionsJson;
+                using (RequestProgress.Start($"Getting {normalizedType} schema versions", stderr))
+                {
+                    versionsJson = await client
+                        .GetSchemaVersionsAsync(normalizedType, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+
                 XconSchemaVersion[] versions =
                     JsonSerializer.Deserialize<XconSchemaVersion[]>(
                         versionsJson,
@@ -178,9 +190,15 @@ internal static class GetSchemasCommandFactory
                 return 0;
             }
 
-            byte[] schema = await client
-                .GetSchemaAsync(normalizedType, version.Value, cancellationToken)
-                .ConfigureAwait(false);
+            byte[] schema;
+            using (RequestProgress.Start(
+                FormattableString.Invariant($"Getting {normalizedType} schema version {version.Value}"), stderr))
+            {
+                schema = await client
+                    .GetSchemaAsync(normalizedType, version.Value, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             if (string.IsNullOrWhiteSpace(destination))
             {
                 if (tableView is not null)
@@ -249,31 +267,6 @@ internal static class GetSchemasCommandFactory
         }
     }
 
-    internal static Task<int> RunAsync(
-        XboxPartnerClient client,
-        string? schemaType,
-        int? version,
-        string? destination,
-        string outputFormat,
-        TextWriter stdout,
-        TextWriter stderr,
-        Stream rawStdout,
-        CancellationToken cancellationToken) =>
-        RunAsync(
-            client,
-            schemaType,
-            version,
-            destination,
-            outputFormat.Equals("table", StringComparison.OrdinalIgnoreCase)
-                ? OutputOptions.Table(XboxPartnerCommandSupport.SchemaTableView)
-                : outputFormat.Equals("json-compact", StringComparison.OrdinalIgnoreCase)
-                    ? OutputOptions.JsonCompact
-                    : OutputOptions.Json,
-            stdout,
-            stderr,
-            rawStdout,
-            cancellationToken);
-
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -295,41 +288,48 @@ internal static class GetSchemasCommandFactory
         string destination,
         OutputOptions output,
         TextWriter stdout,
+        TextWriter stderr,
         CancellationToken cancellationToken)
     {
         string? directory = null;
         var savedPaths = new List<string>();
         var tableRows = new List<string[]>();
-        foreach (string type in types)
+        using (var progress = RequestProgress.Start("Getting schema versions", stderr))
         {
-            string versionsJson = await client
-                .GetSchemaVersionsAsync(type, cancellationToken)
-                .ConfigureAwait(false);
-            XconSchemaVersion[] versions =
-                JsonSerializer.Deserialize<XconSchemaVersion[]>(
-                    versionsJson,
-                    JsonOptions) ??
-                throw new JsonException("The schema version list response was invalid.");
-            foreach (XconSchemaVersion schemaVersion in versions)
+            foreach (string type in types)
             {
-                byte[] content = await client
-                    .GetSchemaAsync(type, schemaVersion.Version, cancellationToken)
+                progress.Activity = $"Getting {type} schema versions";
+                string versionsJson = await client
+                    .GetSchemaVersionsAsync(type, cancellationToken)
                     .ConfigureAwait(false);
-                directory ??= EnsureDirectory(destination);
-                string path = GetSchemaPath(directory, type, schemaVersion.Version);
-                await WriteSchemaFileAsync(path, content, cancellationToken)
-                    .ConfigureAwait(false);
-                savedPaths.Add(path);
-                tableRows.Add(
-                [
-                    type,
-                    schemaVersion.Version.ToString(
-                        System.Globalization.CultureInfo.InvariantCulture),
-                    schemaVersion.Namespace,
-                    path,
-                    content.Length.ToString(
-                        System.Globalization.CultureInfo.InvariantCulture),
-                ]);
+                XconSchemaVersion[] versions =
+                    JsonSerializer.Deserialize<XconSchemaVersion[]>(
+                        versionsJson,
+                        JsonOptions) ??
+                    throw new JsonException("The schema version list response was invalid.");
+                foreach (XconSchemaVersion schemaVersion in versions)
+                {
+                    progress.Activity = FormattableString.Invariant(
+                        $"Downloading {type} schema version {schemaVersion.Version}");
+                    byte[] content = await client
+                        .GetSchemaAsync(type, schemaVersion.Version, cancellationToken)
+                        .ConfigureAwait(false);
+                    directory ??= EnsureDirectory(destination);
+                    string path = GetSchemaPath(directory, type, schemaVersion.Version);
+                    await WriteSchemaFileAsync(path, content, cancellationToken)
+                        .ConfigureAwait(false);
+                    savedPaths.Add(path);
+                    tableRows.Add(
+                    [
+                        type,
+                        schemaVersion.Version.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture),
+                        schemaVersion.Namespace,
+                        path,
+                        content.Length.ToString(
+                            System.Globalization.CultureInfo.InvariantCulture),
+                    ]);
+                }
             }
         }
 

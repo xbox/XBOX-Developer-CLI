@@ -39,18 +39,22 @@ public class TelemetryOptionsTests
         Assert.False(options.Enabled);
     }
 
+    /// <summary>
+    /// A host's own Application Insights connection string isn't the CLI's, so the CLI's
+    /// telemetry never goes to it; the built-in one is used instead.
+    /// </summary>
     [Fact]
-    public void FromConfiguration_UsesStandardApplicationInsightsConnectionString()
+    public void FromConfiguration_IgnoresTheHostsApplicationInsightsConnectionString()
     {
-        const string connectionString =
-            "InstrumentationKey=00000000-0000-0000-0000-000000000000";
+        const string embedded = "InstrumentationKey=00000000-0000-0000-0000-000000000000";
         var configuration = CreateConfiguration();
 
         var options = TelemetryOptions.FromConfiguration(
             configuration,
-            name => name == "APPLICATIONINSIGHTS_CONNECTION_STRING" ? connectionString : null);
+            name => name == "APPLICATIONINSIGHTS_CONNECTION_STRING" ? "InstrumentationKey=host" : null,
+            embeddedConnectionString: embedded);
 
-        Assert.Equal(connectionString, options.ConnectionString);
+        Assert.Equal(embedded, options.ConnectionString);
     }
 
     [Fact]
@@ -69,7 +73,25 @@ public class TelemetryOptionsTests
     }
 
     [Fact]
-    public void FromConfiguration_ExplicitConfigurationOverridesEmbeddedDestination()
+    public void FromConfiguration_EmbeddedDestinationWinsOverConfiguration()
+    {
+        const string embedded = "InstrumentationKey=00000000-0000-0000-0000-000000000000";
+        var configuration = CreateConfiguration(
+            ("Telemetry:ConnectionString",
+                "InstrumentationKey=11111111-1111-1111-1111-111111111111"));
+
+        var options = TelemetryOptions.FromConfiguration(
+            configuration,
+            _ => null,
+            embeddedConnectionString: embedded);
+
+        Assert.Equal(embedded, options.ConnectionString);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    public void FromConfiguration_UsesConfiguredDestinationWhenNoneIsEmbedded(string embedded)
     {
         const string configuredConnectionString =
             "InstrumentationKey=11111111-1111-1111-1111-111111111111";
@@ -79,8 +101,7 @@ public class TelemetryOptionsTests
         var options = TelemetryOptions.FromConfiguration(
             configuration,
             _ => null,
-            embeddedConnectionString:
-                "InstrumentationKey=00000000-0000-0000-0000-000000000000");
+            embeddedConnectionString: embedded);
 
         Assert.Equal(configuredConnectionString, options.ConnectionString);
     }

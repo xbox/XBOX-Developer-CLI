@@ -45,11 +45,10 @@ These options are available to all commands.
 
 | Option | Description |
 | --- | --- |
-| `--config-env` | Configuration environment, such as `Development` or `Production`. Loads `appsettings.{environment}.json` on top of `appsettings.json`. |
 | `--playfab-title-id` | The PlayFab title to target. It wins over `XBOX_PLAYFAB_TITLE_ID` and the title saved with [`context set`](commands/context.md), and changes neither. |
 | `--profile` | Use the context values saved in this profile. Defaults to `XBOX_PROFILE`, then `default`. See [Profiles](commands/context.md#profiles). |
-| `--client-id` | Override `AzureAd:ClientId` for user sign-in. Refused in service-principal modes. |
-| `--tenant-id` | Override `AzureAd:TenantId` for user sign-in. Refused in service-principal modes. |
+| `--client-id` | Override `AzureAd:ClientId` for user sign-in. Refused in service-principal modes by commands that sign in. |
+| `--tenant-id` | Override `AzureAd:TenantId` for user sign-in. Refused in service-principal modes by commands that sign in. |
 | `--scopes` | Override `AzureAd:Scopes`. |
 | `--output`, `-o` | Output format: `json` (pretty, the default), `json-compact` for single-line JSON suitable for piping, or `table` on commands that declare a table view. See [Table output](#table-output). |
 | `--disable-telemetry` | Disable anonymous product-usage telemetry for this invocation. |
@@ -82,7 +81,9 @@ through the exit code. See [Files](commands/playfab/file.md#output).
 
 List commands that read their results a page at a time, such as `game list`, show their
 progress on one line of stderr while they read, and so does `game get`:
-`Reading games... 1646 found, 25 pages, 84s`. `xbl achievement-image upload` shows its upload
+`Reading games... 1646 found, 25 pages, 84s`. `xbox xbl` commands that wait on one request,
+such as `xbl configuration get` and `xbl publish start`, show what they're waiting for:
+`Publishing from STAGE.0 to RETAIL... 12s`. `xbl achievement-image upload` shows its upload
 the same way. The line appears only when stderr is a terminal, and it's erased before the
 command writes its result or an error. When stderr is redirected to a file or pipe, nothing is
 drawn.
@@ -100,9 +101,10 @@ help to stdout. See [Help](commands/help.md).
 
 With JSON output requested, `auth status` exits `0` even when nobody is signed
 in, reporting `{"signedIn":false}`. Scripts can branch on that payload rather
-than treating signed-out state as a process failure. In a service-principal mode,
-`auth status` instead exits `1` when it can't acquire a token or its settings are
-invalid. See [Auth](commands/auth.md#auth-status).
+than treating signed-out state as a process failure. `auth status` instead exits
+`1` when the configuration or token cache can't be read, or, in a service-principal
+mode, when it can't acquire a token or its settings are invalid. See
+[Auth](commands/auth.md#auth-status).
 Other command-specific exit codes are documented on each command's page.
 
 ### Table output

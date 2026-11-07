@@ -51,7 +51,7 @@ internal static class PcCommandFactory
         sandbox.Subcommands.Add(CreateSetCommand(dependencies));
         sandbox.Subcommands.Add(CreateLaunchAppsCommand(dependencies));
         pc.Subcommands.Add(sandbox);
-        return pc;
+        return pc.Requires(CommandRequirement.Configuration).Calls(ServiceEndpoints.None);
     }
 
     private static string ToolLocationNote =>
@@ -401,7 +401,7 @@ internal static class PcCommandFactory
 
     private static string LocateTool(ParseResult parseResult, PcSandboxDependencies dependencies) =>
         PcSandbox.LocateTool(
-            Program.BuildConfiguration(parseResult)[PcSandbox.ToolPathConfigurationKey],
+            Program.GetConfiguration(parseResult)[PcSandbox.ToolPathConfigurationKey],
             dependencies);
 
     private static bool IsLocalFailure(Exception exception) =>

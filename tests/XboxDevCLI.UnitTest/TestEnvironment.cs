@@ -53,6 +53,28 @@ internal static class TestEnvironment
     private static void UseUserSignIn() =>
         AutomationAuthenticationSettings.ReadEnvironment = () => new Dictionary<string, string>();
 
+    /// <summary>
+    /// <paramref name="stderr"/> without the changed-endpoint warnings, which a command that calls a
+    /// test gateway writes before anything else.
+    /// </summary>
+    public static string WithoutEndpointWarnings(string stderr)
+    {
+        var lines = new List<string>();
+        var inWarning = false;
+        foreach (var line in stderr.Split(Environment.NewLine))
+        {
+            inWarning = line.StartsWith("Warning: the ", StringComparison.Ordinal)
+                && line.Contains(" endpoint is overridden ", StringComparison.Ordinal)
+                || (inWarning && line.StartsWith("         ", StringComparison.Ordinal));
+            if (!inWarning)
+            {
+                lines.Add(line);
+            }
+        }
+
+        return string.Join(Environment.NewLine, lines);
+    }
+
     private sealed class Scope(Action dispose) : IDisposable
     {
         public void Dispose() => dispose();

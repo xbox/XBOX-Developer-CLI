@@ -1,7 +1,6 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 using System.Diagnostics;
-using System.Text.Json.Nodes;
 using Xunit;
 
 namespace XboxDevCLI.EndToEndTests;
@@ -14,7 +13,7 @@ public sealed class LiveHarnessTests : IDisposable
     public LiveHarnessTests()
     {
         File.WriteAllText(Path.Combine(_cliDirectory, CliRunner.ExecutableName), string.Empty);
-        File.WriteAllText(Path.Combine(_cliDirectory, CliRunner.AppSettingsFileName), "{}");
+        File.WriteAllText(Path.Combine(_cliDirectory, CliRunner.CandidateDefaultsFileName), "{}");
     }
 
     [Theory]
@@ -89,17 +88,26 @@ public sealed class LiveHarnessTests : IDisposable
     {
         var variables = CompleteVariables((LiveSettings.ScopesVariable, scope));
         File.WriteAllText(
-            Path.Combine(_cliDirectory, CliRunner.AppSettingsFileName),
+            Path.Combine(_cliDirectory, CliRunner.CandidateDefaultsFileName),
             """{"AzureAd":{"Scopes":"00000000-0000-0000-0000-000000000042/.default"}}""");
 
         var settings = LiveSettings.Load(variables);
         using var runner = CliRunner.Create(settings, new System.Collections.Hashtable());
 
         Assert.Null(settings.Profile.Scope);
-        Assert.Equal(
-            "00000000-0000-0000-0000-000000000042/.default",
-            (string?)CliRunner.ReadAppSettings(
-                Path.Combine(runner.WorkingDirectory, "..", "cli"))["AzureAd"]!["Scopes"]);
+        Assert.Equal("00000000-0000-0000-0000-000000000042/.default", settings.Scope);
+        Assert.Empty(Directory.EnumerateFiles(
+            Path.Combine(runner.WorkingDirectory, "..", "cli"), "appsettings*.json"));
+    }
+
+    [Fact]
+    public void Load_RequiresTheCandidateDefaults()
+    {
+        File.Delete(Path.Combine(_cliDirectory, CliRunner.CandidateDefaultsFileName));
+
+        var exception = Assert.Throws<InvalidOperationException>(() => LiveSettings.Load(CompleteVariables()));
+
+        Assert.Contains(CliRunner.CandidateDefaultsFileName, exception.Message, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -107,9 +115,9 @@ public sealed class LiveHarnessTests : IDisposable
     [InlineData("""{"AzureAd":{"Scopes":null}}""")]
     [InlineData("""{"AzureAd":{"Scopes":""}}""")]
     [InlineData("""{"AzureAd":{"Scopes":"other/.default"}}""")]
-    public void Load_RejectsAMissingOrMismatchedCandidateScope(string appSettings)
+    public void Load_RejectsAMissingOrMismatchedCandidateScope(string candidateDefaults)
     {
-        File.WriteAllText(Path.Combine(_cliDirectory, CliRunner.AppSettingsFileName), appSettings);
+        File.WriteAllText(Path.Combine(_cliDirectory, CliRunner.CandidateDefaultsFileName), candidateDefaults);
 
         var exception = Assert.Throws<InvalidDataException>(() =>
             LiveSettings.Load(CompleteVariables((LiveSettings.ScopesVariable, null))));
@@ -121,42 +129,16 @@ public sealed class LiveHarnessTests : IDisposable
     [Theory]
     [InlineData(null)]
     [InlineData("{titleId}.playfabapi.com")]
-    public void ApplyProfile_ReplacesTheInheritedRoutingHeader(string? header)
+    public void BuildEnvironment_PointsTheCliAtTheProfile(string? header)
     {
-        var shipped = JsonNode.Parse("""
-            {
-              "AzureAd": { "ClientId": "x", "Scopes": "prod/.default" },
-              "PlayFab": {
-                "BaseUrlTemplate": "https://prod.example",
-                "MaxResponseBytes": 5,
-                "RequestHeaders": [ { "Name": "X-PlayFab-Host", "Value": "{titleId}.playfabapi.com" } ]
-              },
-              "XboxPartner": { "BaseUrl": "https://prod.example" },
-              "Telemetry": { "Enabled": true }
-            }
-            """)!.AsObject();
-        var profile = E2EProfiles.Load(E2EProfileTests.Variables((E2EProfiles.HostHeaderVariable, header)));
+        var settings = LiveSettings.Load(CompleteVariables((E2EProfiles.HostHeaderVariable, header)));
 
-        var applied = CliRunner.ApplyProfile(shipped, profile);
+        var environment = CliRunner.BuildEnvironment(new System.Collections.Hashtable(), settings, "/state");
 
-        Assert.Equal(profile.Scope, (string?)applied["AzureAd"]!["Scopes"]);
-        Assert.Equal("x", (string?)applied["AzureAd"]!["ClientId"]);
-        Assert.Equal(profile.PlayFab.BaseUrlTemplate, (string?)applied["PlayFab"]!["BaseUrlTemplate"]);
-        var headers = applied["PlayFab"]!["RequestHeaders"]!.AsArray();
-        if (header is null)
-        {
-            Assert.Empty(headers);
-        }
-        else
-        {
-            var actual = Assert.Single(headers)!;
-            Assert.Equal("X-PlayFab-Host", (string?)actual["Name"]);
-            Assert.Equal(header, (string?)actual["Value"]);
-        }
-
-        Assert.Equal(5, (int?)applied["PlayFab"]!["MaxResponseBytes"]);
-        Assert.Equal(profile.XboxPartner.BaseUrl, (string?)applied["XboxPartner"]!["BaseUrl"]);
-        Assert.False((bool?)applied["Telemetry"]!["Enabled"]);
+        Assert.Equal(settings.Scope, environment[LiveSettings.ScopesVariable]);
+        Assert.Equal(settings.Profile.PlayFab.BaseUrlTemplate, environment[CliRunner.PlayFabBaseUrlTemplateVariable]);
+        Assert.Equal(header ?? CliRunner.NoHostHeader, environment[CliRunner.PlayFabHostHeaderVariable]);
+        Assert.Equal(settings.Profile.XboxPartner.BaseUrl, environment[CliRunner.XboxPartnerBaseUrlVariable]);
     }
 
     [Fact]
@@ -184,7 +166,7 @@ public sealed class LiveHarnessTests : IDisposable
         Assert.Equal("/state", environment["HOME"]);
         Assert.DoesNotContain("XBOX_PLAYFAB_TITLE_ID", environment.Keys);
         Assert.DoesNotContain("xbox_seller_id", environment.Keys);
-        Assert.DoesNotContain("XBOX_AZUREAD__SCOPES", environment.Keys);
+        Assert.Equal(settings.Scope, environment["XBOX_AZUREAD__SCOPES"]);
         Assert.DoesNotContain("E2E_GITHUB_ENVIRONMENT", environment.Keys);
         Assert.DoesNotContain("E2E_PLAYFAB_TITLE_ID", environment.Keys);
     }

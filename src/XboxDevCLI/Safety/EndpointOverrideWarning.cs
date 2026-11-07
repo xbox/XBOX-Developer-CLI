@@ -7,18 +7,17 @@ using Microsoft.Extensions.Configuration;
 namespace XboxDevCLI.Safety;
 
 /// <summary>
-/// Detects when the PlayFab API endpoint (<c>PlayFab:BaseUrlTemplate</c>) has been
-/// repointed away from the endpoint shipped with the CLI, and surfaces a visible
-/// warning on standard error.
+/// Detects when the PlayFab API endpoint (<c>PlayFab:BaseUrlTemplate</c>) or the XBOX services
+/// endpoint (<c>XboxPartner:BaseUrl</c>) has been repointed away from the endpoint shipped with
+/// the CLI, and builds the warning a command that sends a token there writes on standard error.
 /// </summary>
 /// <remarks>
-/// Guards against tampering: the endpoint is read from <c>appsettings.json</c>, an
-/// environment variable, or an environment overlay, so anyone able to write to those
-/// sources can silently redirect every request — and therefore the bearer token sent
-/// with it — to a host they control. The CLI cannot prevent the override (it is a
-/// legitimate development affordance), so it makes the override loud instead: the
-/// effective endpoint is compared against the compiled-in default and a warning naming
-/// the target host is written to stderr.
+/// Guards against tampering: the endpoint can be changed by an <c>XBOX_</c> environment variable
+/// or a command option, so anyone able to set those can silently redirect every request — and
+/// therefore the bearer token sent with it — to a host they control. The CLI cannot prevent the
+/// override (it is a legitimate development affordance), so it makes the override loud instead:
+/// the effective endpoint is compared against the compiled-in default and a warning naming the
+/// target host is written to stderr when a command that calls the endpoint is prepared.
 /// </remarks>
 internal static class EndpointOverrideWarning
 {
@@ -26,9 +25,9 @@ internal static class EndpointOverrideWarning
     internal const string ConfigurationKey = "PlayFab:BaseUrlTemplate";
 
     /// <summary>
-    /// The PlayFab API endpoint shipped in <c>appsettings.json</c>. This is compiled into
-    /// the binary on purpose: comparing configuration against itself would be defeated by
-    /// the very tampering this check exists to detect.
+    /// The PlayFab API endpoint in the built-in settings (<c>Resources/defaults.json</c>). It's
+    /// also a constant, so the comparison doesn't depend on settings, and a test keeps the two
+    /// the same.
     /// </summary>
     internal const string DefaultBaseUrlTemplate = "https://xboxdevcli.playfabapi.com";
 
@@ -36,14 +35,13 @@ internal static class EndpointOverrideWarning
     internal const string XboxPartnerConfigurationKey = "XboxPartner:BaseUrl";
 
     /// <summary>
-    /// The service URL shipped in <c>appsettings.json</c>, compiled in for the same
-    /// reason as <see cref="DefaultBaseUrlTemplate"/>.
+    /// The service URL in the built-in settings, a constant for the same reason as
+    /// <see cref="DefaultBaseUrlTemplate"/>.
     /// </summary>
     /// <remarks>
     /// This is a tamper-detection baseline only; it is never a fallback.
     /// <c>XboxPartnerCommandSupport.ResolveBaseUrl</c> still fails when the configuration key is
-    /// missing or blank, so the shipped appsettings.json remains the single source of the
-    /// service URL and a deployment can still be retargeted without a rebuild.
+    /// missing or blank, so the built-in settings remain the single source of the service URL.
     /// </remarks>
     internal const string DefaultXboxPartnerBaseUrl = "https://p-xbsvc.xboxpartner.mainp.azureplayfab.com";
 
@@ -89,32 +87,7 @@ internal static class EndpointOverrideWarning
             $"(configuration key '{ConfigurationKey}').",
             "         Requests and your access token will be sent to that host instead of the default endpoint " +
             $"'{DefaultBaseUrlTemplate}'.",
-            "         If you did not intend this, inspect appsettings.json, any appsettings.{environment}.json " +
-            "overlay, and the XBOX_PLAYFAB__BASEURLTEMPLATE environment variable.");
-    }
-
-    /// <summary>
-    /// Writes the override warning to <paramref name="writer"/> when the endpoint has been
-    /// repointed. Called when <c>Program.BuildConfiguration</c> creates the shared invocation
-    /// snapshot. Best-effort: a failure to read configuration or write the warning
-    /// never fails the command being run.
-    /// </summary>
-    internal static void WriteIfOverridden(IConfiguration configuration, TextWriter writer)
-    {
-        try
-        {
-            var warning = GetWarning(configuration[ConfigurationKey]);
-            if (warning == null)
-            {
-                return;
-            }
-
-            writer.WriteLine(warning);
-        }
-        catch (Exception)
-        {
-            // The warning is advisory; never let it break the invocation.
-        }
+            "         If you did not intend this, check the XBOX_PLAYFAB__BASEURLTEMPLATE environment variable.");
     }
 
     /// <summary>
@@ -136,35 +109,8 @@ internal static class EndpointOverrideWarning
             $"Warning: the service endpoint is overridden to '{DescribeTarget(baseUrl)}' " +
             $"(configuration key '{XboxPartnerConfigurationKey}').",
             "         Requests and your access token will be sent to that host instead of the default endpoint.",
-            "         If you did not intend this, inspect appsettings.json, any appsettings.{environment}.json " +
-            "overlay, the XBOX_XBOXPARTNER__BASEURL environment variable, and the --base-url option.");
-    }
-
-    /// <summary>
-    /// Writes the XboxPartner override warning to <paramref name="writer"/> when the endpoint has
-    /// been repointed. Called from <c>XboxPartnerCommandSupport.ResolveBaseUrl</c>, which is the
-    /// single point where the option and configuration sources converge, so the warning covers
-    /// <c>--base-url</c> as well and is emitted before any request carries a token. Best-effort:
-    /// a failure to write the warning never fails the command being run.
-    /// </summary>
-    internal static void WriteXboxPartnerWarningIfOverridden(
-        string? baseUrl,
-        TextWriter writer)
-    {
-        try
-        {
-            var warning = GetXboxPartnerWarning(baseUrl);
-            if (warning == null)
-            {
-                return;
-            }
-
-            writer.WriteLine(warning);
-        }
-        catch (Exception)
-        {
-            // The warning is advisory; never let it break the invocation.
-        }
+            "         If you did not intend this, check the XBOX_XBOXPARTNER__BASEURL environment variable " +
+            "and the --base-url option.");
     }
 
     /// <summary>

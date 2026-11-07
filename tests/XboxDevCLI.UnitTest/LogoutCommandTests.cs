@@ -4,6 +4,7 @@
 using System.CommandLine;
 using Microsoft.Extensions.Configuration;
 using Moq;
+using XboxDevCLI.CommandLine;
 using XboxDevCLI.Commands;
 using XboxDevCLI.Services;
 using Xunit;
@@ -83,7 +84,6 @@ public class LogoutCommandTests
     private static RootCommand CreateRootCommand(Command logoutCommand)
     {
         var rootCommand = new RootCommand("XBOX Dev CLI");
-        rootCommand.Options.Add(Program.ConfigEnvOption);
         rootCommand.Options.Add(Program.ClientIdOption);
         rootCommand.Options.Add(Program.TenantIdOption);
         rootCommand.Options.Add(Program.ScopesOption);
@@ -93,6 +93,7 @@ public class LogoutCommandTests
         rootCommand.Options.Add(Program.VerboseOption);
         rootCommand.Options.Add(Program.ConfirmOption);
         rootCommand.Subcommands.Add(logoutCommand);
+        CommandErrorBoundary.Install(rootCommand);
         return rootCommand;
     }
 

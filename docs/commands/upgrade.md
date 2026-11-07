@@ -101,16 +101,17 @@ it — which is why the following boundaries matter.
 ### Portable (ZIP) installations
 
 Follow the returned release link and choose the ZIP matching your OS and CPU: Windows
-x64 or Linux x64. The returned instructions and `upgrade --help` link to the
-installation steps, and the [Installation](../installation.md) guide has Windows
-PowerShell and Linux shell examples for extracting the entire ZIP, setting a persistent
-PATH, and diagnosing multiple installations.
+x64, Linux x64, or macOS on Apple silicon or Intel. The returned instructions and
+`upgrade --help` link to the installation steps, and the [Installation](../installation.md)
+guide has Windows PowerShell and Linux and macOS shell examples for extracting the entire
+ZIP, setting a persistent PATH, and diagnosing multiple installations.
 
 To update an existing ZIP installation: extract into a new folder, back up the old
-installation, and close running CLI processes first. Only if you customized an
-installation-local `appsettings.json` or `appsettings.*.json` should you carry those
-customizations forward, after reviewing the new release's defaults. Otherwise keep the
-new release's configuration files.
+installation, and close running CLI processes first. Keep any `XBOX_` environment
+variables you set. Settings come from them, command options, and the new release's
+built-in defaults, not from a settings file. If you customized an `appsettings.json` or
+`appsettings.*.json` in an older installation, move those values to `XBOX_` variables; see
+[Configuration](../configuration.md#upgrading-from-a-release-that-read-appsettingsjson).
 
 ### State is not part of the update
 

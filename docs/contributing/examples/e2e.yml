@@ -43,6 +43,10 @@ jobs:
           -p:IncludeNativeLibrariesForSelfExtract=true
           --output "$RUNNER_TEMP/e2e/cli"
 
+      # The harness checks the token scope in the CLI's built-in settings before signing in.
+      - name: Copy candidate defaults
+        run: cp src/XboxDevCLI/Resources/defaults.json "$RUNNER_TEMP/e2e/cli/candidate-defaults.json"
+
       - name: Build harness
         run: >
           dotnet build tests/XboxDevCLI.EndToEndTests/XboxDevCLI.EndToEndTests.csproj

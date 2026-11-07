@@ -24,7 +24,7 @@ public class AuthenticationService
         string[] Scopes,
         IPublicClientApplication? PublicApp);
 
-    private readonly Lazy<AuthenticationState> _state;
+    private readonly AuthenticationState _state;
     private readonly Lazy<IAppTokenProvider> _provider;
     private readonly Lock _automationIdentityLock = new();
     private (string TenantId, string ObjectId, string AppId)? _automationIdentity;
@@ -42,27 +42,6 @@ public class AuthenticationService
     }
 
     /// <summary>
-    /// Captures the invocation's authentication inputs without validating them or loading
-    /// configuration. Mode inspection is safe for Help and telemetry; authentication initializes
-    /// the service once and retains any initialization failure.
-    /// </summary>
-    internal AuthenticationService(Func<IConfiguration> configurationFactory)
-        : this(configurationFactory, AutomationAuthenticationSettings.CaptureEnvironment())
-    {
-    }
-
-    internal AuthenticationService(
-        Func<IConfiguration> configurationFactory,
-        AutomationAuthenticationSettings.EnvironmentSnapshot environment,
-        Func<AutomationAuthenticationSettings, IReadOnlyList<string>, IAppTokenProvider>? providerFactory = null)
-        : this(
-            environment.SelectedModeName,
-            () => Initialize(configurationFactory(), AutomationAuthenticationSettings.Load(environment, File.Exists), null),
-            providerFactory)
-    {
-    }
-
-    /// <summary>
     /// Constructor that accepts an externally-provided <see cref="IPublicClientApplication"/>
     /// for testability. Always uses <see cref="AuthenticationMode.User"/>.
     /// </summary>
@@ -71,29 +50,31 @@ public class AuthenticationService
     {
     }
 
+    /// <summary>
+    /// Creates the service for the mode <paramref name="settings"/> selects, validating the
+    /// configuration it needs. It doesn't read the token cache or acquire a token.
+    /// </summary>
     internal AuthenticationService(
         IConfiguration configuration,
         IPublicClientApplication? publicClientApp,
         AutomationAuthenticationSettings settings,
         Func<AutomationAuthenticationSettings, IReadOnlyList<string>, IAppTokenProvider>? providerFactory = null)
-        : this(settings.ModeName, () => Initialize(configuration, settings, publicClientApp), providerFactory)
     {
+        SelectedModeName = settings.ModeName;
+        _state = Initialize(configuration, settings, publicClientApp);
+        providerFactory ??= (selected, scopes) => AppTokenProviderFactory.Create(selected, scopes);
+        _provider = new Lazy<IAppTokenProvider>(() => providerFactory(_state.Settings, _state.Scopes));
     }
 
-    private AuthenticationService(
-        string selectedModeName,
-        Func<AuthenticationState> initialize,
-        Func<AutomationAuthenticationSettings, IReadOnlyList<string>, IAppTokenProvider>? providerFactory)
-    {
-        SelectedModeName = selectedModeName;
-        _state = new Lazy<AuthenticationState>(initialize);
-        providerFactory ??= (settings, scopes) => AppTokenProviderFactory.Create(settings, scopes);
-        _provider = new Lazy<IAppTokenProvider>(() =>
-        {
-            var state = _state.Value;
-            return providerFactory(state.Settings, state.Scopes);
-        });
-    }
+    /// <summary>
+    /// Creates the service for the mode the captured <paramref name="environment"/> selects,
+    /// validating its settings and <paramref name="configuration"/>.
+    /// </summary>
+    internal static AuthenticationService Create(
+        IConfiguration configuration,
+        AutomationAuthenticationSettings.EnvironmentSnapshot environment,
+        Func<AutomationAuthenticationSettings, IReadOnlyList<string>, IAppTokenProvider>? providerFactory = null) =>
+        new(configuration, publicClientApp: null, AutomationAuthenticationSettings.Load(environment, File.Exists), providerFactory);
 
     private static AuthenticationState Initialize(
         IConfiguration configuration,
@@ -140,32 +121,23 @@ public class AuthenticationService
         }
     }
 
-    /// <summary>A bounded mode name or "invalid", without configuration or credential validation.</summary>
+    /// <summary>The selected mode's name, such as "user" or "clientsecret".</summary>
     internal string SelectedModeName { get; }
 
-    /// <summary>True for automation or invalid inputs, so inspection never falls back to user sign-in.</summary>
-    internal bool IsAutomationSelected => SelectedModeName != "user";
-
-    /// <summary>
-    /// Validates authentication configuration and reports whether it selects a service principal.
-    /// For non-validating inspection, use <see cref="IsAutomationSelected"/> instead.
-    /// </summary>
-    public bool IsAutomation => _state.Value.Settings.IsAutomation;
-
-    /// <summary>Initializes authentication without reading the token cache or acquiring a token.</summary>
-    internal void ValidateConfiguration() => _ = _state.Value;
+    /// <summary>Whether the service signs in as a service principal rather than a user.</summary>
+    public bool IsAutomation => _state.Settings.IsAutomation;
 
     /// <summary>
     /// Explains why an interactive account command does nothing in a service-principal mode.
     /// </summary>
     internal string GetNotApplicableMessage(string commandName) =>
         $"'{CliIdentity.CommandName} auth {commandName}' doesn't apply when {AutomationAuthenticationSettings.ModeVariable} "
-        + $"is '{_state.Value.Settings.ModeName}': each command authenticates as the configured service principal. "
+        + $"is '{_state.Settings.ModeName}': each command authenticates as the configured service principal. "
         + $"To sign in as a user, unset {AutomationAuthenticationSettings.ModeVariable} and the other "
         + $"{AutomationAuthenticationSettings.Prefix}* settings.";
 
     private IPublicClientApplication PublicApp(string commandName) =>
-        _state.Value.PublicApp ?? throw new InvalidOperationException(GetNotApplicableMessage(commandName));
+        _state.PublicApp ?? throw new InvalidOperationException(GetNotApplicableMessage(commandName));
 
     /// <summary>
     /// Performs an interactive login via the system browser and signs out every other cached
@@ -198,7 +170,7 @@ public class AuthenticationService
     protected virtual async Task<AuthenticationResult> AcquireTokenInteractiveAsync(CancellationToken cancellationToken)
     {
         return await PublicApp("login")
-            .AcquireTokenInteractive(_state.Value.Scopes)
+            .AcquireTokenInteractive(_state.Scopes)
             .WithPrompt(Prompt.SelectAccount)
             .ExecuteAsync(cancellationToken);
     }
@@ -211,7 +183,7 @@ public class AuthenticationService
     /// </summary>
     public virtual async Task<AuthenticationResult?> AcquireTokenSilentAsync(CancellationToken cancellationToken)
     {
-        var state = _state.Value;
+        var state = _state;
         if (state.Settings.IsAutomation)
         {
             var token = await _provider.Value.AcquireTokenAsync(cancellationToken);
@@ -365,7 +337,7 @@ public class AuthenticationService
             }
 
             var cacheHelper = await CreateCacheHelperAsync();
-            cacheHelper.RegisterCache(_state.Value.PublicApp!.UserTokenCache);
+            cacheHelper.RegisterCache(_state.PublicApp!.UserTokenCache);
             _cacheRegistered = true;
         }
         finally

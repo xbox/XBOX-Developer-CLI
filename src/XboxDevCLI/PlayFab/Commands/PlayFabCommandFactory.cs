@@ -27,7 +27,7 @@ internal static class PlayFabCommandFactory
         playFabCommand.Subcommands.Add(Experimental(PlayerCommandFactory.Create()));
         playFabCommand.Subcommands.Add(Experimental(PrivacyCommandFactory.Create()));
 
-        return playFabCommand;
+        return playFabCommand.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.PlayFab);
     }
 
     private static Command Experimental(Command command) =>

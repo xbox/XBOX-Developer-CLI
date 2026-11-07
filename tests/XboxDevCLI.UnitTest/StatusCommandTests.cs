@@ -4,6 +4,8 @@
 using System.CommandLine;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Identity.Client.Extensions.Msal;
+using XboxDevCLI.CommandLine;
 using XboxDevCLI.Commands;
 using XboxDevCLI.Services;
 using Xunit;
@@ -105,28 +107,116 @@ public class StatusCommandTests
     }
 
     /// <summary>
-    /// Agents rely on JSON status never failing: when configuration or the sign-in state can't be
-    /// read, it still exits 0 and reports signed out. Text output fails with the reason instead.
+    /// A configuration or sign-in state that can't be read isn't reported as signed out: status
+    /// fails with the reason on stderr and nothing on stdout, as JSON when <c>--output</c> asks for it.
     /// </summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task Status_WhenConfigurationOrSignInCannotBeRead(bool configurationFails)
     {
-        string[] args = configurationFails ? ["--config-env", $"missing-{Guid.NewGuid():N}"] : [];
+        using var unreadable = configurationFails ? TestSettings.UseUnreadable() : null;
+        string[] args = [];
         Func<ParseResult, AuthenticationService> authFactory = parseResult =>
         {
-            _ = Program.BuildConfiguration(parseResult);
+            _ = Program.LoadConfiguration(parseResult);
             throw new InvalidOperationException("The token cache can't be read.");
         };
 
         var json = await RunStatusAsync(authFactory, [.. args, "--output", "json-compact"]);
         var text = await RunStatusAsync(authFactory, args);
 
-        Assert.Equal(0, json.ExitCode);
-        Assert.Equal("""{"signedIn":false}""", json.Stdout.TrimEnd());
+        string expected = configurationFails ? TestSettings.UnreadableMessage : "The token cache can't be read.";
+        Assert.Equal(1, json.ExitCode);
+        Assert.Empty(json.Stdout);
+        using var error = JsonDocument.Parse(json.Stderr);
+        Assert.False(error.RootElement.GetProperty("signedIn").GetBoolean());
+        Assert.False(error.RootElement.TryGetProperty("authenticationMode", out _));
+        Assert.Contains(expected, error.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
         Assert.Equal(1, text.ExitCode);
-        Assert.Contains("Failed to retrieve status: ", text.Stderr, StringComparison.Ordinal);
+        Assert.Empty(text.Stdout);
+        Assert.StartsWith("Failed to retrieve status: ", text.Stderr, StringComparison.Ordinal);
+        Assert.Contains(expected, text.Stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A settings file an earlier release read, still beside the executable, doesn't break a
+    /// failure's JSON on stderr; text output still notes it before the error.
+    /// </summary>
+    [Fact]
+    public async Task Status_WithARetiredSettingsFile_FailureIsStillJson()
+    {
+        var directory = Directory.CreateTempSubdirectory("xbox-install-");
+        try
+        {
+            File.WriteAllText(Path.Combine(directory.FullName, "appsettings.json"), "{}");
+            using var install = LoadedConfiguration.UseInstallDirectory(directory.FullName);
+            Func<ParseResult, AuthenticationService> authFactory =
+                _ => throw new InvalidOperationException("The token cache can't be read.");
+
+            var json = await RunStatusAsync(authFactory, "--output", "json-compact");
+            var text = await RunStatusAsync(authFactory);
+
+            Assert.Equal(1, json.ExitCode);
+            Assert.Empty(json.Stdout);
+            using var error = JsonDocument.Parse(json.Stderr);
+            Assert.False(error.RootElement.GetProperty("signedIn").GetBoolean());
+            Assert.Equal(1, text.ExitCode);
+            Assert.StartsWith("Note: ", text.Stderr, StringComparison.Ordinal);
+            Assert.Contains("Failed to retrieve status: The token cache can't be read.", text.Stderr, StringComparison.Ordinal);
+        }
+        finally
+        {
+            directory.Delete(recursive: true);
+        }
+    }
+
+    /// <summary>
+    /// Built-in settings that aren't valid JSON fail the whole invocation with exit code 1 and the
+    /// command's JSON error, before the token cache is read.
+    /// </summary>
+    [Theory]
+    [InlineData("{ not json")]
+    [InlineData("[]")]
+    public async Task Status_WithInvalidBuiltInJson_ReportsAJsonError(string settings)
+    {
+        using var invalid = TestSettings.Use(settings);
+
+        var result = await RunStatusAsync("--output", "json-compact");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        using var error = JsonDocument.Parse(result.Stderr);
+        Assert.False(error.RootElement.GetProperty("signedIn").GetBoolean());
+        Assert.Equal(LoadedConfiguration.InvalidBuiltInSettingsMessage, error.RootElement.GetProperty("error").GetString());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("json")]
+    [InlineData("json-compact")]
+    public async Task Status_WhenCachePersistenceFails_ReportsError(string? outputFormat)
+    {
+        const string message = "The token cache can't be persisted.";
+        var auth = new FakeAuthenticationService(token: null)
+        {
+            CachedAccountException = new MsalCachePersistenceException(message),
+        };
+
+        var result = await RunStatusAsync(auth, outputFormat is null ? [] : ["--output", outputFormat]);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        if (outputFormat is null)
+        {
+            Assert.Equal($"Failed to retrieve status: {message}{Environment.NewLine}", result.Stderr);
+        }
+        else
+        {
+            using var error = JsonDocument.Parse(result.Stderr);
+            Assert.False(error.RootElement.GetProperty("signedIn").GetBoolean());
+            Assert.Equal(message, error.RootElement.GetProperty("error").GetString());
+        }
     }
 
     /// <summary>
@@ -197,7 +287,6 @@ public class StatusCommandTests
         {
             var root = new RootCommand("XBOX Dev CLI")
             {
-                Program.ConfigEnvOption,
                 Program.ClientIdOption,
                 Program.TenantIdOption,
                 Program.ScopesOption,
@@ -206,6 +295,7 @@ public class StatusCommandTests
                 Program.DisableTelemetryOption,
                 StatusCommandFactory.Create(authFactory),
             };
+            CommandErrorBoundary.Install(root);
             var exitCode = await root.Parse(["status", .. args], Program.NoResponseFileConfig).InvokeAsync();
             return (exitCode, outWriter.ToString(), errorWriter.ToString());
         }

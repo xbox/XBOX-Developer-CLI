@@ -1,51 +1,70 @@
 ---
 title: Configuration
-description: How the CLI layers settings from configuration files, environment variables, and command-line options.
+description: How the CLI layers settings from its built-in defaults, environment variables, and command-line options.
 ---
 
 # Configuration
 
-The XBOX Developer CLI layers configuration from multiple sources so you can keep base
-defaults in files while overriding individual values per environment or per
-invocation.
+The XBOX Developer CLI needs no configuration file. Its settings come from defaults built
+into the executable, which you can override for a shell with environment variables or for
+a single command with options.
 
 ## Configuration sources and precedence
 
-Configuration is loaded in the following order — **later sources override
-earlier ones**:
+Settings come from three sources — **later sources override earlier ones**:
 
-1. `appsettings.json`: base defaults loaded from the application base directory.
-2. `appsettings.{environment}.json`: environment-specific overlay, loaded only
-   when `--config-env` is set. The file is required when requested.
-3. Environment variables: `XBOX_` and the key's path. See [Environment variables](#environment-variables).
-4. CLI option overrides.
+1. Built-in defaults, compiled into the executable. See [Settings](#settings).
+2. Environment variables: `XBOX_` and the key's path. See [Environment variables](#environment-variables).
+3. CLI option overrides. See [CLI option overrides](#cli-option-overrides).
+
+The CLI doesn't read a settings file. A release that's installed or updated brings its own
+defaults, so there's nothing to copy forward between installations.
 
 The seller, PlayFab title, and XBOX sandbox aren't configuration. They're context values,
 resolved from their flag, then `XBOX_` plus the option's name, such as `XBOX_SELLER_ID`, then the
-value saved with [`xbox context set`](commands/context.md). Configuration files don't set them.
-See [Saved context](#saved-context).
+value saved with [`xbox context set`](commands/context.md). Settings don't set them, and saved
+context doesn't change settings. See [Saved context](#saved-context).
 
-> [!NOTE]
-> `appsettings.json` ships inside the release archive and must sit next to the
-> executable. If you move the binary, copy `appsettings.json` alongside it. See
-> [Installation](installation.md).
+## Settings
 
-## Environment-specific files
+| Key | Environment variable | Option | Built-in default |
+|-----|----------------------|--------|------------------|
+| `AzureAd:ClientId` | `XBOX_AZUREAD__CLIENTID` | `--client-id` | The CLI's own Microsoft Entra application |
+| `AzureAd:TenantId` | `XBOX_AZUREAD__TENANTID` | `--tenant-id` | `common` |
+| `AzureAd:Scopes` | `XBOX_AZUREAD__SCOPES` | `--scopes` | Built in |
+| `PlayFab:BaseUrlTemplate` | `XBOX_PLAYFAB__BASEURLTEMPLATE` | None | Built in |
+| `PlayFab:MaxRequestBodyBytes` | `XBOX_PLAYFAB__MAXREQUESTBODYBYTES` | None | `1048576` (1 MiB) |
+| `PlayFab:MaxResponseBytes` | `XBOX_PLAYFAB__MAXRESPONSEBYTES` | None | `4194304` (4 MiB) |
+| `XboxPartner:BaseUrl` | `XBOX_XBOXPARTNER__BASEURL` | `--base-url`, on the commands that accept it | Built in |
+| `XboxPartner:TimeoutSeconds` | `XBOX_XBOXPARTNER__TIMEOUTSECONDS` | None | `120` |
+| `XblPCSandbox:Path` | `XBOX_XBLPCSANDBOX__PATH` | None | Not set |
+| `AuditLog:Enabled` | `XBOX_AUDITLOG__ENABLED` | None | `false` |
+| `Telemetry:Enabled` | `XBOX_TELEMETRY__ENABLED` | `--disable-telemetry` sets `false` | `true` |
+| `Telemetry:DependencyTracingEnabled` | `XBOX_TELEMETRY__DEPENDENCYTRACINGENABLED` | None | `true` |
+| `Telemetry:DependencyTraceSamplingRatio` | `XBOX_TELEMETRY__DEPENDENCYTRACESAMPLINGRATIO` | None | `0.1` |
 
-To use an environment-specific configuration file, pass `--config-env`:
+- `AzureAd:*` configure user sign-in; see [Authentication](authentication.md#overriding-entra-id-settings).
+- `XboxPartner:TimeoutSeconds` is the request timeout in seconds for commands such as
+  [`game`](commands/game.md), and must be a positive number.
+- `XblPCSandbox:Path` is the `XblPCSandbox.exe` that the [`pc sandbox`](commands/pc.md)
+  commands run. When it isn't set, the CLI looks in its own directory and then on `PATH`.
+- `AuditLog:Enabled` turns on the [audit log](audit-log.md).
+- `Telemetry:*` are described in [Telemetry](telemetry.md).
 
-```bash
-# Uses appsettings.Development.json as an overlay on top of appsettings.json
-xbox --config-env Development auth login
-```
+Changing `PlayFab:BaseUrlTemplate` or `XboxPartner:BaseUrl` from its built-in default makes
+every command that sends a token to that endpoint write a warning to stderr first, so a
+changed endpoint can't go unnoticed.
 
 ## Environment variables
 
 The CLI's own variables all start with `XBOX_`. A setting's or context value's variable is
-`XBOX_` and its key in capitals, with `__` for each level of nesting and `_` for a hyphen:
+`XBOX_` and its key, with `__` (two underscores) in place of each `:` and `_` for a hyphen:
 `Telemetry:Enabled` is `XBOX_TELEMETRY__ENABLED`, and the context key `seller-id` is
-`XBOX_SELLER_ID`. `XBOX_PROFILE` picks the profile saved values come from. A variable applies to
-the shell that sets it and every command that shell, an orchestrator, or an agent starts:
+`XBOX_SELLER_ID`. Write names in capitals, as shown: settings variables are matched regardless
+of case, but on Linux and macOS the others, such as context values, `XBOX_PROFILE`, and
+`XBOX_TELEMETRY_OPTOUT`, are recognized only in capitals. `XBOX_PROFILE`
+picks the profile saved values come from. A variable applies to the shell that sets it and
+every command that shell, an orchestrator, or an agent starts:
 
 ```bash
 # Linux / macOS
@@ -59,7 +78,8 @@ $env:XBOX_PLAYFAB_TITLE_ID = "ABC123"
 xbox playfab api /Admin/GetTitleData
 ```
 
-Useful environment variables include:
+Every setting in [Settings](#settings) has a variable. Other useful environment variables
+include:
 
 | Environment variable | Configuration key or behavior |
 |----------------------|-------------------------------|
@@ -67,19 +87,12 @@ Useful environment variables include:
 | `XBOX_SELLER_ID` | The Partner Center seller, a context value |
 | `XBOX_SANDBOX_ID` | The XBOX sandbox, a context value |
 | `XBOX_PROFILE` | The profile saved context values come from, when `--profile` isn't given. Refused in a service-principal mode, which has no saved context |
-| `XBOX_AZUREAD__CLIENTID` | `AzureAd:ClientId` |
-| `XBOX_AZUREAD__TENANTID` | `AzureAd:TenantId` |
-| `XBOX_AZUREAD__SCOPES` | `AzureAd:Scopes` |
-| `XBOX_TELEMETRY__ENABLED` | `Telemetry:Enabled` |
-| `XBOX_XBOXPARTNER__TIMEOUTSECONDS` | `XboxPartner:TimeoutSeconds`, the request timeout in seconds for commands such as [`game`](commands/game.md). Defaults to `120`; must be a positive number. |
-| `XBOX_XBLPCSANDBOX__PATH` | `XblPCSandbox:Path`, the `XblPCSandbox.exe` that the [`pc sandbox`](commands/pc.md) commands run |
 | `XBOX_TELEMETRY_OPTOUT` | Telemetry opt-out when set to `1`, `true`, or `yes` |
 | `XBOX_AUTHENTICATION__MODE` | The service-principal authentication mode; see below |
-| `APPLICATIONINSIGHTS_CONNECTION_STRING` | Optional telemetry exporter connection string when not configured elsewhere |
 
 Service-principal authentication settings (`XBOX_AUTHENTICATION__*`) are the
 exception to this layering: they are read only from environment variables, never from
-`appsettings.json`, user settings, or CLI options. `XBOX_AUTHENTICATION__TENANTID` and
+the built-in defaults or CLI options. `XBOX_AUTHENTICATION__TENANTID` and
 `XBOX_AUTHENTICATION__CLIENTID` are shared by every mode that takes them. See
 [Automation (service principal) authentication](authentication.md#automation-service-principal-authentication).
 
@@ -90,12 +103,12 @@ source.
 
 | Option | Configuration key or behavior |
 |--------|-------------------------------|
-| `--config-env` | Loads `appsettings.{env}.json` |
 | `--playfab-title-id` | The PlayFab title, a context value; see [Saved context](#saved-context) |
 | `--profile` | The profile saved context values come from; see [Saved context](#saved-context) |
 | `--client-id` | `AzureAd:ClientId` for user sign-in; refused in service-principal modes |
 | `--tenant-id` | `AzureAd:TenantId` for user sign-in; refused in service-principal modes |
 | `--scopes` | `AzureAd:Scopes` |
+| `--base-url` | `XboxPartner:BaseUrl`, on the commands that accept it, such as [`game`](commands/game.md) and [`seller`](commands/seller.md) |
 | `--disable-telemetry` | Sets `Telemetry:Enabled=false` for this invocation |
 
 Global output and safety flags (`--output`, `--data-only`, `--confirm`,
@@ -159,3 +172,32 @@ target another one for a single command without changing either:
 # The saved title is ABC123, but this call targets DEF456
 xbox --playfab-title-id DEF456 playfab api /Admin/GetTitleData
 ```
+
+## Upgrading from a release that read appsettings.json
+
+Earlier releases read `appsettings.json`, and `appsettings.{environment}.json` with
+`--config-env`, from beside the executable. Releases now ship only the executable,
+`LICENSE`, and `NOTICE.md`, and don't read those files.
+
+- If you changed a value in one of those files, set its `XBOX_` variable instead. For
+  example, `"AzureAd": { "ClientId": "..." }` becomes `XBOX_AZUREAD__CLIENTID`. Values you
+  didn't change need nothing; they're built in.
+- `--config-env` is retired. Passing it fails with:
+
+  ```text
+  --config-env is no longer supported because settings files are no longer read. Set XBOX_ environment variables instead, such as XBOX_AZUREAD__CLIENTID.
+  ```
+
+- While an `appsettings*.json` file is still beside the executable, each command writes this
+  note to stderr once, except with `--output json` or `json-compact`. Delete the file to hide it:
+
+  ```text
+  Note: '<file>' is no longer read. Settings come from the built-in defaults, XBOX_ environment variables, and command options. Delete the file to hide this note.
+  ```
+
+- If you set `XBOX_PLAYFAB__REQUESTHEADERS__0__VALUE` because an earlier error message
+  suggested it, remove it. PlayFab commands fail until you do, with an error that names it.
+- `APPLICATIONINSIGHTS_CONNECTION_STRING` is no longer read. Release builds send telemetry
+  only to their built-in destination; see [Telemetry](telemetry.md) to opt out.
+
+Saved context, profiles, and the sign-in cache are unaffected.

@@ -19,7 +19,7 @@ internal static class SellerCommandFactory
             "seller",
             "List the Partner Center sellers available to the signed-in developer");
         command.Subcommands.Add(CreateListCommand(clientFactory));
-        return command;
+        return command.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.XboxPartner);
     }
 
     private static Command CreateListCommand(
@@ -56,7 +56,7 @@ internal static class SellerCommandFactory
     {
         try
         {
-            var configuration = Program.BuildConfiguration(parseResult);
+            var configuration = Program.GetConfiguration(parseResult);
             var baseUrl = XboxPartnerCommandSupport.ResolveBaseUrl(
                 parseResult,
                 baseUrlOption,

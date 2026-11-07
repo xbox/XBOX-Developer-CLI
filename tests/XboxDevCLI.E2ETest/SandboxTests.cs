@@ -15,7 +15,7 @@ public class SandboxTests
     {
         CliResult result = await Cli.RunForSellerAsync("sandbox", "list");
 
-        JsonElement[] sandboxes = result.Json().Items();
+        JsonElement[] sandboxes = result.Json().Items("sandboxes");
         result.Check(sandboxes.Any(sandbox => sandbox.Is("sandboxId", Settings.Sandbox)), $"Expected {Settings.Sandbox}.");
         result.Check(sandboxes.Any(sandbox => sandbox.Is("sandboxId", "RETAIL")), "Expected RETAIL.");
     }

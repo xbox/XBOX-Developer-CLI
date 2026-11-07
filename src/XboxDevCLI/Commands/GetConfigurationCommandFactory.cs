@@ -61,7 +61,7 @@ internal static class GetConfigurationCommandFactory
             {
                 Guid scid = parseResult.GetValue(scidOption);
                 string sandbox = parseResult.GetValue(sandboxOption)!;
-                var configuration = Program.BuildConfiguration(parseResult);
+                var configuration = Program.GetConfiguration(parseResult);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
                         configuration,
@@ -110,13 +110,18 @@ internal static class GetConfigurationCommandFactory
     {
         try
         {
-            string response = await client
-                .GetXboxLiveConfigurationAsync(
-                    sellerId,
-                    scid,
-                    sandbox,
-                    cancellationToken)
-                .ConfigureAwait(false);
+            string response;
+            using (RequestProgress.Start($"Getting configuration for {sandbox}", stderr))
+            {
+                response = await client
+                    .GetXboxLiveConfigurationAsync(
+                        sellerId,
+                        scid,
+                        sandbox,
+                        cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             stdout.WriteLine(output.TableView is not null
                 ? XboxPartnerTableFormatter.FormatConfiguration(response)
                 : PlayFabApiClient.FormatJson(response, output.IsCompact));

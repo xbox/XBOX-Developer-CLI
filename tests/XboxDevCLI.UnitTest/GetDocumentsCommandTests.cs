@@ -8,6 +8,7 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using XboxDevCLI.Commands;
+using XboxDevCLI.Output;
 using XboxDevCLI.Services;
 using Xunit;
 
@@ -161,7 +162,7 @@ public class GetDocumentsCommandTests
                     null,
                     []),
                 directory,
-                "json-compact",
+                OutputOptions.JsonCompact,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -216,7 +217,7 @@ public class GetDocumentsCommandTests
                     null,
                     []),
                 directory,
-                "table",
+                OutputOptions.Table(XboxPartnerCommandSupport.DocumentDownloadTableView),
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -265,7 +266,7 @@ public class GetDocumentsCommandTests
                     null,
                     []),
                 directory,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);

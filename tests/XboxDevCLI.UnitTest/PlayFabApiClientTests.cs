@@ -20,6 +20,7 @@ public class PlayFabApiClientTests
         string titleId = "ABC123",
         string? baseUrlTemplate = "https://{0}.playfabapi.com",
         (string Name, string Value)[]? requestHeaders = null,
+        string? hostHeader = null,
         bool telemetryEnabled = true,
         bool dependencyTracingEnabled = true,
         long? maxResponseBytes = null,
@@ -35,6 +36,7 @@ public class PlayFabApiClientTests
             ["Telemetry:Enabled"] = telemetryEnabled.ToString(),
             ["Telemetry:DependencyTracingEnabled"] = dependencyTracingEnabled.ToString(),
             ["AuditLog:Enabled"] = auditLogEnabled.ToString(),
+            ["PlayFab:HostHeader"] = hostHeader,
         };
 
         if (requestHeaders != null)
@@ -1214,6 +1216,127 @@ public class PlayFabApiClientTests
             "Request must not contain X-HeaderName header when not configured.");
     }
 
+    [Theory]
+    [InlineData("DEF456.playfabapi.com")]
+    // The selected title must be the whole first label.
+    [InlineData("ABC1234.playfabapi.com")]
+    // A list, or anything else that isn't one host name, is refused even when it starts with the title.
+    [InlineData("ABC123.playfabapi.com,DEF456.playfabapi.com")]
+    [InlineData("{titleId}.playfabapi.com/path")]
+    public void Constructor_RefusesHostHeaderForAnotherTitle(string value)
+    {
+        var config = CreateTestConfiguration(hostHeader: value);
+        var mockAuthService = new Mock<AuthenticationService>(config) { CallBase = false };
+        var handler = new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK));
+        using var httpClient = new HttpClient(handler);
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new PlayFabApiClient(config, mockAuthService.Object, httpClient));
+
+        Assert.Equal(
+            $"The X-PlayFab-Host header is '{value.Replace("{titleId}", "ABC123")}', but it must be a single host " +
+            "name whose first label is the selected PlayFab title 'ABC123'. Make {titleId} the first label of " +
+            "PlayFab:HostHeader (XBOX_PLAYFAB__HOSTHEADER), as in the built-in '{titleId}.playfabapi.com', or set " +
+            "it to 'none' to send no X-PlayFab-Host header.",
+            ex.Message);
+        mockAuthService.Verify(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Null(handler.LastRequest);
+    }
+
+    /// <summary>
+    /// <c>PlayFab:HostHeader</c> is the one place the routing header is set, so a request header
+    /// can't send a second value or bypass its check.
+    /// </summary>
+    [Theory]
+    [InlineData("X-PlayFab-Host")]
+    [InlineData("x-playfab-host")]
+    public void Constructor_RefusesRoutingHeaderInRequestHeaders(string name)
+    {
+        var config = CreateTestConfiguration(requestHeaders: new[] { (name, "{titleId}.playfabapi.com") });
+        var mockAuthService = new Mock<AuthenticationService>(config) { CallBase = false };
+
+        var ex = Assert.Throws<InvalidOperationException>(
+            () => new PlayFabApiClient(config, mockAuthService.Object));
+
+        Assert.Equal(
+            "PlayFab:RequestHeaders:0 sets the X-PlayFab-Host header, which PlayFab:HostHeader sets. Remove it, and " +
+            "set XBOX_PLAYFAB__HOSTHEADER instead, with {titleId} as the first label of its value.",
+            ex.Message);
+    }
+
+    [Theory]
+    [InlineData("{titleId}.playfabapi.com", "ABC123.playfabapi.com")]
+    [InlineData("abc123.playfabapi.com", "abc123.playfabapi.com")]
+    [InlineData(" {titleId}.example.com ", "ABC123.example.com")]
+    public async Task CallApiAsync_SendsHostHeaderForTheSelectedTitle(string value, string sent)
+    {
+        var handler = await SendWithAsync(CreateTestConfiguration(hostHeader: value));
+
+        Assert.Equal(sent, handler.LastRequest!.Headers.GetValues("X-PlayFab-Host").Single());
+    }
+
+    /// <summary>
+    /// <c>none</c>, in any case, sends no host header; so does a configuration without the
+    /// setting. A word rather than an empty value, because an empty environment variable is dropped.
+    /// </summary>
+    [Theory]
+    [InlineData("none")]
+    [InlineData("NONE")]
+    [InlineData(null)]
+    public async Task CallApiAsync_SendsNoHostHeaderWhenTurnedOff(string? value)
+    {
+        var handler = await SendWithAsync(CreateTestConfiguration(hostHeader: value));
+
+        Assert.False(handler.LastRequest!.Headers.Contains("X-PlayFab-Host"));
+    }
+
+    /// <summary>The built-in settings send the host header for the selected title.</summary>
+    [Fact]
+    public async Task CallApiAsync_BuiltInSettingsSendTheHostHeader()
+    {
+        var config = new ConfigurationBuilder()
+            .AddConfiguration(TestSettings.BuiltIn())
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["PlayFab:TitleId"] = "ABC123",
+                ["Telemetry:Enabled"] = "false",
+            })
+            .Build();
+
+        var handler = await SendWithAsync(config);
+
+        Assert.Equal("ABC123.playfabapi.com", handler.LastRequest!.Headers.GetValues("X-PlayFab-Host").Single());
+    }
+
+    [Fact]
+    public async Task CallApiAsync_SendsRequestHeaderThatNamesAnotherTitle()
+    {
+        var handler = await SendWithAsync(
+            CreateTestConfiguration(requestHeaders: new[] { ("X-Custom", "DEF456.playfabapi.com") }));
+
+        Assert.Equal("DEF456.playfabapi.com", handler.LastRequest!.Headers.GetValues("X-Custom").Single());
+    }
+
+    private static async Task<MockHttpMessageHandler> SendWithAsync(IConfiguration config)
+    {
+        var mockAuthService = new Mock<AuthenticationService>(config) { CallBase = false };
+        mockAuthService
+            .Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMockAuthResult("token"));
+
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{}"),
+            });
+
+        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://ABC123.playfabapi.com/") };
+        using var client = new PlayFabApiClient(config, mockAuthService.Object, httpClient);
+
+        await client.CallApiAsync("/Admin/GetTitleData", null, CancellationToken.None);
+        return handler;
+    }
+
     [Fact]
     public async Task CallApiAsync_ResponseBodyWithinConfiguredLimit_Succeeds()
     {
@@ -1347,7 +1470,11 @@ public class PlayFabApiClientTests
         var ex = Assert.Throws<InvalidOperationException>(
             () => new PlayFabApiClient(config, mockAuthService.Object));
 
-        Assert.Contains("missing or empty Name", ex.Message);
+        Assert.Equal(
+            "PlayFab:RequestHeaders:0 has no Name. If it's a leftover XBOX_PLAYFAB__REQUESTHEADERS__0__VALUE " +
+            "that set the X-PlayFab-Host header, remove it and set XBOX_PLAYFAB__HOSTHEADER instead. " +
+            "Otherwise, set XBOX_PLAYFAB__REQUESTHEADERS__0__NAME.",
+            ex.Message);
     }
 
     [Fact]

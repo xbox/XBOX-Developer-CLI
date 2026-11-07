@@ -46,7 +46,7 @@ internal static class SandboxCommandFactory
         sandbox.Subcommands.Add(CreateGetCommand(clientFactory));
         sandbox.Subcommands.Add(CreateCreateCommand(
             clientFactory, creationDependencies ?? XboxPartnerJobDependencies.Default));
-        return sandbox;
+        return sandbox.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.XboxPartner);
     }
 
     private delegate bool SandboxIdNormalizer(string? value, out string normalized);
@@ -87,10 +87,11 @@ internal static class SandboxCommandFactory
                         json = await client.ListSandboxesAsync(url, sellerId, cancellationToken, progress.PageRead);
                     }
 
+                    json = $"{{\"sandboxes\":{json}}}";
                     var output = OutputOptions.From(result);
                     if (output.TableView is { } view)
                     {
-                        using var document = JsonDocument.Parse($"{{\"sandboxes\":{json}}}");
+                        using var document = JsonDocument.Parse(json);
                         Console.WriteLine(TableFormatter.Format(document.RootElement, view));
                     }
                     else
@@ -104,7 +105,7 @@ internal static class SandboxCommandFactory
         return command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
             Scope: "Sandboxes visible to the seller selected by --seller-id, XBOX_SELLER_ID, or 'context set', including global sandboxes.",
-            Output: "A JSON array of sandbox objects with sandboxId, type (Shared, Isolated, or Unknown), " +
+            Output: "A JSON object with a sandboxes array of sandbox objects with sandboxId, type (Shared, Isolated, or Unknown), " +
                 "sellerId, and global; table output has SANDBOX, TYPE, and GLOBAL columns. " + ListProgress.HelpOutput,
             Examples:
             [
@@ -391,7 +392,7 @@ internal static class SandboxCommandFactory
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var configuration = Program.BuildConfiguration(result);
+            var configuration = Program.GetConfiguration(result);
             var baseUrl = XboxPartnerCommandSupport.ResolveBaseUrl(result, baseUrlOption, configuration);
             using var client = clientFactory is null
                 ? new XboxPartnerClient(

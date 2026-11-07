@@ -391,7 +391,7 @@ public class WelcomeExperienceTests
     }
 
     [Theory]
-    [InlineData("--config-env", "Development", "--help")]
+    [InlineData("--tenant-id", "nodpublishers.com", "--help")]
     [InlineData("--verbose", "-h")]
     public void ProgramWelcome_RootHelpWithGlobalOptionsWritesOnlyLogoBeforeCompleteHelp(
         params string[] arguments)

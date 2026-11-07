@@ -3,6 +3,7 @@
 
 using System.CommandLine;
 using Microsoft.Extensions.Configuration;
+using XboxDevCLI.CommandLine;
 using XboxDevCLI.Services;
 
 namespace XboxDevCLI.Commands;
@@ -17,27 +18,19 @@ internal static class LoginCommandFactory
 
         command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
         {
-            try
+            var authService = authenticationServiceFactory(parseResult);
+            if (authService.IsAutomation)
             {
-                var authService = authenticationServiceFactory(parseResult);
-                if (authService.IsAutomation)
-                {
-                    Console.Error.WriteLine(authService.GetNotApplicableMessage("login"));
-                    return 1;
-                }
-
-                var result = await authService.LoginAsync(cancellationToken);
-                Console.WriteLine($"Successfully signed in as: {result.Account.Username}");
-                Console.WriteLine($"Token expires at: {result.ExpiresOn.LocalDateTime}");
-                return 0;
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Login failed: {ex.Message}");
+                Console.Error.WriteLine(authService.GetNotApplicableMessage("login"));
                 return 1;
             }
+
+            var result = await authService.LoginAsync(cancellationToken);
+            Console.WriteLine($"Successfully signed in as: {result.Account.Username}");
+            Console.WriteLine($"Token expires at: {result.ExpiresOn.LocalDateTime}");
+            return 0;
         });
 
-        return command;
+        return command.FormatsErrors((_, message) => $"Login failed: {message}");
     }
 }

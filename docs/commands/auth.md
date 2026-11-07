@@ -82,7 +82,10 @@ xbox auth status --output json-compact
 When JSON output is requested and the user is not signed in, `auth status` still
 exits `0` with the payload `{"signedIn":false}`.
 That lets scripts branch on the JSON instead of treating signed-out state as a
-process failure.
+process failure. Only a missing account counts as signed out: if the configuration,
+the sign-in settings, or the token cache can't be read, `auth status` exits `1`. With
+JSON output, it writes `"signedIn": false` and an `error` message to stderr and nothing
+to stdout; text output writes `Failed to retrieve status:` and the error to stderr.
 
 ### Service-principal modes
 

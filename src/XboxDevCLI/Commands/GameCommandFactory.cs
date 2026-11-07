@@ -5,6 +5,7 @@ using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
@@ -29,7 +30,7 @@ internal static class GameCommandFactory
         var dependencies = creationDependencies ?? XboxPartnerJobDependencies.Default;
         command.Subcommands.Add(CreateCreateCommand(clientFactory, dependencies));
         command.Subcommands.Add(CreateJobCommand(clientFactory));
-        return command;
+        return command.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.XboxPartner);
     }
 
     private static Command CreateListCommand(
@@ -315,7 +316,7 @@ internal static class GameCommandFactory
         var stopwatch = Stopwatch.StartNew();
         try
         {
-            var configuration = Program.BuildConfiguration(parseResult);
+            var configuration = Program.GetConfiguration(parseResult);
             var baseUrl = XboxPartnerCommandSupport.ResolveBaseUrl(
                 parseResult,
                 baseUrlOption,
@@ -429,6 +430,7 @@ internal static class GameCommandFactory
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption),
                         () => $"Submitting game creation for seller {sellerId}.");
                     XboxPartnerGameCreationJob job;
+                    var sent = false;
                     try
                     {
                         Console.Error.WriteLine("Submitting game creation job...");
@@ -436,7 +438,20 @@ internal static class GameCommandFactory
                         job = await client.CreateGameAsync(
                             url, sellerId,
                             new CreateXboxGameRequest(gameName, deviceFamilies, result.GetValue(sandbox)),
-                            cancellationToken);
+                            cancellationToken,
+                            onSending: () => sent = true);
+                    }
+                    catch (OperationCanceledException) when (!sent && cancellationToken.IsCancellationRequested)
+                    {
+                        Console.Error.WriteLine("Canceled before the request was sent, so no game was created.");
+                        return 1;
+                    }
+                    catch (Exception exception) when (!sent || IsRefused(exception))
+                    {
+                        Console.Error.WriteLine(
+                            (sent ? "The service didn't accept the request" : "The request wasn't sent") +
+                            ", so no game was created. It's safe to address the error and run the create again.");
+                        throw;
                     }
                     catch (Exception exception) when (exception is OperationCanceledException
                         or HttpRequestException or IOException or InvalidOperationException
@@ -615,7 +630,7 @@ internal static class GameCommandFactory
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var configuration = Program.BuildConfiguration(result);
+            var configuration = Program.GetConfiguration(result);
             var baseUrl = XboxPartnerCommandSupport.ResolveBaseUrl(result, baseUrlOption, configuration);
             using var client = clientFactory is null
                 ? new XboxPartnerClient(configuration, authenticationService: Program.GetAuthentication(result))
@@ -675,6 +690,18 @@ internal static class GameCommandFactory
             string.Equals(result.GetValue(Program.OutputOption), "json-compact", StringComparison.OrdinalIgnoreCase),
             dataOnly: false));
     }
+
+    /// <summary>
+    /// Whether the service answered the create without creating a game: a client error other than
+    /// 408, which is a timeout, or a 504 whose code says the service timed out checking the sandbox
+    /// before it submitted anything. Any other failure, such as a server error, a redirect, or a
+    /// broken connection, can come after Partner Center took the job.
+    /// </summary>
+    private static bool IsRefused(Exception exception) =>
+        exception is XboxPartnerApiException api &&
+        (((int)api.StatusCode is >= 400 and < 500 && api.StatusCode != HttpStatusCode.RequestTimeout) ||
+            (api.StatusCode == HttpStatusCode.GatewayTimeout &&
+                TestAccountCommandFactory.ReadProblemString(api.ResponseBody, "code") == "sandbox_check_timeout"));
 
     private static bool CanPrintJobId(string jobId) => XboxPartnerCommandSupport.ForTerminal(jobId) == jobId;
 

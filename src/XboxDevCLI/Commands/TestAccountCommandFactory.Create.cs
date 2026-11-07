@@ -33,6 +33,17 @@ internal static partial class TestAccountCommandFactory
     /// </summary>
     internal const string DefaultSecurityQuestion = "What is your favorite hobby?";
 
+    private static readonly string[] SecurityQuestionSuggestions =
+    [
+        DefaultSecurityQuestion,
+        "Who is your favorite athlete?",
+        "What is your maternal grandmother's first name?",
+        "What was your childhood best friend's first name?",
+        "What was the name of your first pet?",
+        "What is your current best friend's first name?",
+        "What was your favorite city to visit as a child?",
+    ];
+
     /// <summary>The subscriptions the service accepts, spelled as it spells them.</summary>
     internal static readonly string[] Subscriptions = ["Silver", "Gold"];
 
@@ -92,7 +103,8 @@ internal static partial class TestAccountCommandFactory
         var lastNameOption = CreateTextOption("--last-name", "Last name for the accounts. Defaults to Account.");
         var securityQuestionOption = CreateTextOption(
             "--security-question",
-            $"Security question for the accounts. Defaults to \"{DefaultSecurityQuestion}\".");
+            "Security question for the accounts. Without it, a terminal offers a choice unless " +
+                $"--security-answer-file is supplied. Otherwise defaults to \"{DefaultSecurityQuestion}\".");
         var alternateEmailOption = CreateTextOption(
             "--alternate-email",
             "Alternate email for the accounts. Defaults to your developer email.");
@@ -155,6 +167,9 @@ internal static partial class TestAccountCommandFactory
                 "approval is still required.",
             LearnMore:
             [
+                "When --security-question and --security-answer-file are omitted, a terminal offers a " +
+                "numbered choice before confirmation. Enter selects the default question. --confirm " +
+                "skips only confirmation, not the question or secret prompts.",
                 "The password and security answer are read from --password-file, --security-answer-file, " +
                 "stdin, or a prompt; never from an option value or an environment variable.",
                 TestAccountSecretReader.PasswordRequirements +
@@ -203,11 +218,13 @@ internal static partial class TestAccountCommandFactory
                 result.AddError("--no-wait and --timeout cannot be combined.");
             }
         });
-        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
         {
             var dependencies = Dependencies;
             string? passwordFile = parseResult.GetValue(passwordFileOption);
             string? securityAnswerFile = parseResult.GetValue(securityAnswerFileOption);
+            string? suppliedQuestion = Trim(parseResult.GetValue(securityQuestionOption));
+            string securityQuestion = suppliedQuestion ?? DefaultSecurityQuestion;
             try
             {
                 // Fail before sign in and the seller lookup when a secret cannot be read at all.
@@ -215,16 +232,30 @@ internal static partial class TestAccountCommandFactory
                 TestAccountSecretReader.EnsureSource(passwordFile, "--password-file", "Password", dependencies);
                 TestAccountSecretReader.EnsureSource(
                     securityAnswerFile, "--security-answer-file", "Security answer", dependencies);
+                if (suppliedQuestion is null && securityAnswerFile is null && dependencies.IsInteractive())
+                {
+                    securityQuestion = await SelectSecurityQuestionAsync(
+                        dependencies, Console.Error, cancellationToken).ConfigureAwait(false);
+                }
             }
             catch (InvalidOperationException exception)
             {
                 Console.Error.WriteLine(exception.Message);
-                return Task.FromResult(1);
+                return 1;
+            }
+            catch (IOException exception)
+            {
+                Console.Error.WriteLine($"Could not read a security question selection: {exception.Message}");
+                return 1;
+            }
+            catch (OperationCanceledException)
+            {
+                Console.Error.WriteLine("Test account creation canceled. Nothing was created.");
+                return 1;
             }
 
             string emailPrefix = parseResult.GetValue(emailPrefixOption)!.Trim();
-            string securityQuestion = Trim(parseResult.GetValue(securityQuestionOption)) ?? DefaultSecurityQuestion;
-            return ExecuteCreateAsync(
+            return await ExecuteCreateAsync(
                 parseResult,
                 sellerOption,
                 new CreateTestAccountBatchRequest
@@ -265,9 +296,50 @@ internal static partial class TestAccountCommandFactory
                 parseResult.GetValue(noWaitOption),
                 ReadTimeout(parseResult, timeoutOption),
                 dependencies,
-                cancellationToken);
+                cancellationToken).ConfigureAwait(false);
         });
         return command;
+    }
+
+    private static async Task<string> SelectSecurityQuestionAsync(
+        TestAccountCommandDependencies dependencies,
+        TextWriter stderr,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        stderr.WriteLine("Security question for the accounts:");
+        for (int index = 0; index < SecurityQuestionSuggestions.Length; index++)
+        {
+            stderr.WriteLine(FormattableString.Invariant($"  {index + 1}. {SecurityQuestionSuggestions[index]}"));
+        }
+
+        var readLineAsync = FeedbackDependencies.CancelableReadLine(dependencies.ReadConfirmation);
+        while (true)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            stderr.Write(FormattableString.Invariant($"Choose 1 to {SecurityQuestionSuggestions.Length} [1]: "));
+            stderr.Flush();
+            string? answer = await readLineAsync(cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (answer is null)
+            {
+                throw new InvalidOperationException("Test account creation canceled. Nothing was created.");
+            }
+
+            if (string.IsNullOrWhiteSpace(answer))
+            {
+                return DefaultSecurityQuestion;
+            }
+
+            if (int.TryParse(answer.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out int choice) &&
+                choice >= 1 && choice <= SecurityQuestionSuggestions.Length)
+            {
+                return SecurityQuestionSuggestions[choice - 1];
+            }
+
+            stderr.WriteLine(FormattableString.Invariant(
+                $"Enter a number from 1 to {SecurityQuestionSuggestions.Length}, or press Enter for 1."));
+        }
     }
 
     private static Task<int> ExecuteCreateAsync(
@@ -402,7 +474,8 @@ internal static partial class TestAccountCommandFactory
     }
 
     /// <summary>
-    /// True when the create may have created a batch: any 5xx, except a 503 whose code says
+    /// True when the create may have created a batch: any 3xx, a redirect the client doesn't follow
+    /// and that doesn't say whether the request was acted on, and any 5xx, except a 503 whose code says
     /// XboxPartner refused it before any upstream call (<c>feature_disabled</c> or
     /// <c>service_configuration_invalid</c>). XboxPartner can answer 502 after the batch was
     /// accepted, and the network in front of XboxPartner answers 503 or 504 with no code both when
@@ -410,7 +483,7 @@ internal static partial class TestAccountCommandFactory
     /// 5xx without one of those codes says nothing about how far the request got.
     /// </summary>
     internal static bool IsOutcomeUnknown(XboxPartnerApiException exception) =>
-        (int)exception.StatusCode >= 500 &&
+        (int)exception.StatusCode is < 400 or >= 500 &&
         !(exception.StatusCode == HttpStatusCode.ServiceUnavailable &&
             ReadProblemString(exception.ResponseBody, "code") is "feature_disabled" or "service_configuration_invalid");
 

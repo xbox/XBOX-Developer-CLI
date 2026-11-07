@@ -1,8 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
+using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
 using Moq;
@@ -129,6 +132,45 @@ public class XboxPartnerClientTests
         var request = Assert.Single(handler.Requests);
         Assert.Equal(Assert.Single(request.Headers["x-ms-correlation-id"]), error.CorrelationId);
         Assert.Equal(status, error.StatusCode);
+    }
+
+    [Fact]
+    public async Task CreateGameAsync_DefaultClientDoesNotFollowARedirect()
+    {
+        // The real handler, not a fake: following the 307 would send the create again.
+        using var server = new TcpListener(IPAddress.Loopback, 0);
+        server.Start();
+        string baseUrl = $"http://127.0.0.1:{((IPEndPoint)server.LocalEndpoint).Port}";
+        int requests = 0;
+        _ = Task.Run(async () =>
+        {
+            while (true)
+            {
+                using TcpClient connection = await server.AcceptTcpClientAsync();
+                using var reader = new StreamReader(connection.GetStream());
+                int length = 0;
+                for (string? line; !string.IsNullOrEmpty(line = await reader.ReadLineAsync());)
+                {
+                    if (line.StartsWith("Content-Length:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        length = int.Parse(line["Content-Length:".Length..], CultureInfo.InvariantCulture);
+                    }
+                }
+
+                await reader.ReadBlockAsync(new char[length]);
+                Interlocked.Increment(ref requests);
+                await connection.GetStream().WriteAsync(Encoding.ASCII.GetBytes(
+                    $"HTTP/1.1 307 Temporary Redirect\r\nLocation: {baseUrl}/again\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+            }
+        });
+        using var client = CreateClient(httpClient: null);
+
+        var error = await Assert.ThrowsAsync<XboxPartnerApiException>(() =>
+            client.CreateGameAsync(
+                baseUrl, "seller", new CreateXboxGameRequest("Game", [XboxPartnerDeviceFamily.Xbox])));
+
+        Assert.Equal(HttpStatusCode.TemporaryRedirect, error.StatusCode);
+        Assert.Equal(1, requests);
     }
 
     [Fact]
@@ -693,7 +735,7 @@ public class XboxPartnerClientTests
         new(HttpStatusCode.OK) { Content = new StringContent(body) };
 
     internal static XboxPartnerClient CreateClient(
-        HttpClient httpClient,
+        HttpClient? httpClient,
         IConfiguration? configuration = null)
     {
         configuration ??= CreateConfiguration();

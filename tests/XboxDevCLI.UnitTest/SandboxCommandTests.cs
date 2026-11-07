@@ -111,19 +111,30 @@ public class SandboxCommandTests
             $"/xboxpartner/v1/sandboxes/{sandboxId.ToUpperInvariant()}",
             Assert.Single(handler.Requests).RequestUri!.AbsolutePath);
     }
-    [Fact]
-    public async Task List_FollowsEveryPageWithOneCorrelationId()
+    [Theory]
+    [InlineData("json", false)]
+    [InlineData("json", true)]
+    [InlineData("json-compact", false)]
+    [InlineData("json-compact", true)]
+    public async Task List_FollowsEveryPageWithOneCorrelationId(string format, bool dataOnly)
     {
         var handler = Handler(
             """{"sandboxes":[{"sandboxId":"RETAIL","type":"Unknown","sellerId":null,"global":true},{"sandboxId":"ABCDEF.1","type":"Shared","sellerId":"seller-1","global":false}],"continuationToken":"page 2"}""",
             """{"sandboxes":[],"continuationToken":"page3"}""",
             """{"sandboxes":[{"sandboxId":"ABCDEF.2","type":"Isolated","sellerId":"seller-1","global":false,"extra":1}]}""");
-        var result = await InvokeAsync(handler, ["sandbox", "list", "--output", "json-compact"]);
+        string[] arguments = ["sandbox", "list", "--output", format];
+        if (dataOnly)
+        {
+            arguments = [.. arguments, "--data-only"];
+        }
+        var result = await InvokeAsync(handler, arguments);
 
         Assert.Equal(0, result.ExitCode);
+        using var document = JsonDocument.Parse(result.Stdout);
         Assert.Equal(
-            """[{"sandboxId":"RETAIL","type":"Unknown","sellerId":null,"global":true},{"sandboxId":"ABCDEF.1","type":"Shared","sellerId":"seller-1","global":false},{"sandboxId":"ABCDEF.2","type":"Isolated","sellerId":"seller-1","global":false,"extra":1}]""",
-            result.Stdout.Trim());
+            """{"sandboxes":[{"sandboxId":"RETAIL","type":"Unknown","sellerId":null,"global":true},{"sandboxId":"ABCDEF.1","type":"Shared","sellerId":"seller-1","global":false},{"sandboxId":"ABCDEF.2","type":"Isolated","sellerId":"seller-1","global":false,"extra":1}]}""",
+            JsonSerializer.Serialize(document.RootElement));
+        Assert.Equal(format == "json", result.Stdout.Trim().Contains('\n'));
         Assert.Equal(3, handler.Requests.Count);
         Assert.All(handler.Requests, request =>
         {
@@ -183,14 +194,21 @@ public class SandboxCommandTests
     }
 
     [Theory]
-    [InlineData("json-compact", "[]")]
+    [InlineData("json", """{"sandboxes":[]}""")]
+    [InlineData("json-compact", """{"sandboxes":[]}""")]
     [InlineData("table", "No results.")]
     public async Task List_EmptyIsSuccess(string format, string expected)
     {
         var result = await InvokeAsync(Handler("""{"sandboxes":[]}"""), ["sandbox", "list", "--output", format]);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal(expected, result.Stdout.Trim());
+        var actual = result.Stdout.Trim();
+        if (format != "table")
+        {
+            using var document = JsonDocument.Parse(actual);
+            actual = JsonSerializer.Serialize(document.RootElement);
+        }
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
@@ -235,7 +253,7 @@ public class SandboxCommandTests
         var result = await InvokeAsync(Handler(pages), ["sandbox", "list", "--output", "json-compact"]);
 
         Assert.Equal(0, result.ExitCode);
-        Assert.Equal("""[{"sandboxId":"A1"}]""", result.Stdout.Trim());
+        Assert.Equal("""{"sandboxes":[{"sandboxId":"A1"}]}""", result.Stdout.Trim());
     }
     [Theory]
     [InlineData("""[]""", "must contain a sandboxes array")]
@@ -278,7 +296,7 @@ public class SandboxCommandTests
         Assert.Equal(0, list.ExitCode);
 
         using var sandboxes = JsonDocument.Parse(list.Stdout);
-        foreach (var sandbox in sandboxes.RootElement.EnumerateArray())
+        foreach (var sandbox in sandboxes.RootElement.GetProperty("sandboxes").EnumerateArray())
         {
             var id = sandbox.GetProperty("sandboxId").GetString()!;
             var handler = Handler($$"""{"sandboxId":"{{id}}","type":"Shared","sellerId":"seller-1"}""");
@@ -994,7 +1012,7 @@ public class SandboxCommandTests
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        Assert.Equal(Program.TableUnavailableMessage, result.Stderr.Trim());
+        Assert.Equal(Program.TableUnavailableMessage, TestEnvironment.WithoutEndpointWarnings(result.Stderr).Trim());
     }
 
     [Fact]

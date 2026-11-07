@@ -34,6 +34,8 @@ public class GameCreationCommandTests
         """{"jobId":"job-1","status":"completed","result":"failed","game":null,"errors":[{"code":"invalidRequest","message":"The name is reserved.","details":[{"code":"businessValidationError","message":"Another publisher."}]}]}""";
     private static readonly string[] CreateArguments =
         ["game", "create", "--name", "Nod Arena", "--supported-device", "xbox"];
+    private const string NoGameCreated =
+        ", so no game was created. It's safe to address the error and run the create again.";
 
     [Theory]
     [InlineData("--confirm", 0)]
@@ -558,6 +560,108 @@ public class GameCreationCommandTests
         Assert.Contains("response-correlation", result.Stderr);
     }
 
+    [Theory]
+    [InlineData(HttpStatusCode.TemporaryRedirect)]
+    [InlineData(HttpStatusCode.PermanentRedirect)]
+    public async Task RedirectedSubmission_IsUncertainAndNotResubmitted(HttpStatusCode status)
+    {
+        var handler = new XboxPartnerHttpMessageHandler(Response("{}", status));
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Single(handler.Requests);
+        Assert.Contains("Do not resubmit", result.Stderr);
+        Assert.Contains("game list", result.Stderr);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.BadRequest,
+        """{"title":"Unusable sandbox.","status":400,"code":"sandbox_unusable","detail":"Sandbox 'ABCDEF.1' can't be used by a new game."}""",
+        "Sandbox 'ABCDEF.1' can't be used by a new game.")]
+    [InlineData(HttpStatusCode.BadRequest,
+        """{"title":"One or more validation errors occurred.","status":400,"detail":"The name is too long.","errors":{"name":["Too long."]}}""",
+        "The name is too long.")]
+    [InlineData(HttpStatusCode.Unauthorized, """{"detail":"The token expired."}""", "The token expired.")]
+    [InlineData(HttpStatusCode.Forbidden, """{"detail":"No access to the seller."}""", "No access to the seller.")]
+    [InlineData(HttpStatusCode.NotFound, """{"detail":"Not found."}""", "Not found.")]
+    [InlineData(HttpStatusCode.Conflict, """{"detail":"The name is taken."}""", "The name is taken.")]
+    [InlineData(HttpStatusCode.TooManyRequests, """{"detail":"Slow down."}""", "Slow down.")]
+    [InlineData(HttpStatusCode.GatewayTimeout,
+        """{"title":"Partner Center timed out.","status":504,"code":"sandbox_check_timeout","detail":"Partner Center didn't answer the check of sandbox 'ABCDEF.1' within 10 seconds, so the game wasn't submitted. Send the create again."}""",
+        "so the game wasn't submitted. Send the create again.")]
+    public async Task RefusedSubmission_SaysNoGameWasCreated(HttpStatusCode status, string body, string detail)
+    {
+        var handler = new XboxPartnerHttpMessageHandler(Response(body, status));
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--sandbox-id", "ABCDEF.1", "--confirm"]);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Single(handler.Requests);
+        Assert.Contains($"The service didn't accept the request{NoGameCreated}", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains(detail, result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("response-correlation", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("Do not resubmit", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("game list", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.RequestTimeout, "")]
+    [InlineData(HttpStatusCode.InternalServerError, """{"detail":"boom"}""")]
+    [InlineData(HttpStatusCode.BadGateway, "")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "")]
+    [InlineData(HttpStatusCode.GatewayTimeout, "")]
+    [InlineData(HttpStatusCode.GatewayTimeout, """{"title":"Timed out.","code":"some_other_code"}""")]
+    [InlineData(HttpStatusCode.InternalServerError, """{"code":"sandbox_check_timeout"}""")]
+    [InlineData(HttpStatusCode.BadGateway, """{"code":"sandbox_unusable"}""")]
+    public async Task ServerErrorOrTimeout_LeavesTheOutcomeUnknown(HttpStatusCode status, string body)
+    {
+        var handler = new XboxPartnerHttpMessageHandler(Response(body, status));
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Single(handler.Requests);
+        Assert.Contains("it is unknown whether the game was created. Do not resubmit.", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("game list", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("no game was created", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task UnsentSubmission_SaysNoGameWasCreated()
+    {
+        var handler = Handler(Accepted);
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"], auth: CreateAuth(signedIn: false));
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Empty(handler.Requests);
+        Assert.Contains($"The request wasn't sent{NoGameCreated}", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("No cached authentication token.", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("Do not resubmit", result.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CancelBeforeSending_SaysNoGameWasCreated()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var auth = CreateAuth();
+        auth.Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
+            .Returns<CancellationToken>(token =>
+            {
+                cancellation.Cancel();
+                token.ThrowIfCancellationRequested();
+                return Task.FromResult<AuthenticationResult?>(null);
+            });
+        var handler = Handler(Accepted);
+        var result = await InvokeAsync(
+            handler, [.. CreateArguments, "--confirm"], auth: auth, cancellationToken: cancellation.Token);
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Empty(handler.Requests);
+        Assert.EndsWith(
+            "Submitting game creation job..." + Environment.NewLine +
+            "Canceled before the request was sent, so no game was created." + Environment.NewLine,
+            result.Stderr,
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task UnsafeSubmittedJobId_IsSanitizedOnStderrAndRecoveryListsGames()
     {
@@ -727,7 +831,7 @@ public class GameCreationCommandTests
             Assert.Equal(0, result.ExitCode);
             Assert.Equal("2222222",
                 Assert.Single(Assert.Single(handler.Requests).Headers["X-DeveloperAccountId"]));
-            Assert.StartsWith("Using --seller-id 2222222 from XBOX_SELLER_ID." + Environment.NewLine, result.Stderr);
+            Assert.StartsWith("Using --seller-id 2222222 from XBOX_SELLER_ID." + Environment.NewLine, TestEnvironment.WithoutEndpointWarnings(result.Stderr));
             auth.Verify(service => service.GetCachedAccountAsync(It.IsAny<CancellationToken>()), Times.Never);
             auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Once);
         }
@@ -798,7 +902,7 @@ public class GameCreationCommandTests
 
                 // The seller isn't on the command line, so the irreversible create says which one
                 // it uses and where it came from, on stderr, even with --confirm.
-                Assert.StartsWith("Using --seller-id 7654321 from saved context." + Environment.NewLine, result.Stderr);
+                Assert.StartsWith("Using --seller-id 7654321 from saved context." + Environment.NewLine, TestEnvironment.WithoutEndpointWarnings(result.Stderr));
             }
         }
         finally
@@ -944,7 +1048,8 @@ public class GameCreationCommandTests
         string baseUrl = "https://gateway.example",
         bool addScope = true,
         bool throughMain = false,
-        string? stateDirectory = null)
+        string? stateDirectory = null,
+        CancellationToken cancellationToken = default)
     {
         auth ??= CreateAuth();
         using var httpClient = new HttpClient(handler);
@@ -996,7 +1101,7 @@ public class GameCreationCommandTests
                 : await Program.ResolveContextAsync(root.Parse(args.ToArray(), Program.NoResponseFileConfig), args);
             var exitCode = throughMain
                 ? await Program.Main(args.ToArray())
-                : parseResult is null ? 1 : await parseResult.InvokeAsync();
+                : parseResult is null ? 1 : await parseResult.InvokeAsync(cancellationToken: cancellationToken);
             return new CapturedInvocation(exitCode, stdout.ToString(), stderr.ToString());
         }
         finally

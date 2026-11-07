@@ -408,9 +408,6 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunHistoryAsync_WithoutCollectionId_SendsDefaultCollection()
     {
-        // GetTransactionHistory rejects a request with no CollectionId ("CollectionId is
-        // required."), unlike the sibling Inventory endpoints which fall back server-side. Send
-        // the default explicitly so `history` works without --collection-id.
         var handler = new EconomyMockHandler(Ok());
         using var client = CreateClientWithHandler(handler);
 
@@ -736,7 +733,27 @@ public class EconomyInventoryCommandTests
         Assert.Contains(EconomyCommandFactory.GetInventoryOperationStatusPath, handler.LastRequestUri);
         using var doc = JsonDocument.Parse(handler.CapturedBody!);
         Assert.Equal("op-token-123", doc.RootElement.GetProperty("OperationToken").GetString());
+        Assert.Equal("coll1", doc.RootElement.GetProperty("CollectionId").GetString());
         Assert.Contains("OperationStatus", stdout.ToString());
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    public async Task RunStatusAsync_WithoutCollectionId_OmitsCollectionId(string? collectionId)
+    {
+        var handler = new EconomyMockHandler(Ok());
+        using var client = CreateClientWithHandler(handler);
+
+        var exit = await EconomyCommandFactory.RunStatusAsync(
+            client, "E1", "title_player_account", collectionId, "op-token-123",
+            OutputOptions.Json, new StringWriter(), new StringWriter(),
+            CancellationToken.None);
+
+        Assert.Equal(0, exit);
+        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.False(doc.RootElement.TryGetProperty("CollectionId", out _));
     }
 
     [Fact]

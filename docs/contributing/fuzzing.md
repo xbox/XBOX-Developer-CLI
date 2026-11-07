@@ -45,7 +45,7 @@ coverage numbers.
 | Command parsing | `Program.BuildRootCommand().Parse(argv)` | Parsing arbitrary argv never throws; errors surface via `ParseResult`. |
 | Option-value parsing | `PlayFabCommandHelper.ParseCsv` / `TryParseEnum` | Never throw; produced entries are non-empty and trimmed; enum results round-trip. |
 | Output formatting | `PlayFabApiClient.FormatJson`, `Program.FormatOutput` / `FormatErrorOutput` | Never throw on arbitrary/malformed JSON; invalid input is returned unchanged; formatting is idempotent. |
-| Configuration layering | `Program.BuildConfiguration` | Never throws; accepted CLI overrides round-trip into the resolved configuration. |
+| Configuration layering | `Program.LoadConfiguration` | Never throws; accepted CLI overrides round-trip into the resolved configuration. |
 
 ## Running locally
 

@@ -63,23 +63,37 @@ internal static class XboxPartnerCommandSupport
         return text;
     }
 
+    /// <summary>The name of the option <see cref="CreateBaseUrlOption"/> creates.</summary>
+    internal const string BaseUrlOptionName = "--base-url";
+
     public static Option<string?> CreateBaseUrlOption() =>
-        new("--base-url")
+        new(BaseUrlOptionName)
         {
             Description = "Service base URL. Overrides XboxPartner:BaseUrl configuration.",
         };
+
+    /// <summary>
+    /// The value given for the command's <c>--base-url</c>, or <c>null</c> when it has none or
+    /// wasn't given one. Configuration loading layers it over <c>XboxPartner:BaseUrl</c>, so the
+    /// endpoint warning covers it.
+    /// </summary>
+    internal static string? GetBaseUrlOptionValue(ParseResult parseResult) =>
+        parseResult.CommandResult.Command.Options.FirstOrDefault(option => option.Name == BaseUrlOptionName)
+            is { } baseUrlOption
+            ? parseResult.GetResult(baseUrlOption)?.Tokens.FirstOrDefault()?.Value
+            : null;
 
     /// <summary>
     /// Resolves the service base URL from <c>--base-url</c>, then <c>XboxPartner:BaseUrl</c>
     /// configuration.
     /// </summary>
     /// <remarks>
-    /// There is no code fallback: the shipped appsettings.json is the single source of the
-    /// service URL, so the deployment can be retargeted without a rebuild and the source tree
-    /// carries no environment-specific hostname. A missing or blank key is reported as an
-    /// actionable error rather than silently falling back to a compiled-in host.
+    /// There is no code fallback: the built-in settings are the single source of the service URL,
+    /// and the source tree carries no other hostname for it. A missing or blank key is reported
+    /// as an actionable error rather than silently falling back to a compiled-in host.
     /// <see cref="XboxPartnerClient.BuildRequestUri"/> still rejects a non-HTTPS URL, since the
-    /// request carries a Microsoft Entra access token.
+    /// request carries a Microsoft Entra access token. A changed URL is warned about when the
+    /// command is prepared, if it declares <see cref="ServiceEndpoints.XboxPartner"/>.
     /// </remarks>
     public static string ResolveBaseUrl(
         ParseResult parseResult,
@@ -91,13 +105,11 @@ internal static class XboxPartnerCommandSupport
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             throw new InvalidOperationException(
-                "No service URL. Set XboxPartner:BaseUrl in appsettings.json, set "
-                + "the XBOX_XBOXPARTNER__BASEURL environment variable, or pass --base-url.");
+                "No service URL. Set the XBOX_XBOXPARTNER__BASEURL environment variable or pass --base-url.");
         }
 
         _ = XboxPartnerClient.BuildRequestUri(baseUrl, string.Empty);
         var effectiveBaseUrl = baseUrl.TrimEnd('/');
-        EndpointOverrideWarning.WriteXboxPartnerWarningIfOverridden(effectiveBaseUrl, Console.Error);
         return effectiveBaseUrl;
     }
 
@@ -107,13 +119,11 @@ internal static class XboxPartnerCommandSupport
         if (string.IsNullOrWhiteSpace(baseUrl))
         {
             throw new InvalidOperationException(
-                "No service URL. Set XboxPartner:BaseUrl in appsettings.json or set " +
-                "the XBOX_XBOXPARTNER__BASEURL environment variable.");
+                "No service URL. Set the XBOX_XBOXPARTNER__BASEURL environment variable.");
         }
 
         _ = XboxPartnerClient.BuildRequestUri(baseUrl, string.Empty);
         string effectiveBaseUrl = baseUrl.TrimEnd('/');
-        EndpointOverrideWarning.WriteXboxPartnerWarningIfOverridden(effectiveBaseUrl, Console.Error);
         return effectiveBaseUrl;
     }
 
@@ -295,7 +305,7 @@ internal static class XboxPartnerCommandSupport
         ParseResult parseResult)
     {
         Console.Error.WriteLine(XboxPartnerErrorGuidance.Describe(
-            exception, Program.GetAuthentication(parseResult).IsAutomationSelected));
+            exception, Program.GetInvocation(parseResult).IsAutomationSelected));
         if (parseResult.GetValue(Program.VerboseOption)
             && !string.IsNullOrWhiteSpace(exception.ResponseBody))
         {

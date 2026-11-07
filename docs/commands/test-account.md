@@ -231,7 +231,7 @@ are read only after you confirm, so a declined create never asks for them.
 | `--child-count <count>` | Total child accounts in the batch, all linked to the first account; 0 or more. It is not a number per account: `--count 5 --child-count 2` creates 5 accounts and 2 children. The service sets the maximum. |
 | `--first-name <text>` | Defaults to `Test`. |
 | `--last-name <text>` | Defaults to `Account`. |
-| `--security-question <text>` | The security question every account gets. The service requires one and has no default, so the CLI sends `What is your favorite hobby?` when you omit it. Must not be empty. |
+| `--security-question <text>` | The security question every account gets. When omitted with no answer file, a terminal offers a choice; otherwise defaults to `What is your favorite hobby?`. Must not be empty. See [Choosing a security question](#choosing-a-security-question). |
 | `--alternate-email <text>` | Defaults to the signed in developer's email. |
 | `--access-expiration <date>` | When sandbox access expires, such as `2026-12-31`, read as UTC. Defaults to three months from now. |
 | `--tag <tag>` | A tag to store on the batch, which `batch list --tag` can find later. Repeat for more tags. Tags appear as `keywords` in JSON output. |
@@ -246,6 +246,28 @@ are read only after you confirm, so a declined create never asks for them.
 The CLI checks only what it must to build the request. Limits such as the maximum `--count`,
 `--child-count`, number of sandboxes, and number of tags are set by the service, which rejects
 a request that exceeds them.
+
+### Choosing a security question
+
+The numbered picker offers these suggested security questions. To select one explicitly,
+pass its text with `--security-question`:
+
+1. What is your favorite hobby?
+2. Who is your favorite athlete?
+3. What is your maternal grandmother's first name?
+4. What was your childhood best friend's first name?
+5. What was the name of your first pet?
+6. What is your current best friend's first name?
+7. What was your favorite city to visit as a child?
+
+When both `--security-question` and `--security-answer-file` are omitted and stdin and stderr
+are terminals, the CLI shows a numbered picker before the confirmation summary. Enter selects
+`What is your favorite hobby?`. Invalid input asks again; ending input or pressing Ctrl+C
+cancels creation before any accounts are created.
+
+An explicit question or an answer file skips the picker. Without a terminal, the default
+question remains `What is your favorite hobby?`. `--confirm` skips only the confirmation
+prompt, not the question picker or secret prompts.
 
 ### Secrets
 
@@ -300,6 +322,8 @@ XBOX credentials it needs, so even a `--no-wait` create is not instant.
 The create is not idempotent, so the CLI sends it once and never retries it. When it cannot tell
 whether the service created a batch, it exits with code 3 instead of 1. That happens when:
 
+* any 3xx comes back. The CLI doesn't follow a redirect, because that would send the create
+  again;
 * any 5xx comes back, with or without an error code, except a 503 with `feature_disabled` or
   `service_configuration_invalid`. This includes `test_account_create_outcome_unknown`, any 502
   (the service can fail after the batch was accepted), and a 503 or 504 with no error code,
@@ -319,7 +343,7 @@ stderr then prints the time the request started, in UTC, and these steps:
    stopped; inspect it with `xbox test-account batch get <batch-id>`.
 4. Create again only if no such batch exists.
 
-The printed commands keep the `--seller-id`, `--config-env`, `--client-id`, `--tenant-id`,
+The printed commands keep the `--seller-id`, `--client-id`, `--tenant-id`,
 `--scopes`, and `--profile` you used, so they can be copied as they are. A non-default profile
 chosen through `XBOX_PROFILE` is written out as `--profile`.
 

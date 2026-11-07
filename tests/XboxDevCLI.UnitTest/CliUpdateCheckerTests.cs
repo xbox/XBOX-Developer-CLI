@@ -41,7 +41,7 @@ public class CliUpdateCheckerTests
         if (expected)
         {
             Assert.Contains(result.Instructions, step => step.Contains("ZIP", StringComparison.Ordinal));
-            Assert.Contains(result.Instructions, step => step.Contains("appsettings.json", StringComparison.Ordinal));
+            Assert.DoesNotContain(result.Instructions, step => step.Contains("appsettings", StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains("Windows", StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains("package-managed", StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains("xbox --version", StringComparison.Ordinal));
@@ -53,7 +53,7 @@ public class CliUpdateCheckerTests
             Assert.Contains(result.Instructions, step => step.Contains("%LOCALAPPDATA%\\XboxDevCLI", StringComparison.Ordinal)
                 && step.Contains("automatically reused", StringComparison.Ordinal)
                 && step.Contains("No import or seller reset", StringComparison.Ordinal));
-            Assert.Contains(result.Instructions, step => step.Contains("If you customized appsettings.json", StringComparison.Ordinal));
+            Assert.Contains(result.Instructions, step => step.Contains("Keep any XBOX_ environment variables", StringComparison.Ordinal));
         }
         else
         {

@@ -156,7 +156,7 @@ internal static class PublishCommandFactory
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                var configuration = Program.BuildConfiguration(parseResult);
+                var configuration = Program.GetConfiguration(parseResult);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
                         configuration,
@@ -220,9 +220,14 @@ internal static class PublishCommandFactory
 
         try
         {
-            string response = await client
-                .PublishXboxLiveConfigurationAsync(sellerId, request, cancellationToken)
-                .ConfigureAwait(false);
+            string response;
+            using (RequestProgress.Start(DescribePublish(request), stderr))
+            {
+                response = await client
+                    .PublishXboxLiveConfigurationAsync(sellerId, request, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             XboxLivePublishResponse result = ParseResponse(response);
             WriteDiagnostics(result, stderr);
             if (string.Equals(result.Status, AlreadyPublishedStatus, StringComparison.OrdinalIgnoreCase))
@@ -267,26 +272,15 @@ internal static class PublishCommandFactory
         }
     }
 
-    internal static Task<int> RunAsync(
-        XboxPartnerClient client,
-        long? sellerId,
-        XboxLivePublishRequest request,
-        string outputFormat,
-        TextWriter stdout,
-        TextWriter stderr,
-        CancellationToken cancellationToken) =>
-        RunAsync(
-            client,
-            sellerId,
-            request,
-            outputFormat.Equals("table", StringComparison.OrdinalIgnoreCase)
-                ? OutputOptions.Table(XboxPartnerCommandSupport.PublishTableView)
-                : outputFormat.Equals("json-compact", StringComparison.OrdinalIgnoreCase)
-                    ? OutputOptions.JsonCompact
-                    : OutputOptions.Json,
-            stdout,
-            stderr,
-            cancellationToken);
+    internal static string DescribePublish(XboxLivePublishRequest request)
+    {
+        string verb = request.ValidateOnly ? "Validating publish"
+            : request.Republish ? "Republishing"
+            : "Publishing";
+        return string.Equals(request.SourceSandbox, request.Sandbox, StringComparison.OrdinalIgnoreCase)
+            ? $"{verb} to {request.Sandbox}"
+            : $"{verb} from {request.SourceSandbox} to {request.Sandbox}";
+    }
 
     // A cross-sandbox publish also runs XORC's global storage copy, which mirrors the
     // source's global title storage files into the destination. XORC and the gateway compare

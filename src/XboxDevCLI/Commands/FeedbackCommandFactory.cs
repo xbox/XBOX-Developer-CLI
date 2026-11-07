@@ -143,7 +143,7 @@ internal static class FeedbackCommandFactory
                 return 1;
             }
         });
-        return command;
+        return command.Requires(CommandRequirement.None);
     }
 
     internal static string BuildIssueUrl(string environmentSummary) =>

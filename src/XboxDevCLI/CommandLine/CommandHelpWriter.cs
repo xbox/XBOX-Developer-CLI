@@ -35,7 +35,7 @@ internal static class CommandHelpWriter
     private static readonly string[][] RootOptionGroups =
     [
         ["--playfab-title-id", "--profile", "--output", "--data-only"],
-        ["--config-env", "--client-id", "--tenant-id", "--scopes"],
+        ["--client-id", "--tenant-id", "--scopes"],
         ["--confirm", "--verbose", "--disable-telemetry"],
         ["--help", "--version"],
     ];

@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
 using XboxDevCLI.Safety;
 using Xunit;
 
@@ -120,57 +119,23 @@ public class EndpointOverrideWarningTests
     [InlineData("not-a-url\u2029spoofed warning", @"not-a-url\u2029spoofed warning")]
     [InlineData("not-a-url\u202eevil", @"not-a-url\u202eevil")]
     [InlineData("not-a-url\u2066evil\u2069", @"not-a-url\u2066evil\u2069")]
-    public void WriteIfOverridden_UnparsableTemplateEscapesControlCharacters(
+    public void GetWarning_UnparsableTemplateEscapesControlCharacters(
         string baseUrlTemplate,
         string expectedTarget)
     {
-        using var writer = new StringWriter();
+        var warning = EndpointOverrideWarning.GetWarning(baseUrlTemplate);
 
-        EndpointOverrideWarning.WriteIfOverridden(BuildConfiguration(baseUrlTemplate), writer);
-
-        var warning = writer.ToString();
+        Assert.NotNull(warning);
         Assert.Contains($"overridden to '{expectedTarget}'", warning);
-        Assert.Equal(4, warning.Split(Environment.NewLine).Length);
+        Assert.Equal(3, warning.Split(Environment.NewLine).Length);
         Assert.DoesNotContain(warning.Replace(Environment.NewLine, string.Empty), char.IsControl);
         Assert.DoesNotContain(warning, character =>
             character is '\u2028' or '\u2029' or '\u202e' or '\u2066' or '\u2069');
     }
 
     [Fact]
-    public void WriteIfOverridden_DefaultEndpointWritesNothing()
-    {
-        using var writer = new StringWriter();
-
-        EndpointOverrideWarning.WriteIfOverridden(
-            BuildConfiguration(EndpointOverrideWarning.DefaultBaseUrlTemplate),
-            writer);
-
-        Assert.Empty(writer.ToString());
-    }
-
-    [Fact]
-    public void WriteIfOverridden_OverriddenEndpointWritesTheWarning()
-    {
-        using var writer = new StringWriter();
-
-        EndpointOverrideWarning.WriteIfOverridden(
-            BuildConfiguration("https://evil.example.com"),
-            writer);
-
-        Assert.Contains("evil.example.com", writer.ToString());
-    }
-
-    [Fact]
-    public void WriteXboxPartnerWarningIfOverridden_DefaultGatewayWritesNothing()
-    {
-        using var writer = new StringWriter();
-
-        EndpointOverrideWarning.WriteXboxPartnerWarningIfOverridden(
-            EndpointOverrideWarning.DefaultXboxPartnerBaseUrl,
-            writer);
-
-        Assert.Empty(writer.ToString());
-    }
+    public void GetXboxPartnerWarning_DefaultGatewayHasNoWarning() =>
+        Assert.Null(EndpointOverrideWarning.GetXboxPartnerWarning(EndpointOverrideWarning.DefaultXboxPartnerBaseUrl + "/"));
 
     [Fact]
     public void GetXboxPartnerWarning_DefaultPresentationIsNeutral()
@@ -181,8 +146,8 @@ public class EndpointOverrideWarningTests
                 "Warning: the service endpoint is overridden to 'https://nodpublishers.com' " +
                     "(configuration key 'XboxPartner:BaseUrl').",
                 "         Requests and your access token will be sent to that host instead of the default endpoint.",
-                "         If you did not intend this, inspect appsettings.json, any appsettings.{environment}.json " +
-                    "overlay, the XBOX_XBOXPARTNER__BASEURL environment variable, and the --base-url option."),
+                "         If you did not intend this, check the XBOX_XBOXPARTNER__BASEURL environment variable " +
+                    "and the --base-url option."),
             EndpointOverrideWarning.GetXboxPartnerWarning("https://nodpublishers.com"));
     }
 
@@ -190,13 +155,11 @@ public class EndpointOverrideWarningTests
     [InlineData("https://evil.example.com")]
     [InlineData("http://localhost:54848")]
     [InlineData("https://nodpublishers.com/custom")]
-    public void WriteXboxPartnerWarningIfOverridden_OverriddenGatewayWritesTheWarning(string baseUrl)
+    public void GetXboxPartnerWarning_OverriddenGatewayHasTheWarning(string baseUrl)
     {
-        using var writer = new StringWriter();
+        var warning = EndpointOverrideWarning.GetXboxPartnerWarning(baseUrl);
 
-        EndpointOverrideWarning.WriteXboxPartnerWarningIfOverridden(baseUrl, writer);
-
-        var warning = writer.ToString();
+        Assert.NotNull(warning);
         Assert.Contains(baseUrl, warning, StringComparison.Ordinal);
         Assert.Contains(EndpointOverrideWarning.XboxPartnerConfigurationKey, warning, StringComparison.Ordinal);
         Assert.Contains("--base-url", warning, StringComparison.Ordinal);
@@ -208,35 +171,17 @@ public class EndpointOverrideWarningTests
     [Theory]
     [InlineData("", "<blank>")]
     [InlineData("   ", "<blank>")]
-    public void WriteIfOverridden_BlankConfigurationValueWritesWarning(
+    public void GetWarning_BlankConfigurationValueHasTheWarning(
         string? baseUrlTemplate,
         string expectedTarget)
     {
-        using var writer = new StringWriter();
+        var warning = EndpointOverrideWarning.GetWarning(baseUrlTemplate);
 
-        EndpointOverrideWarning.WriteIfOverridden(
-            BuildConfiguration(baseUrlTemplate),
-            writer);
-
-        Assert.Contains("Warning", writer.ToString());
-        Assert.Contains(expectedTarget, writer.ToString());
+        Assert.NotNull(warning);
+        Assert.Contains(expectedTarget, warning);
     }
 
     [Fact]
-    public void WriteIfOverridden_MissingConfigurationValueWritesNothing()
-    {
-        using var writer = new StringWriter();
-
-        EndpointOverrideWarning.WriteIfOverridden(BuildConfiguration(null), writer);
-
-        Assert.Empty(writer.ToString());
-    }
-
-    private static IConfiguration BuildConfiguration(string? baseUrlTemplate) =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                [EndpointOverrideWarning.ConfigurationKey] = baseUrlTemplate,
-            })
-            .Build();
+    public void GetWarning_MissingConfigurationValueHasNoWarning() =>
+        Assert.Null(EndpointOverrideWarning.GetWarning(null));
 }
