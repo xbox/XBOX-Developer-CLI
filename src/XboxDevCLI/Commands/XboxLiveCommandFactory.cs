@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
+using XboxDevCLI.CommandLine;
 
 namespace XboxDevCLI.Commands;
 
@@ -34,6 +35,6 @@ internal static class XboxLiveCommandFactory
         publish.Subcommands.Add(GetPublishStatusCommandFactory.Create());
         xboxLive.Subcommands.Add(publish);
 
-        return xboxLive;
+        return xboxLive.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.XboxPartner);
     }
 }

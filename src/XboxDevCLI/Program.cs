@@ -26,18 +26,11 @@ public class Program
 {
     internal const long DefaultMaxRequestBodyBytes = 1 * 1024 * 1024;
 
-    private static readonly ConditionalWeakTable<ParseResult, Lazy<IConfiguration>> InvocationConfigurations = new();
-
-    // Like configuration above, authentication state follows ParseResult without a static cache
-    // keeping completed invocations alive. ShareConfiguration carries the same service
-    // across context reparsing. GetValue can run its factory more than once under contention;
-    // the stored Lazy ensures only one service captures the environment. Main creates it
-    // immediately; the service itself defers configuration loading and authentication validation.
-    // A future refactor could inject the service explicitly through BuildRootCommand, command
-    // factories/action closures, and context resolution. A command tree capturing that service
-    // would need to be built per invocation to avoid stale inputs;
-    // validation would still belong inside command error handling, not factory construction.
-    private static readonly ConditionalWeakTable<ParseResult, Lazy<AuthenticationService>> InvocationAuthentications = new();
+    // Each invocation's dependencies follow its ParseResult, without a static cache keeping
+    // completed invocations alive. ShareConfiguration carries them across context reparsing.
+    // GetValue can run its factory more than once under contention; the stored Lazy ensures only
+    // one invocation captures the environment.
+    private static readonly ConditionalWeakTable<ParseResult, Lazy<CommandInvocation>> Invocations = new();
 
     /// <summary>
     /// Parser configuration that disables response-file expansion (<c>@file</c> arguments).
@@ -50,12 +43,29 @@ public class Program
         new() { ResponseFileTokenReplacer = null };
 
     // Global options available to all commands
-    internal static readonly Option<string> ConfigEnvOption = new("--config-env")
+
+    /// <summary>
+    /// Earlier releases loaded <c>appsettings.{environment}.json</c> from beside the executable.
+    /// Hidden, and kept only to tell anyone who still passes it what replaced it.
+    /// </summary>
+    internal static readonly Option<string> ConfigEnvOption = CreateRetiredConfigEnvOption();
+
+    internal const string ConfigEnvRetiredMessage =
+        "--config-env is no longer supported because settings files are no longer read. "
+        + "Set XBOX_ environment variables instead, such as XBOX_AZUREAD__CLIENTID.";
+
+    private static Option<string> CreateRetiredConfigEnvOption()
     {
-        Description = "Load appsettings.{environment}.json.",
-        HelpName = "environment",
-        Recursive = true,
-    };
+        var option = new Option<string>("--config-env")
+        {
+            Description = "No longer supported. Set XBOX_ environment variables instead.",
+            HelpName = "environment",
+            Recursive = true,
+            Hidden = true,
+        };
+        option.Validators.Add(result => result.AddError(ConfigEnvRetiredMessage));
+        return option;
+    }
 
     internal static readonly Option<string?> ClientIdOption = new("--client-id")
     {
@@ -186,11 +196,24 @@ public class Program
         }
     }
 
+    /// <remarks>
+    /// The invocation runs in four steps. It's parsed, its configuration is loaded without
+    /// reporting anything, and an unknown command, Help, or the version is handled without
+    /// preparing anything, so they never depend on configuration or sign-in, and never warn about
+    /// a changed service endpoint; other syntax errors are reported when the parse result is
+    /// invoked. Then the dependencies the command declares (<see cref="CommandRequirements"/>) are
+    /// prepared, the warnings for the endpoints it calls (<see cref="CommandEndpoints"/>) are
+    /// written, and its context values are resolved; then the command runs with them. Expected
+    /// failures from preparation, context resolution, and the command itself are reported by
+    /// <see cref="CommandErrorBoundary"/>.
+    /// </remarks>
     public static async Task<int> Main(string[] args)
     {
         var rootCommand = BuildRootCommand();
         var parseResult = rootCommand.Parse(args, NoResponseFileConfig);
-        var authentication = GetAuthentication(parseResult);
+        // Captures the authentication inputs once, for preparation, context, the command, and
+        // telemetry. Nothing is validated yet.
+        var invocation = GetInvocation(parseResult);
         if (CommandLineErrorWriter.TryWriteUnknownCommand(
                 parseResult,
                 rootCommand,
@@ -200,72 +223,18 @@ public class Program
             return 1;
         }
 
-        // This gate is the least authoritative diagnostic the CLI has, so it runs last among the
-        // things that can reject an invocation.
-        //
-        // Help wins because `--output` is recursive and therefore in scope for a help request:
-        // checking first made help requests report that table was unavailable instead of showing
-        // help, refusing to explain itself to the user most likely to be asking. All four routes
-        // to help count — `--help`, the `help` command, a bare group, and the bare root — which
-        // is why they are identified by a marker type rather than enumerated here; three of them
-        // were missed when this asked only about `--help`.
-        //
-        // Parse errors win because they name the actual problem: the parser reports them when the
-        // action runs, which is after this point, so `auth status --nope --output table` blamed
-        // the format while the real fault was the typo.
+        // Help and the version never prepare anything. All four routes to help count — `--help`,
+        // the `help` command, a bare group, and the bare root — which is why they are identified
+        // by a marker type rather than enumerated here.
         var helpRequested =
             parseResult.Action is HelpAction or CommandHelpAction or HelpRenderingAction;
         var terminalActionRequested =
             helpRequested || IsVersionRequested(parseResult, args);
 
-        if (!terminalActionRequested)
-        {
-            if (await ResolveContextAsync(parseResult, args) is not { } resolved)
-            {
-                return 1;
-            }
-
-            parseResult = resolved;
-        }
-
-        if (!terminalActionRequested
-            && parseResult.Errors.Count == 0
-            && string.Equals(
-                parseResult.GetValue(OutputOption),
-                "table",
-                StringComparison.OrdinalIgnoreCase)
-            && !SupportsTableOutput(parseResult.CommandResult.Command))
-        {
-            // Say what is actually true: this command declares no table view. The response may
-            // well be a list — `playfab api` returns whatever the endpoint returns — so claiming
-            // otherwise would misdiagnose a valid request. The remedy deliberately does not name
-            // JSON as "the default" either: `auth status` and `info` default to human-readable
-            // text, so that advice would be wrong for exactly the commands most likely to hit it.
-            Console.Error.WriteLine(TableUnavailableMessage);
-            return 1;
-        }
-
         var verbose = parseResult.GetValue(VerboseOption);
-        IConfiguration configuration;
-        try
-        {
-            configuration = BuildConfiguration(parseResult);
-        }
-        catch (Exception exception) when (
-            exception is IOException or FormatException or InvalidOperationException)
-        {
-            // Preserve command-specific configuration error handling. Telemetry must never
-            // cause an invocation to fail earlier than it did before telemetry was added.
-            configuration = new ConfigurationBuilder()
-                .AddInMemoryCollection(new Dictionary<string, string?>
-                {
-                    ["Telemetry:Enabled"] = bool.FalseString,
-                })
-                .Build();
-        }
 
         using var telemetry = TelemetryService.Create(
-            configuration,
+            GetTelemetryConfiguration(parseResult),
             message => WriteVerbose(verbose, () => message));
 
         var focusedFirstRun = WriteWelcomeIfFirstRun(
@@ -288,9 +257,44 @@ public class Program
         var exitCode = 1;
         try
         {
-            exitCode = focusedFirstRun
-                ? 0
-                : await parseResult.InvokeAsync();
+            if (focusedFirstRun)
+            {
+                exitCode = 0;
+                return exitCode;
+            }
+
+            if (!terminalActionRequested)
+            {
+                if (await ResolveContextAsync(parseResult, args) is not { } resolved)
+                {
+                    return exitCode;
+                }
+
+                parseResult = resolved;
+
+                // This gate is the least authoritative diagnostic the CLI has, so it runs last
+                // among the things that can reject an invocation. Parse errors win because they
+                // name the actual problem: the parser reports them when the action runs, so
+                // `auth status --nope --output table` would otherwise blame the format while the
+                // real fault was the typo.
+                if (parseResult.Errors.Count == 0
+                    && string.Equals(
+                        parseResult.GetValue(OutputOption),
+                        "table",
+                        StringComparison.OrdinalIgnoreCase)
+                    && !SupportsTableOutput(parseResult.CommandResult.Command))
+                {
+                    // Say what is actually true: this command declares no table view. The
+                    // response may well be a list — `playfab api` returns whatever the endpoint
+                    // returns — so claiming otherwise would misdiagnose a valid request. The
+                    // remedy deliberately does not name JSON as "the default" either: `auth status`
+                    // and `info` default to human-readable text.
+                    Console.Error.WriteLine(TableUnavailableMessage);
+                    return exitCode;
+                }
+            }
+
+            exitCode = await parseResult.InvokeAsync();
             return exitCode;
         }
         catch (Exception exception)
@@ -310,7 +314,7 @@ public class Program
                     parseResult.CommandResult.Command),
                 exitCode,
                 stopwatch.Elapsed,
-                authentication.SelectedModeName);
+                invocation.AuthenticationModeName);
         }
     }
 
@@ -450,102 +454,100 @@ public class Program
                 Stage: CommandStage.Experimental)));
 
         CommandLineExperience.ConfigureHelp(rootCommand, CliIdentity.CommandName);
+        CommandErrorBoundary.Install(rootCommand);
 
         return rootCommand;
     }
 
     /// <summary>
-    /// Gets the invocation's configuration snapshot, built by layering:
-    ///   1. appsettings.json (base defaults)
-    ///   2. appsettings.{environment}.json (environment overlay, optional but file is required when <c>--config-env</c> is specified)
-    ///   3. Environment variables prefixed with XBOX_ (optional)
-    ///   4. CLI option overrides (highest priority)
+    /// The invocation's shared dependencies, created the first time an invocation asks, which
+    /// captures its authentication inputs.
     /// </summary>
-    internal static IConfiguration BuildConfiguration(ParseResult parseResult) =>
-        InvocationConfigurations.GetValue(
+    internal static CommandInvocation GetInvocation(ParseResult parseResult) =>
+        Invocations.GetValue(
             parseResult,
-            static result => new Lazy<IConfiguration>(() => LoadConfiguration(result))).Value;
+            static result => new Lazy<CommandInvocation>(
+                () => new CommandInvocation(result, () => LayerConfiguration(result)))).Value;
 
     /// <summary>
-    /// Gets the invocation's authentication service, capturing its environment without
-    /// validation. Context resolution, command actions, and telemetry share it. Authentication
-    /// operations load configuration and validate settings inside the command's error handling;
-    /// mode inspection never initializes authentication.
+    /// Prepares what <paramref name="parseResult"/>'s command declares it needs
+    /// (<see cref="CommandRequirements"/>), and writes the warnings for the endpoints it declares
+    /// it calls (<see cref="CommandEndpoints"/>). Running it again does nothing more.
+    /// </summary>
+    internal static void Prepare(ParseResult parseResult)
+    {
+        var command = parseResult.CommandResult.Command;
+        GetInvocation(parseResult).Prepare(CommandRequirements.For(command), CommandEndpoints.For(command));
+    }
+
+    /// <summary>
+    /// The invocation's loaded configuration, or the error loading it, for a test of its layering:
+    ///   1. The built-in settings (<see cref="BuiltInSettings"/>), embedded in the executable
+    ///   2. Environment variables prefixed with XBOX_, with <c>__</c> separating sections
+    ///   3. CLI option overrides (highest priority)
+    /// No settings file is read. Commands use <see cref="GetConfiguration"/>.
+    /// </summary>
+    internal static IConfiguration LoadConfiguration(ParseResult parseResult) =>
+        GetInvocation(parseResult).LoadConfiguration();
+
+    /// <summary>
+    /// The settings telemetry reads: the invocation's loaded configuration, or, if it couldn't be
+    /// loaded, the <c>XBOX_</c> environment variables and <c>--disable-telemetry</c> over
+    /// telemetry's defaults, so a preparation failure is still recorded unless the user opted out.
+    /// Telemetry never reports the configuration's error or warnings; preparation does, for a
+    /// command that uses them.
+    /// </summary>
+    internal static IConfiguration GetTelemetryConfiguration(ParseResult parseResult)
+    {
+        if (GetInvocation(parseResult).LoadedConfiguration.Configuration is { } configuration)
+        {
+            return configuration;
+        }
+
+        var builder = new ConfigurationBuilder().AddEnvironmentVariables("XBOX_");
+        if (parseResult.GetValue(DisableTelemetryOption))
+        {
+            builder.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Telemetry:Enabled"] = bool.FalseString,
+            });
+        }
+
+        return builder.Build();
+    }
+
+    /// <summary>The invocation's prepared configuration snapshot.</summary>
+    internal static IConfiguration GetConfiguration(ParseResult parseResult) =>
+        GetInvocation(parseResult).Configuration;
+
+    /// <summary>
+    /// The invocation's prepared sign-in service for the selected mode. Context resolution,
+    /// command actions, and API clients share it.
     /// </summary>
     internal static AuthenticationService GetAuthentication(ParseResult parseResult) =>
-        InvocationAuthentications.GetValue(
-            parseResult,
-            static result => new Lazy<AuthenticationService>(
-                () => new AuthenticationService(() => BuildConfiguration(result)))).Value;
+        GetInvocation(parseResult).Authentication;
 
-    /// <summary>Makes <paramref name="authentication"/> the invocation's authentication service.</summary>
+    /// <summary>Makes <paramref name="authentication"/> the invocation's prepared sign-in service.</summary>
     internal static void SetAuthentication(ParseResult parseResult, AuthenticationService authentication) =>
-        InvocationAuthentications.AddOrUpdate(parseResult, new Lazy<AuthenticationService>(authentication));
-
-    internal static void RefuseUserAuthenticationOptionsInAutomation(ParseResult parseResult)
-    {
-        var authentication = GetAuthentication(parseResult);
-        if (!authentication.IsAutomationSelected)
-        {
-            return;
-        }
-
-        var mode = authentication.SelectedModeName;
-        foreach (var option in new[] { ClientIdOption, TenantIdOption })
-        {
-            if (parseResult.GetResult(option) is not { Implicit: false })
-            {
-                continue;
-            }
-
-            var guidance = mode switch
-            {
-                "clientsecret" or "certificate" or "federatedtoken" or "githuboidc" =>
-                    $"Set {(option == ClientIdOption
-                        ? AutomationAuthenticationSettings.ClientIdVariable
-                        : AutomationAuthenticationSettings.TenantIdVariable)} instead.",
-                "azurecli" => "Select the service principal or managed identity by signing in to the Azure CLI.",
-                "managedidentity" when option == ClientIdOption =>
-                    $"Set {AutomationAuthenticationSettings.ClientIdVariable} for a user-assigned managed identity, "
-                    + "or leave it unset for the system-assigned identity.",
-                "managedidentity" => "The managed identity determines the tenant.",
-                _ => $"Check {AutomationAuthenticationSettings.ModeVariable} and its settings.",
-            };
-            throw new AuthenticationConfigurationException(
-                $"{option.Name} doesn't apply when {AutomationAuthenticationSettings.ModeVariable} is '{mode}'. "
-                + $"Remove {option.Name}. {guidance}");
-        }
-    }
+        GetInvocation(parseResult).UseAuthentication(authentication);
 
     /// <summary>
     /// Gives <paramref name="resolved"/>, the invocation with context values filled in, the
-    /// configuration snapshot <paramref name="original"/> uses, so its endpoint warning
-    /// isn't written twice. The resolved title is added the way <see cref="LoadConfiguration"/>
-    /// adds the flag. It also gets <paramref name="original"/>'s authentication service, if any,
-    /// so the command acts as the account that read its saved values. Configuration is shared
-    /// even before it is loaded, because the service may initialize after context reparsing.
+    /// dependencies <paramref name="original"/> prepared: its captured authentication inputs, its
+    /// loaded configuration and the endpoint warnings already written, so none is written twice,
+    /// and its sign-in service, so the command acts as the account that read its saved values. The
+    /// resolved title is added the way <see cref="LayerConfiguration"/> adds the flag.
     /// </summary>
     internal static void ShareConfiguration(ParseResult original, ParseResult resolved)
     {
-        var configuration = InvocationConfigurations.GetValue(
-            original, static result => new Lazy<IConfiguration>(() => LoadConfiguration(result)));
-        InvocationConfigurations.AddOrUpdate(resolved, new Lazy<IConfiguration>(() => new ConfigurationBuilder()
-            .AddConfiguration(configuration.Value)
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = resolved.GetValue(PlayFabTitleIdOption)?.Trim(),
-            })
-            .Build()));
-
-        if (InvocationAuthentications.TryGetValue(original, out var authentication))
-        {
-            InvocationAuthentications.AddOrUpdate(resolved, authentication);
-        }
+        var invocation = GetInvocation(original).ForResolved(resolved);
+        Invocations.AddOrUpdate(resolved, new Lazy<CommandInvocation>(invocation));
     }
 
     /// <summary>
-    /// Fills in the context values the invocation takes but wasn't given
-    /// (<see cref="ContextResolver"/>), or writes why it can't to stderr and returns <c>null</c>.
+    /// Prepares the invocation and fills in the context values it takes but wasn't given
+    /// (<see cref="ContextResolver"/>), or reports why it can't through
+    /// <see cref="CommandErrorBoundary"/> and returns <c>null</c>.
     /// </summary>
     internal static async Task<ParseResult?> ResolveContextAsync(ParseResult parseResult, IReadOnlyList<string> args)
     {
@@ -553,30 +555,22 @@ public class Program
         {
             return await ContextResolver.ResolveAsync(parseResult, args);
         }
-        catch (Exception exception) when (exception is InvalidOperationException
-                                              or InvalidDataException
-                                              or IOException
-                                              or UnauthorizedAccessException
-                                              or Microsoft.Identity.Client.MsalException)
+        catch (Exception exception) when (CommandErrorBoundary.IsExpected(exception))
         {
-            Console.Error.WriteLine(exception.Message);
+            CommandErrorBoundary.Report(parseResult, exception);
             return null;
         }
     }
 
-    private static IConfiguration LoadConfiguration(ParseResult parseResult)
+    /// <summary>
+    /// Layers the invocation's configuration. Authentication, API clients, and the endpoint
+    /// warnings all read this one snapshot, so nothing is reloaded between warning about an
+    /// endpoint and sending it an access token.
+    /// </summary>
+    private static IConfigurationRoot LayerConfiguration(ParseResult parseResult)
     {
-        var environment = parseResult.GetValue(ConfigEnvOption);
-
         var builder = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.json", optional: false);
-
-        if (!string.IsNullOrEmpty(environment))
-        {
-            builder.AddJsonFile($"appsettings.{environment}.json", optional: false);
-        }
-
+            .AddJsonStream(BuiltInSettings.Open());
         // Context variables become keys here too, such as SELLER_ID from XBOX_SELLER_ID. That's
         // harmless as long as no setting is named like a context key.
         builder.AddEnvironmentVariables("XBOX_");
@@ -602,9 +596,14 @@ public class Program
             overrides["AzureAd:Scopes"] = scopes;
         }
 
-        // Set even without the flag, so appsettings.json and XBOX_PLAYFAB__TITLEID can't set the
-        // title. ContextResolver fills the flag in from XBOX_PLAYFAB_TITLE_ID or saved context.
+        // Set even without the flag, so the built-in settings and XBOX_PLAYFAB__TITLEID can't set
+        // the title. ContextResolver fills the flag in from XBOX_PLAYFAB_TITLE_ID or saved context.
         overrides["PlayFab:TitleId"] = parseResult.GetValue(PlayFabTitleIdOption)?.Trim();
+
+        if (XboxPartnerCommandSupport.GetBaseUrlOptionValue(parseResult) is { } baseUrl)
+        {
+            overrides[EndpointOverrideWarning.XboxPartnerConfigurationKey] = baseUrl;
+        }
 
         if (parseResult.GetValue(DisableTelemetryOption))
         {
@@ -616,11 +615,7 @@ public class Program
             builder.AddInMemoryCollection(overrides);
         }
 
-        var configuration = builder.Build();
-        // Warn once on the same snapshot consumed by authentication and API clients.
-        // Do not reload sources between this check and sending an access token.
-        EndpointOverrideWarning.WriteIfOverridden(configuration, Console.Error);
-        return configuration;
+        return builder.Build();
     }
 
 
@@ -690,7 +685,7 @@ public class Program
 
         try
         {
-            var config = BuildConfiguration(parseResult);
+            var config = GetConfiguration(parseResult);
 
             if (body != null && bodyFile != null)
             {

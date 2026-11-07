@@ -60,7 +60,7 @@ internal static class ListConfigurationsCommandFactory
             try
             {
                 Guid scid = parseResult.GetValue(scidOption);
-                var configuration = Program.BuildConfiguration(parseResult);
+                var configuration = Program.GetConfiguration(parseResult);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
                         configuration,

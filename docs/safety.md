@@ -161,6 +161,9 @@ unless `--confirm` (`--yes`, `-y`) is supplied. It asks for the password and
 security answer only after that check passes. As everywhere else, `--confirm` is
 not agent approval.
 
+Choosing a security question in the [terminal picker](commands/test-account.md#choosing-a-security-question)
+does not confirm account creation.
+
 The create is not idempotent, so the CLI sends it exactly once and never retries
 it, even after a timeout. When it cannot tell whether a batch was created, it exits
 with code 3 and prints how to check before creating again; see

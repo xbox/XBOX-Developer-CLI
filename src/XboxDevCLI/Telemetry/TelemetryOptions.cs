@@ -24,16 +24,12 @@ internal sealed record TelemetryOptions(
 
         var optedOut = IsTruthy(getEnvironmentVariable(OptOutEnvironmentVariable));
         var enabled = configuration.GetValue("Telemetry:Enabled", true) && !optedOut;
-        var connectionString = configuration["Telemetry:ConnectionString"];
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            connectionString = getEnvironmentVariable("APPLICATIONINSIGHTS_CONNECTION_STRING");
-        }
-
-        if (string.IsNullOrWhiteSpace(connectionString))
-        {
-            connectionString = embeddedConnectionString;
-        }
+        // A release build always sends to the destination built into it; the configured one is
+        // only for builds without one, so maintainers can test. APPLICATIONINSIGHTS_CONNECTION_STRING
+        // isn't read: hosts set it for their own monitoring, which would send the CLI's telemetry to them.
+        var connectionString = string.IsNullOrWhiteSpace(embeddedConnectionString)
+            ? configuration["Telemetry:ConnectionString"]
+            : embeddedConnectionString;
 
         var samplingRatio = configuration.GetValue("Telemetry:DependencyTraceSamplingRatio", 0.1);
         samplingRatio = Math.Clamp(samplingRatio, 0, 1);

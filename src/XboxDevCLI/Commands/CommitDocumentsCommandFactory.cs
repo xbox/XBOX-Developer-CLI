@@ -133,7 +133,7 @@ internal static class CommitDocumentsCommandFactory
             try
             {
                 string type = parseResult.GetValue(typeOption) ?? "sandbox";
-                var configuration = Program.BuildConfiguration(parseResult);
+                var configuration = Program.GetConfiguration(parseResult);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
                         configuration,
@@ -222,9 +222,14 @@ internal static class CommitDocumentsCommandFactory
                 resolvedEtag,
                 NormalizeOptional(message),
                 documents);
-            string response = await client
-                .CommitXboxLiveDocumentsAsync(sellerId, request, cancellationToken)
-                .ConfigureAwait(false);
+            string response;
+            using (RequestProgress.Start(DescribeCommit(request), stderr))
+            {
+                response = await client
+                    .CommitXboxLiveDocumentsAsync(sellerId, request, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             XboxLiveCommitResponse result = ParseResponse(response);
             IReadOnlyList<XboxLiveValidationMessage> validationMessages =
                 XboxLiveValidationMessages.Read(result.ValidationInfo);
@@ -287,40 +292,19 @@ internal static class CommitDocumentsCommandFactory
         }
     }
 
-    internal static Task<int> RunAsync(
-        XboxPartnerClient client,
-        long? sellerId,
-        string documentType,
-        Guid? scid,
-        string? sandbox,
-        IReadOnlyList<string> filePatterns,
-        bool validateOnly,
-        bool force,
-        string? eTag,
-        string? message,
-        string outputFormat,
-        TextWriter stdout,
-        TextWriter stderr,
-        CancellationToken cancellationToken) =>
-        RunAsync(
-            client,
-            sellerId,
-            documentType,
-            scid,
-            sandbox,
-            filePatterns,
-            validateOnly,
-            force,
-            eTag,
-            message,
-            outputFormat.Equals("table", StringComparison.OrdinalIgnoreCase)
-                ? OutputOptions.Table(XboxPartnerCommandSupport.DocumentCommitTableView)
-                : outputFormat.Equals("json-compact", StringComparison.OrdinalIgnoreCase)
-                    ? OutputOptions.JsonCompact
-                    : OutputOptions.Json,
-            stdout,
-            stderr,
-            cancellationToken);
+    internal static string DescribeCommit(XboxLiveCommitDocumentsRequest request)
+    {
+        int count = request.Documents.Count;
+        string documents = FormattableString.Invariant(
+            $"{count} {(request.Sandbox is null ? "account " : "")}{(count == 1 ? "document" : "documents")}");
+        return (request.ValidateOnly, request.Sandbox) switch
+        {
+            (true, null) => $"Validating {documents}",
+            (true, { } sandbox) => $"Validating {documents} for {sandbox}",
+            (false, null) => $"Committing {documents}",
+            (false, { } sandbox) => $"Committing {documents} to {sandbox}",
+        };
+    }
 
     private static readonly JsonSerializerOptions PrettyJsonOptions = new()
     {

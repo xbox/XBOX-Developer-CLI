@@ -45,7 +45,7 @@ internal static partial class TestAccountCommandFactory
         command.Subcommands.Add(CreateLookupCommand());
         command.Subcommands.Add(batch);
         command.Subcommands.Add(CreateJobCommand());
-        return command;
+        return command.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.XboxPartner);
     }
 
     private static Command CreateListCommand()
@@ -279,7 +279,7 @@ internal static partial class TestAccountCommandFactory
         long? sellerId;
         try
         {
-            var configuration = Program.BuildConfiguration(parseResult);
+            var configuration = Program.GetConfiguration(parseResult);
             client = Program.XboxPartnerClientFactory is null
                 ? new XboxPartnerClient(
                     configuration,

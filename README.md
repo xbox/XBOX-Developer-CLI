@@ -9,9 +9,8 @@ pipelines, or work with AI agents.
 
 ## Install
 
-Download the latest release for Windows x64 or Linux x64 from the
-[Releases page](https://github.com/microsoft/XBOX-Developer-CLI/releases/latest).
-macOS builds are coming.
+Download the latest release for Windows x64, Linux x64, or macOS (Apple silicon or
+Intel) from the [Releases page](https://github.com/microsoft/XBOX-Developer-CLI/releases/latest).
 
 Follow [Installation](docs/installation.md) for complete setup instructions:
 extract the **whole archive**, keep its files together, set PATH persistently,

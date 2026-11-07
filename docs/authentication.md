@@ -58,7 +58,9 @@ Scopes: <scope>/.default
 Pass `--output json` or `--output json-compact` to emit machine-readable status.
 In JSON mode, `auth status` exits successfully with `"signedIn": false` when no cached
 account is available, so automation can probe state without treating that as a
-crash. This status output applies only to user sign-in; see
+crash. A configuration, sign-in setting, or token cache that can't be read isn't
+reported as signed out; it exits 1 with the error JSON on stderr. This status output
+applies only to user sign-in; see
 [Confirm the identity](#confirm-the-identity) for service-principal modes.
 
 Saved defaults, such as the seller or PlayFab title, are separate from sign-in.
@@ -114,9 +116,9 @@ PlayFab APIs.
 
 ## Overriding Entra ID settings
 
-The Entra ID application used for sign-in is configured through `appsettings.json`
-(the `AzureAd` section). You can override individual values per invocation with
-global options:
+The Entra ID application used for sign-in is built into the CLI (the `AzureAd`
+settings). You can override individual values with `XBOX_AZUREAD__` environment
+variables, such as `XBOX_AZUREAD__CLIENTID`, or per invocation with global options:
 
 | Option | Overrides |
 |--------|-----------|
@@ -170,7 +172,8 @@ Tenant IDs must be a tenant GUID or verified domain;
 needs a specific tenant. Client IDs must be GUIDs.
 
 `--client-id` and `--tenant-id` configure only user sign-in and are refused in every
-service-principal mode, not silently ignored. For an app registration, set
+service-principal mode, not silently ignored, by every command that signs in. Help and
+commands that run offline, such as `xbox info`, ignore them. For an app registration, set
 `XBOX_AUTHENTICATION__CLIENTID` and `XBOX_AUTHENTICATION__TENANTID` instead. For
 `managedidentity`, only `XBOX_AUTHENTICATION__CLIENTID` applies (optional for a
 user-assigned identity); the identity determines the tenant. For `azurecli`, select the
@@ -181,8 +184,8 @@ in every mode.
 Token acquisition has a 10-second timeout. If the managed-identity endpoint is
 unavailable or rejects the request, the error explains the host requirement.
 
-These settings are read **only from environment variables**, never from
-`appsettings.json` or CLI options. They are read once per command and validated when
+These settings are read **only from environment variables**, never from the
+built-in defaults or CLI options. They are read once per command and validated when
 the command first needs to authenticate; a command that never authenticates, such as
 `context key list`, doesn't validate them. The CLI fails rather than guess when:
 

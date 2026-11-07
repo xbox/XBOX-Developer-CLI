@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
+using XboxDevCLI.CommandLine;
 
 namespace XboxDevCLI.Commands;
 
@@ -13,6 +14,6 @@ internal static class AuthCommandFactory
         command.Subcommands.Add(LoginCommandFactory.Create());
         command.Subcommands.Add(LogoutCommandFactory.Create());
         command.Subcommands.Add(StatusCommandFactory.Create());
-        return command;
+        return command.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.None);
     }
 }

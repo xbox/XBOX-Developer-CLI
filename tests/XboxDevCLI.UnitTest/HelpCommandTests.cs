@@ -148,9 +148,10 @@ public class HelpCommandTests
         Assert.DoesNotContain("CONFIGURATION FLAGS", result.Stdout, StringComparison.Ordinal);
         Assert.DoesNotContain("SAFETY AND DIAGNOSTIC FLAGS", result.Stdout, StringComparison.Ordinal);
         Assert.Contains(
-            $"{Environment.NewLine}{Environment.NewLine}  --config-env",
+            $"{Environment.NewLine}{Environment.NewLine}  --client-id",
             result.Stdout,
             StringComparison.Ordinal);
+        Assert.DoesNotContain("--config-env", result.Stdout, StringComparison.Ordinal);
         Assert.Contains(
             $"{Environment.NewLine}{Environment.NewLine}  --verbose",
             result.Stdout,
@@ -194,9 +195,9 @@ public class HelpCommandTests
         var titleId = Assert.Single(
             lines,
             line => line.StartsWith("  --playfab-title-id", StringComparison.Ordinal));
-        var configEnv = Assert.Single(
+        var clientId = Assert.Single(
             lines,
-            line => line.StartsWith("  --config-env", StringComparison.Ordinal));
+            line => line.StartsWith("  --client-id", StringComparison.Ordinal));
         var verbose = Assert.Single(
             lines,
             line => line.StartsWith("  --verbose", StringComparison.Ordinal));
@@ -213,7 +214,7 @@ public class HelpCommandTests
             titleId.IndexOf("Target this", StringComparison.Ordinal));
         Assert.Equal(
             expectedDescriptionColumn,
-            configEnv.IndexOf("Load appsettings", StringComparison.Ordinal));
+            clientId.IndexOf("Override the Microsoft Entra", StringComparison.Ordinal));
         Assert.Equal(
             expectedDescriptionColumn,
             verbose.IndexOf("Write diagnostic", StringComparison.Ordinal));
@@ -231,13 +232,13 @@ public class HelpCommandTests
         var api = Assert.Single(
             lines,
             line => line.StartsWith("  api:", StringComparison.Ordinal));
-        var configEnv = Assert.Single(
+        var clientId = Assert.Single(
             lines,
-            line => line.StartsWith("  --config-env", StringComparison.Ordinal));
+            line => line.StartsWith("  --client-id", StringComparison.Ordinal));
 
         Assert.Equal(
             api.IndexOf("Call any PlayFab API", StringComparison.Ordinal),
-            configEnv.IndexOf("Load appsettings", StringComparison.Ordinal));
+            clientId.IndexOf("Override the Microsoft Entra", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -249,13 +250,13 @@ public class HelpCommandTests
         var entityId = Assert.Single(
             lines,
             line => line.StartsWith("  --entity-id", StringComparison.Ordinal));
-        var configEnv = Assert.Single(
+        var clientId = Assert.Single(
             lines,
-            line => line.StartsWith("  --config-env", StringComparison.Ordinal));
+            line => line.StartsWith("  --client-id", StringComparison.Ordinal));
 
         Assert.Equal(
             entityId.IndexOf("Entity ID", StringComparison.Ordinal),
-            configEnv.IndexOf("Load appsettings", StringComparison.Ordinal));
+            clientId.IndexOf("Override the Microsoft Entra", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -385,7 +386,7 @@ public class HelpCommandTests
         Assert.Contains("status:", expectedOutput, StringComparison.Ordinal);
         Assert.Contains("INHERITED FLAGS", expectedOutput, StringComparison.Ordinal);
         Assert.Contains("-h, --help", expectedOutput, StringComparison.Ordinal);
-        // --playfab-title-id is a configuration override consumed by Program.BuildConfiguration, so
+        // --playfab-title-id is a configuration override read into the invocation's configuration, so
         // it changes what 'auth status' reports and is shown everywhere. --confirm only gates
         // PlayFab destructive calls, so it is hidden outside the playfab subtree.
         Assert.Contains("--playfab-title-id", expectedOutput, StringComparison.Ordinal);
@@ -1131,6 +1132,7 @@ public class HelpCommandTests
         Assert.Contains("OUTPUT", result.Stdout, StringComparison.Ordinal);
         Assert.Contains("TABLE OUTPUT", result.Stdout, StringComparison.Ordinal);
         Assert.Contains("GLOBAL", result.Stdout, StringComparison.Ordinal);
+        Assert.Contains("A JSON object with a sandboxes array", NormalizeWhitespace(result.Stdout), StringComparison.Ordinal);
         Assert.Contains(
             "xbox sandbox list --output table",
             result.Stdout,
@@ -1269,7 +1271,7 @@ public class HelpCommandTests
 
         // Scoping is a Help concern only: the option still parses anywhere, which is the form
         // the documentation's examples use.
-        Assert.Contains("--config-env", outsidePlayFab.Stdout, StringComparison.Ordinal);
+        Assert.Contains("--client-id", outsidePlayFab.Stdout, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -56,7 +56,7 @@ Signed out, it asks you to sign in instead.
 | `-d`, `--details` | `list`, `get` | Show a multiline human-readable view. Cannot be combined with `--output`. |
 | `--name <name>` | `create` | Required primary game name. |
 | `--supported-device <device>` | `create` | Required supported device family: `xbox` or `desktop`. Repeat the option for both. |
-| `--sandbox-id <id>` | `create` | Optional primary development sandbox ID. |
+| `--sandbox-id <id>` | `create` | Optional primary development sandbox ID. It must be an existing Shared sandbox; [`sandbox get`](sandbox.md) shows its type. |
 | `--confirm`, `--yes`, `-y` | `create` | Confirm production game creation without prompting. |
 | `--output <format>` | all | `json` (default) or `json-compact` everywhere; `table` on `list` and `get` only. |
 
@@ -197,10 +197,20 @@ ID, the correlation ID, and recovery commands go to stderr. Recovery commands ar
 PowerShell on Windows and for a POSIX shell such as bash or zsh elsewhere, so they can be
 pasted as they are.
 
-Submission is never retried. A wait timeout does not cancel the job — check it with
-`game job get` instead of submitting again. If no job ID is available, or the job ID the
-service returned contains characters that can't be printed safely, inspect `game list`
-before trying again. **Do not resubmit an uncertain creation.**
+Submission is never retried. If it fails, the command says on stderr whether a game could have
+been created:
+
+- **No game was created** if the request failed before it was sent, such as with no cached
+  sign-in, or if the service refused it: any `4xx` status code except `408`, such as `400` for a
+  sandbox a new game can't use, or a `504` that says the sandbox couldn't be checked in time.
+  It's safe to fix the problem and run the create again.
+- **The outcome is unknown** after any other failure, such as a server error, a timeout, a
+  redirect, or a dropped connection, because Partner Center may have taken the job. Check
+  `game list` with the command printed to stderr before trying again.
+
+A wait timeout does not cancel the job — check it with `game job get` instead of submitting
+again. If the job ID the service returned contains characters that can't be printed safely,
+inspect `game list` instead. **Do not resubmit an uncertain creation.**
 
 ## Checking a creation job
 

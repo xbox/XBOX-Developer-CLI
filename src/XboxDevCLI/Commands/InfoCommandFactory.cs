@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
+using XboxDevCLI.CommandLine;
 using XboxDevCLI.Presentation;
 using XboxDevCLI.Services;
 
@@ -35,6 +36,6 @@ internal static class InfoCommandFactory
             return 0;
         });
 
-        return command;
+        return command.Requires(CommandRequirement.None);
     }
 }

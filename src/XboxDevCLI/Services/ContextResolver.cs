@@ -6,6 +6,7 @@ using System.CommandLine.Parsing;
 using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Configuration;
 using XboxDevCLI.CommandLine;
+using XboxDevCLI.Commands;
 using XboxDevCLI.Safety;
 
 namespace XboxDevCLI.Services;
@@ -46,8 +47,6 @@ internal static class ContextResolver
     /// </summary>
     private static readonly string[] InlineBodyOptions = ["--body", "--statements"];
 
-    /// <summary>The commands that refuse inapplicable automation options from their own action.</summary>
-    private static readonly ConditionalWeakTable<Command, object> CommandsRefusingAutomationOptions = new();
 
     /// <summary>Reads the signed-in account. A test seam; <see cref="ReadCachedIdentityAsync"/> by default.</summary>
     internal static Func<ParseResult, Task<SignedInIdentity?>> ReadIdentityAsync { get; set; } =
@@ -75,17 +74,6 @@ internal static class ContextResolver
         return option;
     }
 
-    /// <summary>
-    /// Marks <paramref name="command"/> as refusing inapplicable automation options from its own
-    /// action, by calling <see cref="Program.RefuseUserAuthenticationOptionsInAutomation"/> and
-    /// <see cref="RefuseProfileInAutomation"/>, so the refusal can take the command's error shape.
-    /// Only for a command that takes no context value.
-    /// </summary>
-    internal static Command RefusesAutomationOptionsInAction(this Command command)
-    {
-        CommandsRefusingAutomationOptions.AddOrUpdate(command, command);
-        return command;
-    }
 
     /// <summary>The endpoint a marked option's saved value belongs to, or <c>null</c> when it isn't marked.</summary>
     internal static ContextEndpoint? GetEndpoint(Option option) =>
@@ -120,7 +108,7 @@ internal static class ContextResolver
     internal static async Task<string> GetMissingMessageAsync(ParseResult parseResult, Option option)
     {
         var key = GetKey(option);
-        if (Program.GetAuthentication(parseResult).IsAutomationSelected)
+        if (Program.GetInvocation(parseResult).IsAutomationSelected)
         {
             return $"No {key} is set. Pass {option.Name} or set {GetVariable(option)}.";
         }
@@ -142,7 +130,7 @@ internal static class ContextResolver
     /// </summary>
     internal static string GetAutomationMessage(ParseResult parseResult, string subject) =>
         $"{subject} doesn't apply when {AutomationAuthenticationSettings.ModeVariable} is "
-        + $"'{Program.GetAuthentication(parseResult).SelectedModeName}': a service principal has no saved "
+        + $"'{Program.GetInvocation(parseResult).AuthenticationModeName}': a service principal has no saved "
         + "context. Pass each value with its flag or XBOX_ variable, such as --playfab-title-id or "
         + "XBOX_PLAYFAB_TITLE_ID.";
 
@@ -193,14 +181,10 @@ internal static class ContextResolver
             return parseResult;
         }
 
-        // Refused even for a command that takes no context value, so options are never ignored.
-        // A marked command refuses them from its own action to preserve its error shape.
+        // Preparation validates what the command declares it needs, and refuses options that don't
+        // apply to the selected sign-in mode, before anything is looked up.
+        Program.Prepare(parseResult);
         var explicitProfile = ContextProfiles.Normalize(parseResult.GetValue(ContextProfiles.Option));
-        if (!CommandsRefusingAutomationOptions.TryGetValue(parseResult.CommandResult.Command, out _))
-        {
-            Program.RefuseUserAuthenticationOptionsInAutomation(parseResult);
-            RefuseProfileInAutomation(parseResult, explicitProfile);
-        }
 
         if (options.Count == 0)
         {
@@ -280,7 +264,7 @@ internal static class ContextResolver
         var unsaved = missing.Where(option => values.All(value => value.Option != option)).ToList();
 
         // A service principal has no saved context, so it's never read.
-        if (Program.GetAuthentication(parseResult).IsAutomationSelected)
+        if (Program.GetInvocation(parseResult).IsAutomationSelected)
         {
             if (unsaved.FirstOrDefault(option => GetEndpoint(option) == ContextEndpoint.PlayFab) is { } needed)
             {
@@ -296,16 +280,7 @@ internal static class ContextResolver
             return values;
         }
 
-        IConfiguration configuration;
-        try
-        {
-            configuration = Program.BuildConfiguration(parseResult);
-        }
-        catch (Exception exception) when (exception is IOException or FormatException or InvalidOperationException)
-        {
-            // The command reports a configuration it can't read.
-            return values;
-        }
+        var configuration = Program.GetConfiguration(parseResult);
 
         var profile = ContextProfiles.From(parseResult);
         var store = new ContextStore();
@@ -355,7 +330,7 @@ internal static class ContextResolver
     /// </summary>
     internal static void RefuseProfileInAutomation(ParseResult parseResult, string? explicitProfile)
     {
-        if (!Program.GetAuthentication(parseResult).IsAutomationSelected)
+        if (!Program.GetInvocation(parseResult).IsAutomationSelected)
         {
             return;
         }
@@ -385,10 +360,7 @@ internal static class ContextResolver
             return GetPlayFabEndpoint(configuration);
         }
 
-        var baseUrl = parseResult.CommandResult.Command.Options.FirstOrDefault(candidate => candidate.Name == "--base-url")
-            is { } baseUrlOption
-            ? parseResult.GetResult(baseUrlOption)?.Tokens.FirstOrDefault()?.Value
-            : null;
+        var baseUrl = XboxPartnerCommandSupport.GetBaseUrlOptionValue(parseResult);
         baseUrl ??= configuration["XboxPartner:BaseUrl"];
         return string.IsNullOrWhiteSpace(baseUrl) ? null : baseUrl.Trim();
     }

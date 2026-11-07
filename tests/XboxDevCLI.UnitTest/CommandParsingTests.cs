@@ -98,26 +98,6 @@ public class CommandParsingTests
     }
 
     [Fact]
-    public async Task GlobalOption_ConfigEnv_IsAccepted()
-    {
-        var envOption = new Option<string>("--config-env") { Recursive = true };
-        var loginCommand = new Command("login", "Sign in");
-        var wasInvoked = false;
-        loginCommand.SetAction((ParseResult _) => { wasInvoked = true; return 0; });
-
-        var rootCommand = new RootCommand();
-        var authCommand = new Command("auth");
-        authCommand.Subcommands.Add(loginCommand);
-        rootCommand.Options.Add(envOption);
-        rootCommand.Subcommands.Add(authCommand);
-
-        var result = await rootCommand.Parse("--config-env Development auth login").InvokeAsync();
-
-        Assert.True(wasInvoked);
-        Assert.Equal(0, result);
-    }
-
-    [Fact]
     public async Task GlobalOption_ClientId_IsAccepted()
     {
         var clientIdOption = new Option<string?>("--client-id") { Recursive = true };

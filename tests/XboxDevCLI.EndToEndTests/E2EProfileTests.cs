@@ -39,20 +39,11 @@ public sealed class E2EProfileTests
     [InlineData(null)]
     [InlineData("")]
     [InlineData("{titleId}.playfabapi.com")]
-    public void Load_BuildsOnlyTheRequestedRoutingHeader(string? header)
+    public void Load_KeepsOnlyTheRequestedHostHeader(string? header)
     {
         var profile = E2EProfiles.Load(Variables((E2EProfiles.HostHeaderVariable, header)));
 
-        if (string.IsNullOrEmpty(header))
-        {
-            Assert.Empty(profile.PlayFab.RequestHeaders);
-        }
-        else
-        {
-            var actual = Assert.Single(profile.PlayFab.RequestHeaders);
-            Assert.Equal("X-PlayFab-Host", actual.Name);
-            Assert.Equal(header, actual.Value);
-        }
+        Assert.Equal(string.IsNullOrEmpty(header) ? null : header, profile.PlayFab.HostHeader);
     }
 
     public static TheoryData<string, string> InvalidGateways() => new()

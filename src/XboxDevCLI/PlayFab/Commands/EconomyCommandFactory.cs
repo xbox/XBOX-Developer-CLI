@@ -351,11 +351,7 @@ internal static class EconomyCommandFactory
         var request = new GetTransactionHistoryRequest
         {
             Entity = entity,
-            // GetTransactionHistory rejects a request with no CollectionId ("CollectionId is
-            // required."), unlike the other Inventory endpoints, which fall back to the default
-            // collection server-side. The generated model documents (Default="default") here too,
-            // but the service does not apply it — verified against a live title. Send the
-            // documented default so `history` works without --collection-id, like `list` does.
+            // GetTransactionHistory rejects a request with no CollectionId: "CollectionId is required."
             CollectionId = Normalize(collectionId) ?? DefaultCollectionId,
             Count = resolvedCount,
             ContinuationToken = Normalize(continuationToken),
@@ -584,11 +580,9 @@ internal static class EconomyCommandFactory
 
     private static Command CreateStatusCommand()
     {
-        var entityIdOption = EntityIdOption();
+        var entityIdOption = OptionalOption("--entity-id", "The id of the entity that gave the items: the transfer's 'GivingEntity'. Requires --entity-type.");
         var entityTypeOption = EntityTypeOption();
-        // GetInventoryOperationStatus rejects a request without CollectionId, despite the
-        // documented default, so this command's Help says to pass it.
-        var collectionIdOption = OptionalOption("--collection-id", "The inventory collection id. GetInventoryOperationStatus rejects requests without one, so pass 'default' for the default collection.");
+        var collectionIdOption = CollectionIdOption();
         var operationTokenOption = RequiredOption("--operation-token", "The 'OperationToken' from a TransferInventoryItems or ExecuteTransferOperations response whose 'OperationStatus' is InProgress.");
 
         var command = new Command("status", "Get the status of an inventory transfer from its operation token (GetInventoryOperationStatus).")
@@ -622,7 +616,7 @@ internal static class EconomyCommandFactory
                     new TableColumn("STATUS", nameof(GetInventoryOperationStatusResponse.OperationStatus), 32),
                 ]),
             Examples: [
-                "xbox playfab economy inventory operation status --entity-id TITLEPLAYER123 --entity-type title_player_account --collection-id default --operation-token OPERATIONTOKEN123",
+                "xbox playfab economy inventory operation status --entity-id TITLEPLAYER123 --entity-type title_player_account --operation-token OPERATIONTOKEN123",
             ]));
     }
 

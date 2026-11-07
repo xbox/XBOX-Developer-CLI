@@ -1,6 +1,6 @@
 ---
 title: Installation
-description: Download and install the CLI for Windows or Linux.
+description: Download and install the CLI for Windows, Linux, or macOS.
 ---
 
 # Installation
@@ -19,18 +19,19 @@ Choose the archive matching your operating system and CPU:
 |--------------|----------------------------|--------|
 | Windows x64  | `xbox-win-x64.zip`   | `xbox.exe` |
 | Linux x64    | `xbox-linux-x64.zip` | `xbox` |
+| macOS on Apple silicon | `xbox-osx-arm64.zip` | `xbox` |
+| macOS on Intel | `xbox-osx-x64.zip` | `xbox` |
 
-macOS builds are coming.
-
-The Linux x64 binary requires glibc 2.27 or newer. No separate .NET runtime
-installation is required to run a downloaded release.
+The Linux x64 binary requires glibc 2.27 or newer. The macOS binaries are signed by
+Microsoft and notarized by Apple. No separate .NET runtime installation is required to
+run a downloaded release.
 
 Extract the **whole archive** into a new, dedicated installation directory owned
-by your user. Keep `appsettings.json` and any other release files
-beside the executable. Do not run it from inside the ZIP or move just the executable.
+by your user. The archive holds the executable, `LICENSE`, and `NOTICE.md`; the CLI's
+settings are built into the executable, so there's no settings file to keep beside it.
+Do not run it from inside the ZIP.
 
-If you move the installation, move the entire folder, including any shipped
-`appsettings.*.json` files. For settings you can customize, see
+If you move the installation, move the entire folder. For settings you can customize, see
 [Configuration](configuration.md).
 
 The examples assume the ZIP is in your Downloads folder. If the destination
@@ -90,12 +91,13 @@ xbox --version
 Follow [Verify the installation](#verify-the-installation) below to compare the
 version and resolve an older executable, alias, or function.
 
-## Linux (Bash or Zsh)
+## Linux and macOS (Bash or Zsh)
 
 ### 1. Extract the archive
 
-Download the Linux archive from the table above. Keep the full extracted
-contents together:
+Download the archive for your platform from the table above. This example uses
+Linux x64; on macOS, use `xbox-osx-arm64.zip` on Apple silicon or `xbox-osx-x64.zip`
+on Intel. Keep the full extracted contents together:
 
 ```bash
 cli_dir="$HOME/.local/opt/xboxdevcli"
@@ -116,7 +118,8 @@ Add this line once to the startup file your shell actually reads:
 export PATH="$HOME/.local/opt/xboxdevcli:$PATH"
 ```
 
-Use `~/.zshrc` for interactive Zsh or `~/.bashrc` for interactive non-login Bash.
+Use `~/.zshrc` for interactive Zsh, the default shell on macOS, or `~/.bashrc` for
+interactive non-login Bash.
 Login Bash reads `~/.bash_profile`, `~/.bash_login`, or `~/.profile` (the first
 one that exists); put the line in that file, or ensure it sources your `~/.bashrc`.
 If you chose a different installation directory, use that path instead.
@@ -155,7 +158,7 @@ Among executable matches, the first directory in PATH wins; aliases and shell
 functions can override it. If lookup selects an older copy, alias, or function,
 resolve that conflict before treating installation as complete. Inspect both
 user and system PATH on Windows; update the appropriate shell startup file on
-Linux. Remove or rename a conflicting alias/function in the configuration
+Linux and macOS. Remove or rename a conflicting alias/function in the configuration
 that defines it, and keep backup installations off PATH. Do not overwrite
 package-managed files. Reopen the terminal and repeat both checks.
 
@@ -209,11 +212,12 @@ overwriting managed files.
    if the update check cannot access it. Review its notes and download the
    ZIP for your OS and CPU. Extract the whole archive into a **new** directory,
    separate from your current installation and user state directory.
-2. Keep the old installation as a backup. If you manually customized
-   installation-local `appsettings.json`, carry those deliberate overrides into
-   the new file after reviewing new release defaults. Preserve any custom
-   `appsettings.*.json` overlays you use.
-   If you never edited these files, use the new release's files unchanged.
+2. Keep the old installation as a backup. Settings come from the new release's
+   built-in defaults, `XBOX_` environment variables, and command options, so
+   there's no settings file to carry forward; keep any `XBOX_` variables you
+   set. If the old installation has an `appsettings.json` or
+   `appsettings.*.json` you customized, move those values to `XBOX_` variables;
+   see [Upgrading from a release that read appsettings.json](configuration.md#upgrading-from-a-release-that-read-appsettingsjson).
 3. **Leave saved settings and sign-in data alone.** On Windows these are in
    `%LOCALAPPDATA%\XboxDevCLI`, separate from the recommended
    `%LOCALAPPDATA%\Programs\XboxDevCLI` installation. Update under the same OS
@@ -225,7 +229,7 @@ overwriting managed files.
    replace your old ZIP installation directory with the prepared new one at the
    **same path** (PATH needs no change), or keep the new directory and change
    the old PATH entry to its location using the [Windows](#windows-powershell)
-   or [Linux](#linux-bash-or-zsh) steps above.
+   or [Linux and macOS](#linux-and-macos-bash-or-zsh) steps above.
    Keep the backup outside PATH.
 5. Reopen your terminal application and IDE, if applicable. Run
    `Get-Command xbox -All` (PowerShell) or `type -a xbox` (Bash/Zsh), confirm

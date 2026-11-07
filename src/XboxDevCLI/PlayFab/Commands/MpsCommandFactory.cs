@@ -676,7 +676,7 @@ internal static class MpsCommandFactory
 
         try
         {
-            var config = Program.BuildConfiguration(parseResult);
+            var config = Program.GetConfiguration(parseResult);
             var authService = Program.GetAuthentication(parseResult);
             using var client = new PlayFabApiClient(config, authService);
 

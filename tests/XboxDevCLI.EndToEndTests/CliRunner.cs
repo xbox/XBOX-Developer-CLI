@@ -3,7 +3,6 @@
 using System.Collections;
 using System.Diagnostics;
 using System.Text;
-using System.Text.Json;
 using System.Text.Json.Nodes;
 
 namespace XboxDevCLI.EndToEndTests;
@@ -34,7 +33,16 @@ internal sealed record CliResult(int ExitCode, string StandardOutput, string Sta
 /// </summary>
 internal sealed class CliRunner : IDisposable
 {
-    internal const string AppSettingsFileName = "appsettings.json";
+    /// <summary>
+    /// The candidate's built-in settings, which the workflow copies beside the CLI from the
+    /// source commit's <c>src/XboxDevCLI/Resources/defaults.json</c>. The CLI embeds them and
+    /// never reads this copy; the harness reads it to check the token scope before signing in.
+    /// </summary>
+    internal const string CandidateDefaultsFileName = "candidate-defaults.json";
+    internal const string PlayFabBaseUrlTemplateVariable = "XBOX_PLAYFAB__BASEURLTEMPLATE";
+    internal const string PlayFabHostHeaderVariable = "XBOX_PLAYFAB__HOSTHEADER";
+    internal const string XboxPartnerBaseUrlVariable = "XBOX_XBOXPARTNER__BASEURL";
+    internal const string NoHostHeader = "none";
     internal static readonly TimeSpan DefaultTimeout = TimeSpan.FromMinutes(2);
 
     private readonly string _root;
@@ -53,14 +61,10 @@ internal sealed class CliRunner : IDisposable
     internal string WorkingDirectory => Path.Combine(_root, "work");
 
     /// <summary>
-    /// Copies the CLI into a private directory, points its settings at the profile, and
-    /// prepares an isolated state directory.
+    /// Copies the CLI into a private directory and prepares an isolated state directory. The
+    /// profile reaches the CLI through <c>XBOX_*</c> environment variables; see
+    /// <see cref="BuildEnvironment"/>.
     /// </summary>
-    /// <remarks>
-    /// The shipped appsettings.json must be rewritten rather than overlaid: configuration
-    /// layers merge arrays by index, so no overlay or environment variable can remove the
-    /// inherited routing header that a development stamp must not receive.
-    /// </remarks>
     internal static CliRunner Create(LiveSettings settings, IDictionary parentEnvironment)
     {
         var root = Path.Combine(Path.GetTempPath(), "xbox-e2e-" + Guid.NewGuid().ToString("N"));
@@ -70,58 +74,40 @@ internal sealed class CliRunner : IDisposable
         Directory.CreateDirectory(Path.Combine(root, "work"));
         CopyDirectory(settings.CliDirectory, cliDirectory);
 
-        var appSettingsPath = Path.Combine(cliDirectory, AppSettingsFileName);
-        var appSettings = ReadAppSettings(cliDirectory);
-        File.WriteAllText(
-            appSettingsPath,
-            ApplyProfile(appSettings, settings.Profile).ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-
         return new CliRunner(
             root,
             cliDirectory,
             BuildEnvironment(parentEnvironment, settings, stateDirectory));
     }
 
-    internal static JsonObject ReadAppSettings(string cliDirectory) =>
-        JsonNode.Parse(File.ReadAllText(Path.Combine(cliDirectory, AppSettingsFileName))) as JsonObject
-        ?? throw new InvalidDataException($"{AppSettingsFileName} in the CLI under test is not a JSON object.");
+    internal static JsonObject ReadCandidateDefaults(string cliDirectory) =>
+        JsonNode.Parse(File.ReadAllText(Path.Combine(cliDirectory, CandidateDefaultsFileName))) as JsonObject
+        ?? throw new InvalidDataException($"{CandidateDefaultsFileName} for the CLI under test is not a JSON object.");
 
-    internal static JsonObject ApplyProfile(JsonObject appSettings, E2EProfile profile)
+    /// <summary>
+    /// The scope the CLI will request: the profile's override, else the candidate's built-in
+    /// one. Either must match the environment's audience.
+    /// </summary>
+    internal static string GetEffectiveScope(JsonObject candidateDefaults, E2EProfile profile)
     {
-        var azureAd = GetOrAddObject(appSettings, "AzureAd");
-        if (profile.Scope is not null)
-        {
-            azureAd["Scopes"] = profile.Scope;
-        }
-
-        if (E2EProfiles.GetScopeError((string?)azureAd["Scopes"], profile.Audience) is { } scopeError)
+        var scope = profile.Scope ?? (string?)candidateDefaults["AzureAd"]?["Scopes"];
+        if (E2EProfiles.GetScopeError(scope, profile.Audience) is { } scopeError)
         {
             throw new InvalidDataException(scopeError);
         }
 
-        var playFab = GetOrAddObject(appSettings, "PlayFab");
-        playFab["BaseUrlTemplate"] = profile.PlayFab.BaseUrlTemplate;
-        playFab["RequestHeaders"] = new JsonArray(profile.PlayFab.RequestHeaders
-            .Select(header => (JsonNode)new JsonObject
-            {
-                ["Name"] = header.Name,
-                ["Value"] = header.Value,
-            })
-            .ToArray());
-
-        var xboxPartner = GetOrAddObject(appSettings, "XboxPartner");
-        xboxPartner["BaseUrl"] = profile.XboxPartner.BaseUrl;
-
-        var telemetry = GetOrAddObject(appSettings, "Telemetry");
-        telemetry["Enabled"] = false;
-
-        return appSettings;
+        return scope!;
     }
 
     /// <summary>
     /// Builds the child process environment from the parent's, keeping no inherited
-    /// <c>XBOX_*</c> or <c>E2E_*</c> variable and redirecting per-user state.
+    /// <c>XBOX_*</c> or <c>E2E_*</c> variable, pointing the CLI at the profile's services, and
+    /// redirecting per-user state.
     /// </summary>
+    /// <remarks>
+    /// The PlayFab host header is set either way: a development stamp must not receive the
+    /// built-in <c>{titleId}.playfabapi.com</c> one, so its absence is sent as <c>none</c>.
+    /// </remarks>
     internal static Dictionary<string, string> BuildEnvironment(
         IDictionary parentEnvironment,
         LiveSettings settings,
@@ -144,6 +130,10 @@ internal sealed class CliRunner : IDisposable
         environment["XBOX_AUTHENTICATION__MODE"] = "githuboidc";
         environment[LiveSettings.ClientIdVariable] = settings.ClientId;
         environment[LiveSettings.TenantIdVariable] = settings.TenantId;
+        environment[LiveSettings.ScopesVariable] = settings.Scope;
+        environment[PlayFabBaseUrlTemplateVariable] = settings.Profile.PlayFab.BaseUrlTemplate;
+        environment[PlayFabHostHeaderVariable] = settings.Profile.PlayFab.HostHeader ?? NoHostHeader;
+        environment[XboxPartnerBaseUrlVariable] = settings.Profile.XboxPartner.BaseUrl;
         environment["XBOX_TELEMETRY__ENABLED"] = "false";
         environment["XBOX_TELEMETRY_OPTOUT"] = "1";
 
@@ -222,18 +212,6 @@ internal sealed class CliRunner : IDisposable
         {
             // Best effort: the temp directory holds no credentials, only the CLI copy and state.
         }
-    }
-
-    private static JsonObject GetOrAddObject(JsonObject parent, string name)
-    {
-        if (parent[name] is JsonObject existing)
-        {
-            return existing;
-        }
-
-        var created = new JsonObject();
-        parent[name] = created;
-        return created;
     }
 
     private static void CopyDirectory(string source, string destination)

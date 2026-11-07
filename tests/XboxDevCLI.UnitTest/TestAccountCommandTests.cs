@@ -501,11 +501,17 @@ public class TestAccountCommandTests
     public async Task BatchList_OverriddenEndpointWarningOmitsTheDefaultUrl()
     {
         var handler = Respond(HttpStatusCode.OK, BatchesResponse);
-
-        Invocation result = await InvokeAsync(
-            ["test-account", "batch", "list", "--seller-id", "1234567"],
-            handler,
-            configuration => configuration["XboxPartner:BaseUrl"] = "https://nodpublishers.com");
+        var original = Environment.GetEnvironmentVariable("XBOX_XBOXPARTNER__BASEURL");
+        Environment.SetEnvironmentVariable("XBOX_XBOXPARTNER__BASEURL", "https://nodpublishers.com");
+        Invocation result;
+        try
+        {
+            result = await InvokeAsync(["test-account", "batch", "list", "--seller-id", "1234567"], handler);
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XBOX_XBOXPARTNER__BASEURL", original);
+        }
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("nodpublishers.com", Assert.Single(handler.Requests).RequestUri?.Host);

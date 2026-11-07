@@ -65,7 +65,7 @@ internal static class GetPublishStatusCommandFactory
             {
                 var scid = parseResult.GetValue(scidOption);
                 string sandbox = parseResult.GetValue(sandboxOption)!;
-                var configuration = Program.BuildConfiguration(parseResult);
+                var configuration = Program.GetConfiguration(parseResult);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
                         configuration,
@@ -115,9 +115,14 @@ internal static class GetPublishStatusCommandFactory
         TableView? tableView = output.TableView;
         try
         {
-            string response = await client
-                .GetXboxLivePublishStatusAsync(sellerId, scid, sandbox, cancellationToken)
-                .ConfigureAwait(false);
+            string response;
+            using (RequestProgress.Start($"Getting publish status for {sandbox}", stderr))
+            {
+                response = await client
+                    .GetXboxLivePublishStatusAsync(sellerId, scid, sandbox, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             XboxLivePublishResponse result = ParseResponse(response);
             stdout.WriteLine(tableView is not null
                 ? XboxPartnerTableFormatter.FormatRows(
@@ -142,29 +147,6 @@ internal static class GetPublishStatusCommandFactory
             return 1;
         }
     }
-
-    internal static Task<int> RunAsync(
-        XboxPartnerClient client,
-        long? sellerId,
-        Guid scid,
-        string sandbox,
-        string outputFormat,
-        TextWriter stdout,
-        TextWriter stderr,
-        CancellationToken cancellationToken) =>
-        RunAsync(
-            client,
-            sellerId,
-            scid,
-            sandbox,
-            outputFormat.Equals("table", StringComparison.OrdinalIgnoreCase)
-                ? OutputOptions.Table(XboxPartnerCommandSupport.PublishStatusTableView)
-                : outputFormat.Equals("json-compact", StringComparison.OrdinalIgnoreCase)
-                    ? OutputOptions.JsonCompact
-                    : OutputOptions.Json,
-            stdout,
-            stderr,
-            cancellationToken);
 
     private static XboxLivePublishResponse ParseResponse(string response)
     {

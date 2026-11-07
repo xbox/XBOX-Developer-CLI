@@ -28,11 +28,16 @@ internal interface IXboxPartnerClient : IDisposable
         CancellationToken cancellationToken = default,
         Action<int>? pageRead = null);
 
+    /// <remarks>
+    /// <paramref name="onSending"/> is called immediately before the request is handed to the
+    /// network. A failure before it is called means the gateway never saw the request.
+    /// </remarks>
     Task<XboxPartnerGameCreationJob> CreateGameAsync(
         string baseUrl,
         string sellerId,
         CreateXboxGameRequest request,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        Action? onSending = null);
 
     Task<XboxPartnerGameCreationJob> GetGameCreationJobAsync(
         string baseUrl,
@@ -78,14 +83,15 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         HttpClient? httpClient = null,
         AuthenticationService? authenticationService = null)
     {
-        _authenticationService = authenticationService
-            ?? new AuthenticationService(() => configuration);
         _configuredBaseUrl = configuration["XboxPartner:BaseUrl"];
         _maxResponseBytes = ResolveMaxResponseBytes(configuration);
         _maxDocumentArchiveBytes = ResolveMaxDocumentArchiveBytes(configuration);
         _requestTimeout = TimeSpan.FromSeconds(ResolveTimeoutSeconds(configuration));
+        _authenticationService = authenticationService
+            ?? AuthenticationService.Create(configuration, AutomationAuthenticationSettings.CaptureEnvironment());
         _ownsHttpClient = httpClient == null;
-        _httpClient = httpClient ?? new HttpClient();
+        // Following a 307 or 308 sends the request again, so a create could be submitted twice.
+        _httpClient = httpClient ?? new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
         _httpClient.Timeout = _requestTimeout;
     }
 
@@ -109,14 +115,16 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         string baseUrl,
         string sellerId,
         CreateXboxGameRequest request,
-        CancellationToken cancellationToken = default) =>
+        CancellationToken cancellationToken = default,
+        Action? onSending = null) =>
         SendJobAsync<XboxPartnerGameCreationJob>(
             HttpMethod.Post,
             baseUrl,
             "xboxpartner/v1/games",
             sellerId,
             JsonSerializer.Serialize(request with { Name = request.Name.Trim() }, CreateGameSerializerOptions),
-            cancellationToken);
+            cancellationToken,
+            onSending);
 
     public Task<XboxPartnerGameCreationJob> GetGameCreationJobAsync(
         string baseUrl,
@@ -546,8 +554,7 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         if (string.IsNullOrWhiteSpace(_configuredBaseUrl))
         {
             throw new InvalidOperationException(
-                "No service URL. Set XboxPartner:BaseUrl in appsettings.json or set " +
-                "the XBOX_XBOXPARTNER__BASEURL environment variable.");
+                "No service URL. Set the XBOX_XBOXPARTNER__BASEURL environment variable.");
         }
 
         return _configuredBaseUrl.TrimEnd('/');

@@ -6,6 +6,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using XboxDevCLI.CommandLine;
 using XboxDevCLI.Commands;
 using XboxDevCLI.Output;
 using XboxDevCLI.Services;
@@ -422,6 +423,7 @@ public class PublishCommandTests
             .Subcommands.Single(command => command.Name == "publish");
         publish.Subcommands.Remove(publish.Subcommands.Single(command => command.Name == "start"));
         publish.Subcommands.Add(PublishCommandFactory.Create(prompt.Dependencies));
+        CommandErrorBoundary.Install(root);
 
         var handler = new CapturingHandler(HttpStatusCode.OK, """{"Status":"Running"}""");
         TextWriter originalOut = Console.Out;

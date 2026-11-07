@@ -118,6 +118,7 @@ admin rights, and nothing on the server side stops a mistake. Before you run `xb
 - Show progress for a long operation with `ProgressLine` in `src/XboxDevCLI/Output/`, which
   draws on stderr only when it's a terminal, and erases itself when disposed. A command that
   reads every page of a list uses `ListProgress`, and adds `ListProgress.HelpOutput` to its Help.
+  A command that waits on a request with no partial results uses `RequestProgress`.
 - Static offline data belongs in `src/XboxDevCLI/Resources/` as an `EmbeddedResource`.
 
 ### Table output

@@ -134,8 +134,8 @@ on the first command that sends it. Removing a value that isn't saved succeeds a
 nothing.
 
 Saved context belongs to a signed-in user, so a service principal has none. When
-`XBOX_AUTHENTICATION__MODE` selects a service-principal mode, every command refuses `--profile`
-and `XBOX_PROFILE`, `get`, `set`, `unset`, and the `profile` commands exit 1 and say so on
+`XBOX_AUTHENTICATION__MODE` selects a service-principal mode, every command that signs in
+refuses `--profile` and `XBOX_PROFILE`, `get`, `set`, `unset`, and the `profile` commands exit 1 and say so on
 stderr, and no command reads saved values; pass each value with its flag or `XBOX_*`
 variable instead. `key list` still works. See
 [Automation (service principal) authentication](../authentication.md#automation-service-principal-authentication).

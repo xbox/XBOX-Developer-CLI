@@ -783,7 +783,8 @@ public class GameCommandTests
     {
         public Task<XboxPartnerGameCreationJob> CreateGameAsync(
             string baseUrl, string sellerId, CreateXboxGameRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default, Action? onSending = null) =>
+            throw new NotSupportedException();
 
         public Task<XboxPartnerGameCreationJob> GetGameCreationJobAsync(
             string baseUrl, string sellerId, string jobId,

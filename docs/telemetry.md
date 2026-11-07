@@ -80,16 +80,15 @@ Values `1`, `true`, and `yes` are treated as opt-out. The opt-out always wins ov
 
 ## Deployment configuration
 
-Official release artifacts embed the Microsoft-owned Azure Monitor Application Insights destination at build time. End users do not configure a connection string.
+Official release artifacts embed the Microsoft-owned Azure Monitor Application Insights destination at build time. The destination can't be changed; to stop sending telemetry, use the opt-outs above. The standard `APPLICATIONINSIGHTS_CONNECTION_STRING` variable is not read, because a host that sets it for its own application doesn't intend it for the CLI.
 
-Local and pull-request builds do not embed a destination. Maintainers can test another destination with the standard `APPLICATIONINSIGHTS_CONNECTION_STRING` environment variable, and set the other telemetry settings with `XBOX_` variables:
+Other telemetry settings can be set with `XBOX_` variables:
 
 ```powershell
-$env:APPLICATIONINSIGHTS_CONNECTION_STRING = "<test Application Insights connection string>"
 $env:XBOX_TELEMETRY__DEPENDENCYTRACINGENABLED = "true"
 $env:XBOX_TELEMETRY__DEPENDENCYTRACESAMPLINGRATIO = "0.1"
 ```
 
-`DependencyTraceSamplingRatio` is clamped to the range 0 through 1. Set `Telemetry:Enabled` to `false` in an environment-specific configuration file to disable export for a distribution.
+`DependencyTraceSamplingRatio` is clamped to the range 0 through 1. Set `XBOX_TELEMETRY__ENABLED` to `false` to disable export for an environment or distribution.
 
 Delivery cannot be guaranteed when a device is offline, blocks Azure Monitor endpoints, terminates the process before the bounded flush completes, or the user opts out. The embedded destination ensures zero-configuration delivery whenever telemetry is enabled and the endpoint is reachable.

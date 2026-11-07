@@ -92,7 +92,7 @@ internal static class DownloadAchievementImagesCommandFactory
             Scope: "One XBOX title; --scid identifies its service configuration.",
             Output:
                 "A JSON download manifest by default. Table output shows asset ID and " +
-                "destination folder.",
+                "destination folder. " + ListProgress.HelpOutput,
             Examples:
             [
                 "xbox xbl achievement-image download --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --asset-id 11111111-2222-3333-4444-555555555555 --dest achievement-images",
@@ -130,7 +130,7 @@ internal static class DownloadAchievementImagesCommandFactory
                 Guid? assetId = result.GetValue(assetIdOption);
                 bool all = result.GetValue(allOption);
                 string destination = result.GetValue(destinationOption)!;
-                var configuration = Program.BuildConfiguration(result);
+                var configuration = Program.GetConfiguration(result);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
                         configuration,
@@ -194,16 +194,22 @@ internal static class DownloadAchievementImagesCommandFactory
             IReadOnlyList<XboxLiveAchievementImage> images;
             if (all)
             {
+                using var listProgress = ListProgress.Start("Reading achievement images", stderr);
                 images = (await client.ListAchievementImagesAsync(
-                    sellerId, scid, cancellationToken).ConfigureAwait(false)).Images;
+                    sellerId, scid, cancellationToken, listProgress.PageRead).ConfigureAwait(false)).Images;
             }
             else
             {
                 Guid requestedAssetId = assetId ?? throw new ArgumentException(
                     "assetId is required when all is false.",
                     nameof(assetId));
-                XboxLiveAchievementImage image = await client.GetAchievementImageAsync(
-                    sellerId, scid, requestedAssetId, cancellationToken).ConfigureAwait(false);
+                XboxLiveAchievementImage image;
+                using (RequestProgress.Start("Getting achievement image", stderr))
+                {
+                    image = await client.GetAchievementImageAsync(
+                        sellerId, scid, requestedAssetId, cancellationToken).ConfigureAwait(false);
+                }
+
                 if (image.AssetId != requestedAssetId)
                 {
                     throw new InvalidDataException(
@@ -217,15 +223,30 @@ internal static class DownloadAchievementImagesCommandFactory
             var files = ValidateImages(images, scid);
             string root = SafeOutputDirectory.Create(destination);
             var downloads = new List<AchievementImageDownloadResult>(files.Count);
-            foreach (ImageFiles file in files)
+            var warnings = new List<string>();
+            try
             {
-                downloads.Add(await DownloadImagePairAsync(
-                    downloadClient,
-                    file,
-                    root,
-                    stderr,
-                    policy,
-                    cancellationToken).ConfigureAwait(false));
+                using var progress = RequestProgress.Start("Downloading achievement images", stderr);
+                foreach (ImageFiles file in files)
+                {
+                    progress.Activity = FormattableString.Invariant(
+                        $"Downloading achievement image {downloads.Count + 1} of {files.Count}");
+                    downloads.Add(await DownloadImagePairAsync(
+                        downloadClient,
+                        file,
+                        root,
+                        warnings,
+                        policy,
+                        cancellationToken).ConfigureAwait(false));
+                }
+            }
+            finally
+            {
+                // Written once the progress line is gone, so they don't land on it.
+                foreach (string warning in warnings)
+                {
+                    stderr.WriteLine(warning);
+                }
             }
 
             WriteOutput(downloads, all, output, stdout);
@@ -312,7 +333,7 @@ internal static class DownloadAchievementImagesCommandFactory
         HttpClient client,
         ImageFiles files,
         string root,
-        TextWriter stderr,
+        List<string> warnings,
         AchievementImageDownloadPolicy policy,
         CancellationToken cancellationToken)
     {
@@ -354,7 +375,7 @@ internal static class DownloadAchievementImagesCommandFactory
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
             {
-                stderr.WriteLine(
+                warnings.Add(
                     $"Warning: Could not remove temporary achievement image directory " +
                     $"'{stagingDirectory}': {ex.Message}");
             }

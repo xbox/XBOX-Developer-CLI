@@ -1,10 +1,12 @@
 // Copyright (C) Microsoft Corporation. All rights reserved.
 
 using System.CommandLine;
+using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
+using XboxDevCLI.CommandLine;
 using XboxDevCLI.Commands;
 using XboxDevCLI.Services;
 using XboxDevCLI.Telemetry;
@@ -159,15 +161,11 @@ public class ServicePrincipalAuthenticationTests
     }
 
     [Fact]
-    public async Task AcquireTokenSilent_RejectsMultipleScopesWithoutCreatingProvider()
+    public void Constructor_RejectsMultipleScopesWithoutCreatingProvider()
     {
-        var service = new AuthenticationService(ScopesOnlyConfig("openid " + Scope), null, ClientSecret,
-            (_, _) => throw new InvalidOperationException("Must not create a provider."));
-
-        Assert.Equal("clientsecret", service.SelectedModeName);
-        Assert.True(service.IsAutomationSelected);
-        await Assert.ThrowsAsync<AuthenticationConfigurationException>(() =>
-            service.AcquireTokenSilentAsync(CancellationToken.None));
+        Assert.Throws<AuthenticationConfigurationException>(() => new AuthenticationService(
+            ScopesOnlyConfig("openid " + Scope), null, ClientSecret,
+            (_, _) => throw new InvalidOperationException("Must not create a provider.")));
     }
 
     [Fact]
@@ -291,18 +289,21 @@ public class ServicePrincipalAuthenticationTests
         {
             var root = Program.BuildRootCommand();
             var original = root.Parse("auth status", Program.NoResponseFileConfig);
+            Program.Prepare(original);
             var service = Program.GetAuthentication(original);
             variables.Clear();
             var resolved = root.Parse("auth status", Program.NoResponseFileConfig);
             Program.ShareConfiguration(original, resolved);
+            Program.Prepare(resolved);
 
             Assert.Same(service, Program.GetAuthentication(resolved));
             Assert.Equal("managedidentity", service.SelectedModeName);
+            Assert.Equal("managedidentity", Program.GetInvocation(resolved).AuthenticationModeName);
             Assert.True(service.IsAutomation);
             Assert.Equal(1, reads);
 
             var next = root.Parse("auth status", Program.NoResponseFileConfig);
-            Assert.Equal("user", Program.GetAuthentication(next).SelectedModeName);
+            Assert.Equal("user", Program.GetInvocation(next).AuthenticationModeName);
             Assert.Equal(2, reads);
         }
         finally
@@ -315,7 +316,7 @@ public class ServicePrincipalAuthenticationTests
     [InlineData("MODE")]
     [InlineData("CLIENTID")]
     [InlineData("CLIENTSECRET__FILE")]
-    public async Task Invocation_InvalidSnapshotCannotFallBackAfterEnvironmentChanges(string setting)
+    public void Invocation_InvalidSnapshotCannotFallBackAfterEnvironmentChanges(string setting)
     {
         var originalReader = AutomationAuthenticationSettings.ReadEnvironment;
         var variables = ConflictingAuthenticationEnvironment(setting);
@@ -324,20 +325,19 @@ public class ServicePrincipalAuthenticationTests
         {
             var root = Program.BuildRootCommand();
             var original = root.Parse("auth status", Program.NoResponseFileConfig);
-            var service = Program.GetAuthentication(original);
+            Assert.Equal("invalid", Program.GetInvocation(original).AuthenticationModeName);
+            Assert.True(Program.GetInvocation(original).IsAutomationSelected);
+            var error = Assert.Throws<AuthenticationConfigurationException>(() => Program.Prepare(original));
+            Assert.Contains("differ only by case", error.Message, StringComparison.Ordinal);
+
             variables.Clear();
             var resolved = root.Parse("auth status", Program.NoResponseFileConfig);
             Program.ShareConfiguration(original, resolved);
 
-            Assert.Equal("invalid", service.SelectedModeName);
-            Assert.True(service.IsAutomationSelected);
-            Assert.Same(service, Program.GetAuthentication(resolved));
-            var error = await Assert.ThrowsAsync<AuthenticationConfigurationException>(() =>
-                service.AcquireTokenSilentAsync(CancellationToken.None));
-            Assert.Contains("differ only by case", error.Message, StringComparison.Ordinal);
-            var repeated = await Assert.ThrowsAsync<AuthenticationConfigurationException>(() =>
-                Program.GetAuthentication(original).AcquireTokenSilentAsync(CancellationToken.None));
-            Assert.Same(error, repeated);
+            Assert.Equal("invalid", Program.GetInvocation(resolved).AuthenticationModeName);
+            var repeated = Assert.Throws<AuthenticationConfigurationException>(() => Program.Prepare(resolved));
+            Assert.Contains("differ only by case", repeated.Message, StringComparison.Ordinal);
+            Assert.Throws<UnreachableException>(() => Program.GetAuthentication(resolved));
         }
         finally
         {
@@ -354,15 +354,10 @@ public class ServicePrincipalAuthenticationTests
             [AutomationAuthenticationSettings.ClientIdVariable] = ClientSecret.ClientId!,
         };
         var config = ScopesOnlyConfig(Scope);
-        var configReads = 0;
         var providerCreations = 0;
         var provider = new FakeProvider(AutomationTestTokens.Result(AppJwt));
-        var service = new AuthenticationService(
-            () =>
-            {
-                configReads++;
-                return config;
-            },
+        var service = AuthenticationService.Create(
+            config,
             AutomationAuthenticationSettings.Capture(variables),
             (settings, scopes) =>
             {
@@ -375,19 +370,13 @@ public class ServicePrincipalAuthenticationTests
         variables.Clear();
 
         Assert.Equal("managedidentity", service.SelectedModeName);
-        Assert.True(service.IsAutomationSelected);
-        Assert.Equal(0, configReads);
-        Assert.Equal(0, providerCreations);
-
         Assert.True(service.IsAutomation);
-        Assert.Equal(1, configReads);
         Assert.Equal(0, providerCreations);
         config["AzureAd:Scopes"] = "invalid-after-initialization";
 
         await service.AcquireTokenSilentAsync(CancellationToken.None);
         await service.AcquireTokenSilentAsync(CancellationToken.None);
 
-        Assert.Equal(1, configReads);
         Assert.Equal(1, providerCreations);
         Assert.Equal(2, provider.Calls);
     }
@@ -395,32 +384,16 @@ public class ServicePrincipalAuthenticationTests
     [Theory]
     [InlineData("user")]
     [InlineData("azurecli")]
-    public async Task Service_ConfigurationFailureIsDeferredAndCachedWithoutAffectingInspection(string mode)
+    public void Create_RejectsMissingScopesInEveryMode(string mode)
     {
-        var configReads = 0;
-        var error = new InvalidOperationException("Configuration cannot be loaded.");
-        var service = new AuthenticationService(
-            () =>
-            {
-                configReads++;
-                throw error;
-            },
+        var error = Assert.Throws<InvalidOperationException>(() => AuthenticationService.Create(
+            new ConfigurationBuilder().Build(),
             AutomationAuthenticationSettings.Capture(new Dictionary<string, string>
             {
                 [AutomationAuthenticationSettings.ModeVariable] = mode,
-            }));
+            })));
 
-        Assert.Equal(mode, service.SelectedModeName);
-        Assert.Equal(mode != "user", service.IsAutomationSelected);
-        Assert.Equal(0, configReads);
-
-        Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AcquireTokenSilentAsync(CancellationToken.None)));
-        Assert.Same(error, await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            service.AcquireTokenSilentAsync(CancellationToken.None)));
-
-        Assert.Equal(1, configReads);
-        Assert.Equal(mode, service.SelectedModeName);
+        Assert.Equal("AzureAd:Scopes is not configured.", error.Message);
     }
 
     [Fact]
@@ -444,41 +417,15 @@ public class ServicePrincipalAuthenticationTests
     }
 
     [Fact]
-    public async Task Service_InvalidInputsRejectEveryAuthenticationOperation()
+    public void Service_InvalidInputsCannotCreateAService()
     {
-        var service = new AuthenticationService(
-            () => ScopesOnlyConfig(Scope),
-            AutomationAuthenticationSettings.Capture(ConflictingAuthenticationEnvironment("CLIENTID")),
-            (_, _) => throw new InvalidOperationException("Must not create a provider."));
+        var environment = AutomationAuthenticationSettings.Capture(ConflictingAuthenticationEnvironment("CLIENTID"));
 
-        Assert.Equal("invalid", service.SelectedModeName);
-        Assert.True(service.IsAutomationSelected);
-        Assert.Throws<AuthenticationConfigurationException>(() => service.IsAutomation);
-        await Assert.ThrowsAsync<AuthenticationConfigurationException>(() => service.LoginAsync(CancellationToken.None));
-        await Assert.ThrowsAsync<AuthenticationConfigurationException>(() => service.LogoutAsync(CancellationToken.None));
-        await Assert.ThrowsAsync<AuthenticationConfigurationException>(() => service.GetCachedAccountAsync(CancellationToken.None));
-        await Assert.ThrowsAsync<AuthenticationConfigurationException>(() => service.AcquireTokenSilentAsync(CancellationToken.None));
-        await Assert.ThrowsAsync<AuthenticationConfigurationException>(() => SignedInIdentity.FromCacheAsync(service, CancellationToken.None));
-    }
-
-    [Fact]
-    public async Task Status_DeferredConfigurationFailureUsesInjectedServicesMode()
-    {
-        var service = new AuthenticationService(
-            () => throw new InvalidOperationException("Configuration cannot be loaded."),
-            AutomationAuthenticationSettings.Capture(new Dictionary<string, string>
-            {
-                [AutomationAuthenticationSettings.ModeVariable] = "azurecli",
-            }));
-
-        var (exitCode, stdout, stderr) = await RunAsync(
-            StatusCommandFactory.Create(_ => service), "status --output json-compact");
-
-        Assert.Equal(1, exitCode);
-        Assert.Empty(stdout);
-        using var json = JsonDocument.Parse(stderr);
-        Assert.False(json.RootElement.GetProperty("signedIn").GetBoolean());
-        Assert.Equal("Configuration cannot be loaded.", json.RootElement.GetProperty("error").GetString());
+        Assert.Equal("invalid", environment.SelectedModeName);
+        Assert.Throws<AuthenticationConfigurationException>(() => AuthenticationService.Create(
+            ScopesOnlyConfig(Scope),
+            environment,
+            (_, _) => throw new InvalidOperationException("Must not create a provider.")));
     }
 
     [Theory]
@@ -597,34 +544,38 @@ public class ServicePrincipalAuthenticationTests
     }
 
     /// <summary>
-    /// In a service-principal mode, a configuration that can't be read, such as a missing
-    /// <c>--config-env</c> overlay, fails status rather than reporting a signed-out user; signed
-    /// in as a user, it's still reported as signed out.
+    /// A configuration that can't be read, such as built-in settings missing from the build, fails
+    /// status in every mode rather than reporting a signed-out user, and the action never runs.
     /// </summary>
     [Theory]
-    [InlineData("azurecli", "json", 1)]
-    [InlineData("azurecli", "json-compact", 1)]
-    [InlineData(null, "json", 0)]
-    [InlineData(null, "json-compact", 0)]
-    public async Task Status_ConfigurationFailure_FailsOnlyInAutomation(string? mode, string format, int expectedExit)
+    [InlineData("azurecli", "json")]
+    [InlineData("azurecli", "json-compact")]
+    [InlineData(null, "json")]
+    [InlineData(null, "json-compact")]
+    public async Task Status_ConfigurationFailure_FailsInEveryMode(string? mode, string format)
     {
         using var automation = mode is null ? null : TestEnvironment.UseAuthenticationMode(mode);
+        using var unreadable = TestSettings.UseUnreadable();
+        var actionRan = false;
 
         var (exitCode, stdout, stderr) = await RunAsync(
-            StatusCommandFactory.Create(Program.GetAuthentication),
-            $"--config-env missing-overlay status --output {format}");
+            StatusCommandFactory.Create(parseResult =>
+            {
+                actionRan = true;
+                return Program.GetAuthentication(parseResult);
+            }),
+            $"status --output {format}");
 
-        Assert.Equal(expectedExit, exitCode);
-        using var json = JsonDocument.Parse(expectedExit == 0 ? stdout : stderr);
+        Assert.Equal(1, exitCode);
+        Assert.False(actionRan);
+        Assert.Empty(stdout);
+        using var json = JsonDocument.Parse(stderr);
         Assert.False(json.RootElement.GetProperty("signedIn").GetBoolean());
-        if (expectedExit == 0)
+        Assert.Contains(TestSettings.UnreadableMessage, json.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+        Assert.Equal(mode is not null, json.RootElement.TryGetProperty("authenticationMode", out var reported));
+        if (mode is not null)
         {
-            Assert.Empty(stderr);
-        }
-        else
-        {
-            Assert.Empty(stdout);
-            Assert.Contains("missing-overlay", json.RootElement.GetProperty("error").GetString(), StringComparison.Ordinal);
+            Assert.Equal(mode, reported.GetString());
         }
     }
 
@@ -673,7 +624,6 @@ public class ServicePrincipalAuthenticationTests
         try
         {
             var rootCommand = new RootCommand("XBOX Dev CLI");
-            rootCommand.Options.Add(Program.ConfigEnvOption);
             rootCommand.Options.Add(Program.ClientIdOption);
             rootCommand.Options.Add(Program.TenantIdOption);
             rootCommand.Options.Add(Program.ScopesOption);
@@ -683,6 +633,7 @@ public class ServicePrincipalAuthenticationTests
             rootCommand.Options.Add(Program.VerboseOption);
             rootCommand.Options.Add(Program.ConfirmOption);
             rootCommand.Subcommands.Add(command);
+            CommandErrorBoundary.Install(rootCommand);
             var exitCode = await rootCommand.Parse(args, Program.NoResponseFileConfig)
                 .InvokeAsync(cancellationToken: cancellationToken);
             return (exitCode, outWriter.ToString(), errorWriter.ToString());

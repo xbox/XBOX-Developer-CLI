@@ -134,9 +134,12 @@ internal static class AchievementImageCommandFactory
                 parseResult,
                 sellerOption,
                 scidOption,
-                (client, sellerId, scid, token) =>
-                    client.GetAchievementImageAsync(
-                        sellerId, scid, parseResult.GetValue(assetIdOption)!, token),
+                async (client, sellerId, scid, token) =>
+                {
+                    using var progress = RequestProgress.Start("Getting achievement image");
+                    return await client.GetAchievementImageAsync(
+                        sellerId, scid, parseResult.GetValue(assetIdOption)!, token).ConfigureAwait(false);
+                },
                 action: "get",
                 cancellationToken).ConfigureAwait(false));
         return command;
@@ -210,7 +213,7 @@ internal static class AchievementImageCommandFactory
         long? sellerId = null;
         try
         {
-            var configuration = Program.BuildConfiguration(parseResult);
+            var configuration = Program.GetConfiguration(parseResult);
             using var client = Program.XboxPartnerClientFactory is null
                 ? new XboxPartnerClient(
                     configuration,

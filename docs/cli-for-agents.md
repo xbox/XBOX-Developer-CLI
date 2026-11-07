@@ -46,10 +46,10 @@ xbox auth status --output json-compact   # {"signedIn":true,"username":"...",...
 ```
 
 `auth status` exits with code 0 even when nobody is signed in, and reports
-`{"signedIn":false}`, so an agent can check for credentials and branch on the result. In a
-service-principal mode (`XBOX_AUTHENTICATION__MODE`), invalid settings, a selected profile, or a
-token acquisition failure instead exit with code 1 and write the error JSON to stderr, leaving
-stdout empty.
+`{"signedIn":false}`, so an agent can check for credentials and branch on the result. A
+configuration or token cache that can't be read, and in a service-principal mode
+(`XBOX_AUTHENTICATION__MODE`) invalid settings, a selected profile, or a token acquisition
+failure, instead exit with code 1 and write the error JSON to stderr, leaving stdout empty.
 PlayFab calls fail unless the signed-in user has Admin permission on the title. See
 [Authentication](authentication.md).
 

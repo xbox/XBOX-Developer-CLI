@@ -39,7 +39,7 @@ job bound to an environment:
 | Variable | Meaning |
 |----------|---------|
 | `E2E_GITHUB_ENVIRONMENT` | Selected environment name and live opt-in. Leave unset for offline tests. |
-| `E2E_CLI_PATH` | Directory containing the published `xbox` executable and `appsettings.json`. |
+| `E2E_CLI_PATH` | Directory containing the published `xbox` executable and `candidate-defaults.json`, a copy of the source commit's `src/XboxDevCLI/Resources/defaults.json`. |
 | `XBOX_AUTHENTICATION__CLIENTID` | Service principal's app ID. |
 | `XBOX_AUTHENTICATION__TENANTID` | Service principal's tenant ID. |
 | `XBOX_AZUREAD__SCOPES` | Optional API scope override. Unset or empty preserves the candidate's `AzureAd:Scopes`; the effective scope must equal the expected audience followed by `/.default`. |
@@ -53,9 +53,11 @@ job bound to an environment:
 Live jobs need `id-token: write`; GitHub supplies `ACTIONS_ID_TOKEN_REQUEST_URL` and
 `ACTIONS_ID_TOKEN_REQUEST_TOKEN`. Missing or inconsistent configuration fails an opted-in run
 instead of silently skipping it. `LiveConfigurationTests` validates these settings, including
-the effective scope from the candidate's `appsettings.json` when no override is supplied,
-without acquiring a token or calling a service. A missing or mismatched candidate scope
-fails preflight.
+the effective scope from the candidate's built-in defaults, read from `candidate-defaults.json`,
+when no override is supplied, without acquiring a token or calling a service. A missing or
+mismatched candidate scope fails preflight. The harness passes the profile to the CLI as `XBOX_`
+environment variables, including the effective `XBOX_AZUREAD__SCOPES`, and never changes files
+beside the executable.
 
 PlayFab and XBOX partner scenarios are currently disabled in code because the services do
 not yet authorize service principals. There is no variable to enable them. Only configuration

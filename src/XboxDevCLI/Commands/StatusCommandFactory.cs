@@ -6,6 +6,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
+using XboxDevCLI.CommandLine;
 using XboxDevCLI.Services;
 
 namespace XboxDevCLI.Commands;
@@ -34,47 +35,16 @@ internal static class StatusCommandFactory
             var asJson = outputFormat != null;
             var compact = string.Equals(outputFormat, "json-compact", StringComparison.OrdinalIgnoreCase);
 
-            IAccount? account;
-            AuthenticationService? authService = null;
-            try
+            // A failure to read configuration, the sign-in settings, or the token cache is reported
+            // by the error boundary in this command's format (FormatError), and exits 1. Only an
+            // account that isn't in a readable cache is signed out.
+            var authService = authFactory(parseResult);
+            if (authService.IsAutomation)
             {
-                // Refused here rather than before the action, so JSON output keeps its error shape.
-                Program.RefuseUserAuthenticationOptionsInAutomation(parseResult);
-                ContextResolver.RefuseProfileInAutomation(
-                    parseResult,
-                    ContextProfiles.Normalize(parseResult.GetValue(ContextProfiles.Option)));
-                authService = authFactory(parseResult);
-                if (authService.IsAutomation)
-                {
-                    return await WriteServicePrincipalStatusAsync(authService, asJson, compact, cancellationToken);
-                }
-
-                account = await authService.GetCachedAccountAsync(cancellationToken);
-            }
-            catch (Exception ex) when (ex is not OperationCanceledException)
-            {
-                if (asJson)
-                {
-                    // In a service-principal mode, any failure before a token is acquired, such as
-                    // invalid settings or a missing --config-env overlay, is a failure, not a
-                    // signed-out state.
-                    if (ex is AuthenticationConfigurationException
-                        || (authService ?? Program.GetAuthentication(parseResult)).IsAutomationSelected)
-                    {
-                        Console.Error.WriteLine(SerializeStatus(new { signedIn = false, error = ex.Message }, compact));
-                        return 1;
-                    }
-
-                    // A user who can't be read as signed in is reported as signed out, so agents
-                    // can probe sign-in state without handling a failure.
-                    Console.WriteLine(SerializeStatus(new { signedIn = false }, compact));
-                    return 0;
-                }
-
-                Console.Error.WriteLine($"Failed to retrieve status: {ex.Message}");
-                return 1;
+                return await WriteServicePrincipalStatusAsync(authService, asJson, compact, cancellationToken);
             }
 
+            var account = await authService.GetCachedAccountAsync(cancellationToken);
             if (account == null)
             {
                 if (asJson)
@@ -130,7 +100,30 @@ internal static class StatusCommandFactory
             return 0;
         });
 
-        return command.RefusesAutomationOptionsInAction();
+        return command.FormatsErrors(FormatError);
+    }
+
+    /// <summary>
+    /// How a failure before the status is known is written to stderr: with <c>--output</c>, as JSON
+    /// with <c>signedIn: false</c> and the error, naming the selected service-principal mode; else
+    /// as text. Either way stdout stays empty and the exit code is 1, so a failure is never read
+    /// as signed out.
+    /// </summary>
+    private static string FormatError(ParseResult parseResult, string message)
+    {
+        var outputFormat = parseResult.GetValue(Program.OutputOption);
+        if (outputFormat == null)
+        {
+            return $"Failed to retrieve status: {message}";
+        }
+
+        var compact = string.Equals(outputFormat, "json-compact", StringComparison.OrdinalIgnoreCase);
+        var invocation = Program.GetInvocation(parseResult);
+        return invocation.IsAutomationSelected
+            ? SerializeStatus(
+                new { signedIn = false, authenticationMode = invocation.AuthenticationModeName, error = message },
+                compact)
+            : SerializeStatus(new { signedIn = false, error = message }, compact);
     }
 
     /// <summary>

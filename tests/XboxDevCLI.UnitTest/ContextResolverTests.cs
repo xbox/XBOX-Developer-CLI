@@ -26,10 +26,7 @@ public sealed class ContextResolverTests : IDisposable
 {
     private const string Scid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
     private static readonly SignedInIdentity Identity = new("tenant", "user");
-    private static readonly string Gateway = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false)
-        .Build()["XboxPartner:BaseUrl"]!;
+    private static readonly string Gateway = TestSettings.BuiltIn("XboxPartner:BaseUrl")!;
 
     private static readonly string[] Variables =
     [
@@ -266,7 +263,7 @@ public sealed class ContextResolverTests : IDisposable
     [Fact]
     public async Task MissingTitle_InAutomationMode_NamesOnlyTheFlagAndVariable()
     {
-        using var automation = TestEnvironment.UseAuthenticationMode("clientsecret");
+        using var automation = TestEnvironment.UseAuthenticationMode("azurecli");
         _signedIn = null;
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => ResolveAsync("playfab", "title-data", "get"));
@@ -278,7 +275,7 @@ public sealed class ContextResolverTests : IDisposable
 
     /// <summary>
     /// The title reaches the PlayFab client the way <c>--playfab-title-id</c> always has, through
-    /// configuration, however it was supplied. appsettings.json and the setting's variable,
+    /// configuration, however it was supplied. The built-in settings and the setting's variable,
     /// <c>XBOX_PLAYFAB__TITLEID</c>, don't set it.
     /// </summary>
     [Theory]
@@ -301,7 +298,7 @@ public sealed class ContextResolverTests : IDisposable
                 ? new[] { "playfab", "title-data", "get", "--playfab-title-id", " TITLE1 " }
                 : ["playfab", "title-data", "get"])).Resolved;
 
-        Assert.Equal(expected, Program.BuildConfiguration(resolved)["PlayFab:TitleId"]);
+        Assert.Equal(expected, Program.LoadConfiguration(resolved)["PlayFab:TitleId"]);
     }
 
     /// <summary>Main stops with the reason, before the command runs, when a value can't be used.</summary>
@@ -383,14 +380,18 @@ public sealed class ContextResolverTests : IDisposable
         Assert.Equal(0, _identityReads);
     }
 
-    /// <summary>A configuration that can't be read is left to the command to report.</summary>
+    /// <summary>
+    /// A configuration that can't be read fails preparation, before any saved value or the
+    /// signed-in account is looked up.
+    /// </summary>
     [Fact]
-    public async Task UnreadableConfiguration_IsLeftToTheCommand()
+    public async Task UnreadableConfiguration_FailsBeforeAnythingIsLookedUp()
     {
-        var (original, resolved, stderr) = await ResolveAsync("--config-env", "missing", "playfab", "title-data", "get");
+        using var unreadable = TestSettings.UseUnreadable();
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() =>
+            ResolveAsync("playfab", "title-data", "get"));
 
-        Assert.Same(original, resolved);
-        Assert.Equal("", stderr);
+        Assert.Equal(TestSettings.UnreadableMessage, exception.Message);
         Assert.Equal(0, _identityReads);
     }
 
@@ -588,9 +589,11 @@ public sealed class ContextResolverTests : IDisposable
         var original = Program.BuildRootCommand().Parse(args, Program.NoResponseFileConfig);
         var stderr = await CaptureStderrAsync(async () =>
         {
-            Assert.Null(Program.BuildConfiguration(original)["PlayFab:TitleId"]);
+            Assert.Null(Program.LoadConfiguration(original)["PlayFab:TitleId"]);
             Environment.SetEnvironmentVariable("XBOX_PLAYFAB__BASEURLTEMPLATE", "https://{0}.changed.test");
-            var configuration = Program.BuildConfiguration(await ContextResolver.ResolveAsync(original, args));
+            var resolved = await ContextResolver.ResolveAsync(original, args);
+            Program.Prepare(resolved);
+            var configuration = Program.LoadConfiguration(resolved);
             Assert.Equal("https://{0}.example.test", configuration[EndpointOverrideWarning.ConfigurationKey]);
             Assert.Equal("ABC12", configuration["PlayFab:TitleId"]);
         });
@@ -599,25 +602,26 @@ public sealed class ContextResolverTests : IDisposable
     }
 
     [Fact]
-    public async Task DeferredAuthentication_UsesConfigurationLoadedAfterContextReparse()
+    public async Task PreparedAuthenticationAndConfiguration_AreSharedAcrossContextReparse()
     {
         using var automation = TestEnvironment.UseAuthenticationMode("managedidentity");
         Environment.SetEnvironmentVariable("XBOX_PLAYFAB__BASEURLTEMPLATE", "https://{0}.example.test");
         Environment.SetEnvironmentVariable("XBOX_PLAYFAB_TITLE_ID", "ABC123");
         string[] args = ["playfab", "title-data", "get", "--scopes", "api://nodpublishers.com/.default"];
         var original = Program.BuildRootCommand().Parse(args, Program.NoResponseFileConfig);
-        var auth = Program.GetAuthentication(original);
         var stderr = await CaptureStderrAsync(async () =>
         {
+            Program.Prepare(original);
+            var auth = Program.GetAuthentication(original);
             var resolved = await ContextResolver.ResolveAsync(original, args);
             Assert.NotSame(original, resolved);
             Assert.Same(auth, Program.GetAuthentication(resolved));
-            Assert.Equal("ABC123", Program.BuildConfiguration(resolved)["PlayFab:TitleId"]);
+            Assert.Equal("ABC123", Program.LoadConfiguration(resolved)["PlayFab:TitleId"]);
             Environment.SetEnvironmentVariable("XBOX_PLAYFAB__BASEURLTEMPLATE", "https://{0}.changed.test");
 
             Assert.True(auth.IsAutomation);
             Assert.Equal("https://{0}.example.test",
-                Program.BuildConfiguration(original)[EndpointOverrideWarning.ConfigurationKey]);
+                Program.LoadConfiguration(original)[EndpointOverrideWarning.ConfigurationKey]);
         });
 
         Assert.Single(stderr.Split(Environment.NewLine), line => line.StartsWith("Warning:", StringComparison.Ordinal));
@@ -666,7 +670,7 @@ public sealed class ContextResolverTests : IDisposable
     {
         using var automation = TestEnvironment.UseAuthenticationMode(mode);
 
-        var (exitCode, stdout, stderr) = await MainAsync(option, "ignored-value", "info");
+        var (exitCode, stdout, stderr) = await MainAsync(option, "ignored-value", "seller", "list");
 
         Assert.Equal(1, exitCode);
         Assert.Empty(stdout);
@@ -730,7 +734,7 @@ public sealed class ContextResolverTests : IDisposable
         var (_, resolved, _) = await ResolveAsync(
             "--client-id", "custom-client", "--tenant-id", "custom-tenant", "info");
 
-        var configuration = Program.BuildConfiguration(resolved);
+        var configuration = Program.LoadConfiguration(resolved);
         Assert.Equal("custom-client", configuration["AzureAd:ClientId"]);
         Assert.Equal("custom-tenant", configuration["AzureAd:TenantId"]);
     }
@@ -742,19 +746,19 @@ public sealed class ContextResolverTests : IDisposable
 
         var (_, resolved, _) = await ResolveAsync("--scopes", "api://example/.default", "info");
 
-        Assert.Equal("api://example/.default", Program.BuildConfiguration(resolved)["AzureAd:Scopes"]);
+        Assert.Equal("api://example/.default", Program.LoadConfiguration(resolved)["AzureAd:Scopes"]);
     }
 
     /// <summary>
     /// A service principal has no saved context, so a profile from <c>--profile</c> or
     /// <c>XBOX_PROFILE</c> is refused rather than silently ignored, even by a command that takes
-    /// no context value.
+    /// no context value, when the command signs in.
     /// </summary>
     [Theory]
     [InlineData("--profile", "Remove --profile.", "playfab title-data get --playfab-title-id ABC12")]
     [InlineData("XBOX_PROFILE", "Unset XBOX_PROFILE.", "playfab title-data get --playfab-title-id ABC12")]
-    [InlineData("--profile", "Remove --profile.", "info")]
-    [InlineData("XBOX_PROFILE", "Unset XBOX_PROFILE.", "info")]
+    [InlineData("--profile", "Remove --profile.", "seller list")]
+    [InlineData("XBOX_PROFILE", "Unset XBOX_PROFILE.", "seller list")]
     public async Task Automation_RefusesAProfile(string selectedWith, string guidance, string command)
     {
         using var automation = TestEnvironment.UseAuthenticationMode("azurecli");
@@ -916,7 +920,7 @@ public sealed class ContextResolverTests : IDisposable
         app.SetupGet(application => application.UserTokenCache).Returns(Mock.Of<ITokenCache>());
         app.Setup(application => application.GetAccountsAsync())
             .ReturnsAsync(() => [FakeAuthenticationService.CreateAccount("tenant", objectId())]);
-        var service = new AuthenticationService(Program.BuildConfiguration(parseResult), app.Object);
+        var service = new AuthenticationService(Program.LoadConfiguration(parseResult), app.Object);
         Program.SetAuthentication(parseResult, service);
         return service;
     }

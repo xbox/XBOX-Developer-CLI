@@ -16,9 +16,9 @@ namespace XboxDevCLI.Services;
 /// HTTP client for calling PlayFab APIs using Entra ID Bearer token authentication.
 /// Sends POST requests to the configured <c>PlayFab:BaseUrlTemplate</c> (shipped as
 /// https://xboxdevcli.playfabapi.com by default), with API paths supplied as relative
-/// request URIs. In the shipped configuration, the target title is carried
-/// via <c>PlayFab:RequestHeaders</c> (e.g. an <c>X-PlayFab-Host</c> header templated as
-/// <c>{titleId}.playfabapi.com</c>) rather than in the request host.
+/// request URIs. The target title is carried in an <c>X-PlayFab-Host</c> header set by
+/// <c>PlayFab:HostHeader</c> (built in as <c>{titleId}.playfabapi.com</c>) rather than in the
+/// request host. <c>PlayFab:RequestHeaders</c> adds other headers.
 /// </summary>
 public class PlayFabApiClient : IDisposable
 {
@@ -48,6 +48,21 @@ public class PlayFabApiClient : IDisposable
         "X-SecretKey",
         "X-EntityToken",
     };
+
+    /// <summary>The header that carries the target title, set by <see cref="HostHeaderKey"/>.</summary>
+    private const string RoutingHeader = "X-PlayFab-Host";
+
+    /// <summary>
+    /// The setting for the <see cref="RoutingHeader"/> value, a template whose first label is
+    /// <c>{titleId}</c>, or <see cref="NoHostHeader"/> to send none.
+    /// </summary>
+    internal const string HostHeaderKey = "PlayFab:HostHeader";
+
+    /// <summary>
+    /// The <see cref="HostHeaderKey"/> value that sends no host header. A word rather than an
+    /// empty value, because Windows and many CI systems drop an empty environment variable.
+    /// </summary>
+    internal const string NoHostHeader = "none";
 
     private static readonly JsonSerializerOptions PrettyPrintOptions = new()
     {
@@ -102,22 +117,54 @@ public class PlayFabApiClient : IDisposable
             configuration[EndpointOverrideWarning.ConfigurationKey]);
         var baseUrl = string.Format(baseUrlTemplate, titleId);
 
+        string? hostHeader = configuration[HostHeaderKey]?.Trim();
+        if (!string.IsNullOrEmpty(hostHeader) && !string.Equals(hostHeader, NoHostHeader, StringComparison.OrdinalIgnoreCase))
+        {
+            // Context checks and the audit log use the selected title, so the header that carries
+            // the target title must be a single host name that starts with it.
+            var value = hostHeader.Replace("{titleId}", titleId);
+            if (Uri.CheckHostName(value) != UriHostNameType.Dns
+                || !string.Equals(value.Split('.')[0], titleId, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"The {RoutingHeader} header is '{value}', but it must be a single host name whose first label is the " +
+                    $"selected PlayFab title '{titleId}'. Make {{titleId}} the first label of {HostHeaderKey} " +
+                    $"(XBOX_PLAYFAB__HOSTHEADER), as in the built-in '{{titleId}}.playfabapi.com', or set it to " +
+                    $"'{NoHostHeader}' to send no {RoutingHeader} header.");
+            }
+
+            _requestHeaders.Add(new KeyValuePair<string, string>(RoutingHeader, value));
+        }
+
         var headerSection = configuration.GetSection("PlayFab:RequestHeaders").GetChildren();
         foreach (var entry in headerSection)
         {
             var name = entry["Name"];
             var valueTemplate = entry["Value"];
 
+            // Earlier releases built in the routing header as entry 0 and suggested overriding
+            // only its value, so a leftover XBOX_PLAYFAB__REQUESTHEADERS__0__VALUE has no name.
             if (string.IsNullOrWhiteSpace(name))
             {
                 throw new InvalidOperationException(
-                    "PlayFab:RequestHeaders contains an entry with a missing or empty Name.");
+                    $"PlayFab:RequestHeaders:{entry.Key} has no Name. If it's a leftover " +
+                    $"XBOX_PLAYFAB__REQUESTHEADERS__{entry.Key}__VALUE that set the {RoutingHeader} header, remove " +
+                    "it and set XBOX_PLAYFAB__HOSTHEADER instead. Otherwise, set " +
+                    $"XBOX_PLAYFAB__REQUESTHEADERS__{entry.Key}__NAME.");
             }
 
             if (DeniedHeaders.Contains(name))
             {
                 throw new InvalidOperationException(
                     $"PlayFab:RequestHeaders contains a denied header '{name}'.");
+            }
+
+            if (string.Equals(name, RoutingHeader, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new InvalidOperationException(
+                    $"PlayFab:RequestHeaders:{entry.Key} sets the {RoutingHeader} header, which {HostHeaderKey} " +
+                    $"sets. Remove it, and set XBOX_PLAYFAB__HOSTHEADER instead, with {{titleId}} as the first label " +
+                    "of its value.");
             }
 
             var value = (valueTemplate ?? string.Empty).Replace("{titleId}", titleId);

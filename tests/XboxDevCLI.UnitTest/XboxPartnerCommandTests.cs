@@ -244,7 +244,7 @@ public class XboxPartnerCommandTests
                 ? XboxPartnerCommandSupport.ResolveBaseUrl(command.Parse([]), baseUrlOption, configuration)
                 : XboxPartnerCommandSupport.ResolveBaseUrl(configuration));
 
-        Assert.Contains("XboxPartner:BaseUrl", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("XBOX_XBOXPARTNER__BASEURL", exception.Message, StringComparison.Ordinal);
         Assert.Contains("XBOX_XBOXPARTNER__BASEURL", exception.Message, StringComparison.Ordinal);
         if (withOption)
         {
@@ -253,15 +253,12 @@ public class XboxPartnerCommandTests
     }
 
     [Fact]
-    public void ResolveBaseUrl_UsesTheShippedAppsettingsGateway()
+    public void ResolveBaseUrl_UsesTheBuiltInGateway()
     {
         var baseUrlOption = XboxPartnerCommandSupport.CreateBaseUrlOption();
         var command = new Command("probe");
         command.Options.Add(baseUrlOption);
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.json", optional: false)
-            .Build();
+        var configuration = TestSettings.BuiltIn();
 
         var baseUrl = XboxPartnerCommandSupport.ResolveBaseUrl(
             command.Parse([]),
@@ -294,56 +291,6 @@ public class XboxPartnerCommandTests
     }
 
     [Fact]
-    public void ResolveBaseUrl_OverriddenGatewayWarnsOnStandardError()
-    {
-        var baseUrlOption = XboxPartnerCommandSupport.CreateBaseUrlOption();
-        var command = new Command("probe");
-        command.Options.Add(baseUrlOption);
-        var originalError = Console.Error;
-        using var stderr = new StringWriter();
-
-        try
-        {
-            Console.SetError(stderr);
-            XboxPartnerCommandSupport.ResolveBaseUrl(
-                command.Parse(["--base-url", "https://evil.example.com"]),
-                baseUrlOption,
-                new ConfigurationBuilder().Build());
-        }
-        finally
-        {
-            Console.SetError(originalError);
-        }
-
-        Assert.Contains("evil.example.com", stderr.ToString(), StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void ResolveBaseUrl_ShippedGatewayDoesNotWarn()
-    {
-        var baseUrlOption = XboxPartnerCommandSupport.CreateBaseUrlOption();
-        var command = new Command("probe");
-        command.Options.Add(baseUrlOption);
-        var originalError = Console.Error;
-        using var stderr = new StringWriter();
-
-        try
-        {
-            Console.SetError(stderr);
-            XboxPartnerCommandSupport.ResolveBaseUrl(
-                command.Parse(["--base-url", EndpointOverrideWarning.DefaultXboxPartnerBaseUrl]),
-                baseUrlOption,
-                new ConfigurationBuilder().Build());
-        }
-        finally
-        {
-            Console.SetError(originalError);
-        }
-
-        Assert.Empty(stderr.ToString());
-    }
-
-    [Fact]
     public void ResolveBaseUrl_TrimsTrailingSlashFromConfiguredValue()
     {
         var baseUrlOption = XboxPartnerCommandSupport.CreateBaseUrlOption();
@@ -372,7 +319,7 @@ public class XboxPartnerCommandTests
         var exception = Assert.Throws<InvalidOperationException>(
             () => XboxPartnerCommandSupport.ResolveBaseUrl(configuration));
 
-        Assert.Contains("XboxPartner:BaseUrl", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("XBOX_XBOXPARTNER__BASEURL", exception.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -390,53 +337,18 @@ public class XboxPartnerCommandTests
         Assert.Equal("http://localhost:54848", baseUrl);
     }
 
-    [Fact]
-    public void ResolveBaseUrl_ConfigurationOnlyOverloadWarnsWhenOverridden()
-    {
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["XboxPartner:BaseUrl"] = "https://nodpublishers.com/custom/",
-            })
-            .Build();
-        var originalError = Console.Error;
-        using var stderr = new StringWriter();
-        string baseUrl;
-        try
-        {
-            Console.SetError(stderr);
-            baseUrl = XboxPartnerCommandSupport.ResolveBaseUrl(configuration);
-        }
-        finally
-        {
-            Console.SetError(originalError);
-        }
-
-        Assert.Equal("https://nodpublishers.com/custom", baseUrl);
-        string warning = stderr.ToString();
-        Assert.Contains("Warning: the service endpoint is overridden", warning, StringComparison.Ordinal);
-        Assert.Contains(baseUrl, warning, StringComparison.Ordinal);
-        Assert.Contains("your access token", warning, StringComparison.Ordinal);
-        Assert.DoesNotContain(EndpointOverrideWarning.DefaultXboxPartnerBaseUrl, warning, StringComparison.Ordinal);
-    }
-
     /// <summary>
-    /// The gateway URL the commands under test resolve to, read from the shipped
-    /// appsettings.json rather than hardcoded, so these tests stay aligned with whatever
-    /// configuration ships.
+    /// The gateway URL the commands under test resolve to, read from the built-in settings
+    /// rather than hardcoded, so these tests stay aligned with whatever configuration ships.
     /// </summary>
     private static readonly string GatewayBaseUrl = ResolveShippedGatewayBaseUrl();
 
     private static string ResolveShippedGatewayBaseUrl()
     {
-        var configuration = new ConfigurationBuilder()
-            .SetBasePath(AppContext.BaseDirectory)
-            .AddJsonFile("appsettings.json", optional: false)
-            .Build();
-        var baseUrl = configuration["XboxPartner:BaseUrl"];
+        var baseUrl = TestSettings.BuiltIn("XboxPartner:BaseUrl");
         Assert.False(
             string.IsNullOrWhiteSpace(baseUrl),
-            "appsettings.json must ship XboxPartner:BaseUrl; the seller commands have no code default.");
+            "The built-in settings must include XboxPartner:BaseUrl; the seller commands have no code default.");
         return baseUrl!.TrimEnd('/');
     }
 
@@ -474,7 +386,8 @@ public class XboxPartnerCommandTests
     {
         public Task<XboxPartnerGameCreationJob> CreateGameAsync(
             string baseUrl, string sellerId, CreateXboxGameRequest request,
-            CancellationToken cancellationToken = default) => throw new NotSupportedException();
+            CancellationToken cancellationToken = default, Action? onSending = null) =>
+            throw new NotSupportedException();
 
         public Task<XboxPartnerGameCreationJob> GetGameCreationJobAsync(
             string baseUrl, string sellerId, string jobId,

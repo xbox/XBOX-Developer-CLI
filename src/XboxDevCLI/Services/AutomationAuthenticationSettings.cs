@@ -29,8 +29,8 @@ internal sealed class AuthenticationConfigurationException(string message)
 
 /// <summary>
 /// Automation (service principal) authentication settings, read only from
-/// <c>XBOX_AUTHENTICATION__*</c> environment variables. They aren't read from
-/// <c>appsettings.json</c>, environment overlays, or user settings, and they carry file paths
+/// <c>XBOX_AUTHENTICATION__*</c> environment variables. They aren't built-in settings or command
+/// options, and they carry file paths
 /// rather than secrets. Like every <c>XBOX_</c> variable they also appear in configuration, under
 /// <c>Authentication</c>, but nothing reads them there.
 /// </summary>

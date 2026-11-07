@@ -73,6 +73,6 @@ internal static class UpgradeCommandFactory
                 return 1;
             }
         });
-        return command;
+        return command.Requires(CommandRequirement.None);
     }
 }

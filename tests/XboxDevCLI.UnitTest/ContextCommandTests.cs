@@ -35,13 +35,10 @@ public sealed class ContextCommandTests : IDisposable
         "XBOX_PLAYFAB__BASEURLTEMPLATE",
     ];
 
-    private static readonly IConfiguration ShippedConfiguration = new ConfigurationBuilder()
-        .SetBasePath(AppContext.BaseDirectory)
-        .AddJsonFile("appsettings.json", optional: false)
-        .Build();
+    private static readonly IConfiguration ShippedConfiguration = TestSettings.BuiltIn();
 
     /// <summary>
-    /// The endpoints the commands under test resolve to, read from the shipped appsettings.json
+    /// The endpoints the commands under test resolve to, read from the built-in settings
     /// rather than hardcoded so the scopes these tests save under stay aligned with what ships.
     /// </summary>
     private static readonly string GatewayBaseUrl =
@@ -234,22 +231,21 @@ public sealed class ContextCommandTests : IDisposable
     }
 
     /// <summary>
-    /// Configuration files don't set context values, so a seller or title left in one neither
+    /// Settings don't set context values, so a seller or title in a setting's variable neither
     /// outranks a saved value nor shows up in its place.
     /// </summary>
     [Fact]
-    public async Task ConfigurationFilesNeitherShadowNorReplaceSavedValues()
+    public async Task SettingsNeitherShadowNorReplaceSavedValues()
     {
-        var environment = $"context-test-{Guid.NewGuid():N}";
-        var file = Path.Combine(AppContext.BaseDirectory, $"appsettings.{environment}.json");
-        await File.WriteAllTextAsync(file, """{"PlayFab":{"TitleId":"FILE12"},"XboxPartner":{"SellerId":"99999999"}}""");
+        var originalTitle = Environment.GetEnvironmentVariable("XBOX_PLAYFAB__TITLEID");
+        var originalSeller = Environment.GetEnvironmentVariable("XBOX_XBOXPARTNER__SELLERID");
+        Environment.SetEnvironmentVariable("XBOX_PLAYFAB__TITLEID", "FILE12");
+        Environment.SetEnvironmentVariable("XBOX_XBOXPARTNER__SELLERID", "99999999");
 
         try
         {
-            var set = await InvokeAsync(
-                "context", "set", "playfab-title-id", "ABC12", "--config-env", environment);
-            var get = await InvokeAsync(
-                "context", "get", "--config-env", environment, "--output", "json-compact");
+            var set = await InvokeAsync("context", "set", "playfab-title-id", "ABC12");
+            var get = await InvokeAsync("context", "get", "--output", "json-compact");
 
             Assert.Equal(0, set.ExitCode);
             Assert.Empty(set.Stderr);
@@ -259,7 +255,8 @@ public sealed class ContextCommandTests : IDisposable
         }
         finally
         {
-            File.Delete(file);
+            Environment.SetEnvironmentVariable("XBOX_PLAYFAB__TITLEID", originalTitle);
+            Environment.SetEnvironmentVariable("XBOX_XBOXPARTNER__SELLERID", originalSeller);
         }
     }
 

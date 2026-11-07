@@ -33,14 +33,21 @@ internal sealed class ProgressLine : IDisposable
     {
         _stderr = stderr;
         _describe = describe;
-        _columns = columns ?? ConsoleColumns;
+        _columns = columns ?? (TerminalOverride.Value is { } terminal ? () => terminal.Columns : ConsoleColumns);
         if (enabled)
         {
             _timer = (timeProvider ?? TimeProvider.System).CreateTimer(_ => Draw(), null, Delay, RedrawInterval);
         }
     }
 
-    public static bool StderrIsTerminal => Environment.UserInteractive && !Console.IsErrorRedirected;
+    public static bool StderrIsTerminal =>
+        TerminalOverride.Value?.IsTerminal ?? (Environment.UserInteractive && !Console.IsErrorRedirected);
+
+    // Lets a test draw progress into its own writer at a fixed width, independent of the console
+    // running the tests. It flows only through that test's calls.
+    internal static readonly AsyncLocal<TestTerminal?> TerminalOverride = new();
+
+    internal readonly record struct TestTerminal(bool IsTerminal, int Columns);
 
     // Timer callbacks can overlap. While one is still writing, such as when the terminal has paused
     // output, the next skips its redraw rather than wait, so threads don't pile up behind it.

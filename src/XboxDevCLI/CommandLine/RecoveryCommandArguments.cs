@@ -12,7 +12,6 @@ internal static class RecoveryCommandArguments
         var arguments = new List<string> { CliIdentity.CommandName };
         foreach (var (name, value) in new (string, string?)[]
         {
-            ("--config-env", result.GetValue(Program.ConfigEnvOption)),
             ("--client-id", result.GetValue(Program.ClientIdOption)),
             ("--tenant-id", result.GetValue(Program.TenantIdOption)),
             ("--scopes", result.GetValue(Program.ScopesOption)),

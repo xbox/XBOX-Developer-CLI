@@ -55,7 +55,7 @@ the inventory, or `inventory transaction list` to see the transactions.
 | Command | PlayFab API path | Options | Safety |
 | --- | --- | --- | --- |
 | `playfab economy inventory operation execute` | `/Inventory/ExecuteInventoryOperations` | Optional `--entity-id`, `--entity-type`, `--collection-id`, `--idempotency-id`; exactly one of `--operations` or `--operations-file` is required. | Mutating; delete batches are hard-gated by `--confirm` / `--yes` / `-y`. |
-| `playfab economy inventory operation status` | `/Inventory/GetInventoryOperationStatus` | `--operation-token` required; pass `--collection-id`, which the API requires; optional `--entity-id`, `--entity-type`. | Read-only. |
+| `playfab economy inventory operation status` | `/Inventory/GetInventoryOperationStatus` | `--operation-token` required; `--entity-id` and `--entity-type` for the entity that gave the items; optional `--collection-id`. | Read-only. |
 
 `--operations` and `--operations-file` both contain the JSON array of inventory
 operations sent transactionally to PlayFab. The CLI rejects a batch containing a
@@ -70,15 +70,13 @@ per-operation results or an operation token. Run `inventory list` or
 `operation status` reads the status of an inventory transfer that hadn't
 finished when its request returned. Its `--operation-token` is the
 `OperationToken` that `TransferInventoryItems` or `ExecuteTransferOperations`
-returns while their `OperationStatus` is `InProgress`. The CLI has no verb for
-either API; call them with `playfab api` after approval for a mutating
-call. `inventory add` and `operation execute` don't return an operation token.
-A transaction ID isn't an operation token either; PlayFab rejects one with
-`Bad OperationToken.`
+returns while their `OperationStatus` is `InProgress`, and its `--entity-id`
+and `--entity-type` are the transfer's `GivingEntity`.
 
-The CLI accepts `operation status` without `--collection-id`, but PlayFab
-rejects the request with `CollectionId cannot be null`, so pass
-`--collection-id default` for the default collection.
+The CLI has no verb for either API; call them with `playfab api` after
+approval for a mutating call. `inventory add` and `operation execute` don't
+return an operation token. A transaction ID isn't an operation token either;
+PlayFab rejects one with `Bad OperationToken.`
 
 ## Inventory transactions
 
@@ -177,10 +175,10 @@ xbox --playfab-title-id ABC123 playfab economy inventory transaction list --enti
 ```
 
 Check a transfer that returned `"OperationStatus": "InProgress"`, using the
-`OperationToken` from its response:
+`OperationToken` from its response and the player who gave the items:
 
 ```bash
-xbox --playfab-title-id ABC123 playfab economy inventory operation status --entity-id TITLEPLAYER123 --entity-type title_player_account --collection-id default --operation-token OPERATIONTOKEN123
+xbox --playfab-title-id ABC123 playfab economy inventory operation status --entity-id TITLEPLAYER123 --entity-type title_player_account --operation-token OPERATIONTOKEN123
 ```
 
 If `ops.json` contains a delete operation, include confirmation after review:

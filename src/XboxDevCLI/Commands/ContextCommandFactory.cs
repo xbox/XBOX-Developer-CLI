@@ -76,7 +76,7 @@ internal static class ContextCommandFactory
         command.Subcommands.Add(CreateUnsetCommand(authFactory, storeFactory));
         command.Subcommands.Add(CreateKeyCommand());
         command.Subcommands.Add(CreateProfileCommand(authFactory, storeFactory));
-        return command;
+        return command.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.None);
     }
 
     /// <summary>
@@ -220,7 +220,8 @@ internal static class ContextCommandFactory
         var group = new Command("key", "List the supported context keys");
         group.Subcommands.Add(list);
         return group.WithMetadata(new CommandMetadata(
-            Scope: "The keys 'context get', 'context set', and 'context unset' accept."));
+            Scope: "The keys 'context get', 'context set', and 'context unset' accept."))
+            .Requires(CommandRequirement.None);
     }
 
     private static Command CreateGetCommand(
@@ -259,7 +260,7 @@ internal static class ContextCommandFactory
 
             // The profile is what 'get' reports on, so a bad XBOX_PROFILE fails first, alone.
             var profile = ContextProfiles.From(parseResult);
-            var configuration = Program.BuildConfiguration(parseResult);
+            var configuration = Program.GetConfiguration(parseResult);
             var identity = await TryGetIdentityAsync(authFactory(parseResult), cancellationToken);
             var store = storeFactory();
             var endpoints = CreateEndpoints(parseResult, baseUrlOption, configuration);
@@ -371,7 +372,7 @@ internal static class ContextCommandFactory
                 return 1;
             }
 
-            var configuration = Program.BuildConfiguration(parseResult);
+            var configuration = Program.GetConfiguration(parseResult);
             var identity = await GetRequiredIdentityAsync(authFactory(parseResult), cancellationToken);
             await storeFactory().UpdateAsync(
                 identity,
@@ -456,7 +457,7 @@ internal static class ContextCommandFactory
                 }
             }
 
-            var configuration = Program.BuildConfiguration(parseResult);
+            var configuration = Program.GetConfiguration(parseResult);
             var identity = await GetRequiredIdentityAsync(authFactory(parseResult), cancellationToken);
             var store = storeFactory();
 
@@ -540,7 +541,7 @@ internal static class ContextCommandFactory
     /// </summary>
     private static void RefuseInAutomation(ParseResult parseResult)
     {
-        if (Program.GetAuthentication(parseResult).IsAutomationSelected)
+        if (Program.GetInvocation(parseResult).IsAutomationSelected)
         {
             throw new InvalidOperationException(ContextResolver.GetAutomationMessage(parseResult, "Saved context"));
         }
@@ -559,8 +560,6 @@ internal static class ContextCommandFactory
     private static async Task<SignedInIdentity?> TryGetIdentityAsync(
         AuthenticationService auth, CancellationToken cancellationToken)
     {
-        // Only token-cache failures mean "signed out"; deferred configuration failures must fail.
-        auth.ValidateConfiguration();
         try
         {
             return await SignedInIdentity.FromCacheAsync(auth, cancellationToken);

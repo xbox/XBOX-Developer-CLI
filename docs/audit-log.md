@@ -16,14 +16,13 @@ leave a trail its operator can inspect.
 
 ## Enabling it
 
-Set either of the following:
+Set the `AuditLog:Enabled` setting to `true` with its environment variable:
 
 ```bash
-# Configuration key, in appsettings.json
-"AuditLog": { "Enabled": true }
-
-# Or an environment variable
 export XBOX_AUDITLOG__ENABLED=true      # bash/zsh
+```
+
+```powershell
 $env:XBOX_AUDITLOG__ENABLED = "true"    # PowerShell
 ```
 

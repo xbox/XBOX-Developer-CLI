@@ -17,6 +17,17 @@ public class TestAccountCreateCommandTests : IDisposable
     private const string Password = "Sup3r-Secret-Pw";
     private const string Answer = "secret-hobby-answer";
 
+    private static readonly string[] SuggestedQuestions =
+    [
+        "What is your favorite hobby?",
+        "Who is your favorite athlete?",
+        "What is your maternal grandmother's first name?",
+        "What was your childhood best friend's first name?",
+        "What was the name of your first pet?",
+        "What is your current best friend's first name?",
+        "What was your favorite city to visit as a child?",
+    ];
+
     private readonly string _passwordFile;
     private readonly string _answerFile;
     private readonly string? _originalProfile = Environment.GetEnvironmentVariable(ContextProfiles.EnvironmentVariable);
@@ -178,6 +189,8 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData(HttpStatusCode.InternalServerError, "internal_error")]
     [InlineData(HttpStatusCode.ServiceUnavailable, null)]
     [InlineData(HttpStatusCode.ServiceUnavailable, "something_new")]
+    [InlineData(HttpStatusCode.TemporaryRedirect, null)]
+    [InlineData(HttpStatusCode.PermanentRedirect, null)]
     public async Task Create_OutcomeUnknownExitsThreeWithRecoverySteps(HttpStatusCode statusCode, string? code)
     {
         var handler = new ScriptedHandler(Problem(statusCode, code));
@@ -549,6 +562,7 @@ public class TestAccountCreateCommandTests : IDisposable
     public async Task Create_ConfirmsBeforeAskingForSecrets(string answer, int expectedPrompts)
     {
         var events = new List<string>();
+        bool questionSelected = false;
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
             interactive: true,
             masked: prompt =>
@@ -558,6 +572,13 @@ public class TestAccountCreateCommandTests : IDisposable
             },
             confirmation: () =>
             {
+                if (!questionSelected)
+                {
+                    questionSelected = true;
+                    events.Add("question");
+                    return string.Empty;
+                }
+
                 events.Add("confirm");
                 return answer;
             });
@@ -568,8 +589,9 @@ public class TestAccountCreateCommandTests : IDisposable
              "--count", "1", "--sandbox-id", "ABCD.1", "--no-wait"],
             handler);
 
-        Assert.Equal("confirm", events[0]);
-        Assert.Equal(expectedPrompts, events.Count - 1);
+        Assert.Equal("question", events[0]);
+        Assert.Equal("confirm", events[1]);
+        Assert.Equal(expectedPrompts, events.Count - 2);
         Assert.Equal(expectedPrompts == 0 ? 0 : 1, handler.Requests.Count);
         Assert.Equal(expectedPrompts == 0 ? 1 : 0, result.ExitCode);
     }
@@ -709,6 +731,9 @@ public class TestAccountCreateCommandTests : IDisposable
             StringComparison.Ordinal);
         Assert.Contains("3 the outcome is unknown", help, StringComparison.Ordinal);
         Assert.Contains("$ xbox test-account batch create --email-prefix ABCD-tester", help, StringComparison.Ordinal);
+        Assert.Contains("numbered choice before confirmation", help, StringComparison.Ordinal);
+        Assert.DoesNotContain("See LEARN MORE", help, StringComparison.Ordinal);
+        Assert.DoesNotContain(SuggestedQuestions[1], help, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -798,18 +823,34 @@ public class TestAccountCreateCommandTests : IDisposable
         Assert.Contains("Create these test accounts? [y/N]:", result.Stderr, StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task Create_PromptsForSecretsWithoutEchoingThem()
+    [Theory]
+    [InlineData(new[] { "" }, "What is your favorite hobby?")]
+    [InlineData(new[] { "1" }, "What is your favorite hobby?")]
+    [InlineData(new[] { "7" }, "What was your favorite city to visit as a child?")]
+    [InlineData(new[] { "invalid", "0", "8", " 2 " }, "Who is your favorite athlete?")]
+    public async Task Create_SelectsQuestionBeforeConfirmationAndSecretPrompts(string[] choices, string expectedQuestion)
     {
         var prompts = new List<string>();
+        var selections = new Queue<string>(choices);
+        bool confirmed = false;
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
             interactive: true,
             masked: prompt =>
             {
+                Assert.True(confirmed);
                 prompts.Add(prompt);
                 return prompt.Contains("assword", StringComparison.Ordinal) ? Password : Answer;
             },
-            confirmation: () => "yes");
+            confirmation: () =>
+            {
+                if (selections.Count > 0)
+                {
+                    return selections.Dequeue();
+                }
+
+                confirmed = true;
+                return "yes";
+            });
         var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
@@ -819,10 +860,100 @@ public class TestAccountCreateCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(4, prompts.Count);
-        Assert.Contains("Answer to \"What is your favorite hobby?\": ", prompts);
+        Assert.Contains($"Answer to \"{expectedQuestion}\": ", prompts);
+        Assert.Contains($"Security question: {expectedQuestion}", result.Stderr, StringComparison.Ordinal);
+        Assert.True(
+            result.Stderr.IndexOf("Choose 1 to 7 [1]:", StringComparison.Ordinal) <
+            result.Stderr.IndexOf("This creates", StringComparison.Ordinal));
+        if (choices.Length > 1)
+        {
+            Assert.Contains("Enter a number from 1 to 7, or press Enter for 1.", result.Stderr, StringComparison.Ordinal);
+        }
         using JsonDocument body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
         Assert.Equal(Password, body.RootElement.GetProperty("password").GetString());
+        Assert.Equal(expectedQuestion, body.RootElement.GetProperty("securityQuestion").GetString());
         AssertNoSecrets(result);
+    }
+
+    [Theory]
+    [InlineData(true, true, false)]
+    [InlineData(true, false, true)]
+    [InlineData(false, false, true)]
+    [InlineData(false, false, false)]
+    public async Task Create_SkipsPickerForExplicitInputsOrNoTerminal(
+        bool interactive, bool explicitQuestion, bool answerFile)
+    {
+        TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
+            interactive: interactive,
+            masked: _ => Answer,
+            confirmation: () => throw new InvalidOperationException("Unexpected picker."));
+        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+
+        Invocation result = await InvokeAsync(
+            ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
+                "--count", "1", "--sandbox-id", "ABCD.1", "--password-file", _passwordFile, "--confirm", "--no-wait",
+                .. (explicitQuestion ? new[] { "--security-question", "Favorite game?" } : Array.Empty<string>()),
+                .. (answerFile ? new[] { "--security-answer-file", _answerFile } : Array.Empty<string>())],
+            handler);
+
+        Assert.DoesNotContain("Choose 1 to 7", result.Stderr, StringComparison.Ordinal);
+        if (!interactive && !answerFile)
+        {
+            Assert.Equal(1, result.ExitCode);
+            Assert.Empty(handler.Requests);
+            Assert.Equal(0, s_clientsBuilt);
+            Assert.Contains("No terminal is available", result.Stderr, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.Equal(0, result.ExitCode);
+            using JsonDocument body = JsonDocument.Parse(Assert.Single(handler.Requests).Body!);
+            Assert.Equal(
+                explicitQuestion ? "Favorite game?" : TestAccountCommandFactory.DefaultSecurityQuestion,
+                body.RootElement.GetProperty("securityQuestion").GetString());
+        }
+    }
+
+    [Theory]
+    [InlineData("eof")]
+    [InlineData("cancel")]
+    [InlineData("io")]
+    public async Task Create_PickerAbortDoesNotReadSecretsOrBuildTheClient(string failure)
+    {
+        using var cancellation = new CancellationTokenSource();
+        TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
+            interactive: true,
+            confirmation: () =>
+            {
+                if (failure == "io")
+                {
+                    throw new IOException("Input unavailable.");
+                }
+
+                if (failure == "cancel")
+                {
+                    cancellation.Cancel();
+                    return string.Empty;
+                }
+
+                return null;
+            });
+        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+
+        Invocation result = await InvokeAsync(
+            ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
+                "--count", "1", "--sandbox-id", "ABCD.1", "--password-file", _passwordFile, "--confirm", "--no-wait"],
+            handler,
+            cancellation.Token);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Empty(handler.Requests);
+        Assert.Equal(0, s_clientsBuilt);
+        Assert.Contains(
+            failure == "io" ? "Could not read a security question selection" : "Test account creation canceled",
+            result.Stderr,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -878,7 +1009,8 @@ public class TestAccountCreateCommandTests : IDisposable
                 Console.Error.WriteLine("Masked prompt opened.");
                 prompts.Add(prompt);
                 return secrets.Dequeue();
-            });
+            },
+            confirmation: () => string.Empty);
         var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(

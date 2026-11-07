@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using XboxDevCLI.Commands;
+using XboxDevCLI.Output;
 using XboxDevCLI.Services;
 using Xunit;
 
@@ -146,7 +147,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: "Test commit",
-                "json-compact",
+                OutputOptions.JsonCompact,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -219,7 +220,7 @@ public class CommitDocumentsCommandTests
             int exitCode = await CommitDocumentsCommandFactory.RunAsync(
                 client, 12345, "account", null, null, parsed.GetValue(fileOption)!,
                 validateOnly: true, force: false, eTag: null, message: null,
-                "json-compact", stdout, stderr, CancellationToken.None);
+                OutputOptions.JsonCompact, stdout, stderr, CancellationToken.None);
 
             Assert.Equal(0, exitCode);
             Assert.Empty(stderr.ToString());
@@ -269,7 +270,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -314,7 +315,7 @@ public class CommitDocumentsCommandTests
                 force: true,
                 eTag: "\"explicit-etag\"",
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -368,7 +369,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "table",
+                OutputOptions.Table(XboxPartnerCommandSupport.DocumentCommitTableView),
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -417,7 +418,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -466,7 +467,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -517,7 +518,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 TextWriter.Null,
                 stderr,
                 CancellationToken.None);
@@ -569,7 +570,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -610,7 +611,7 @@ public class CommitDocumentsCommandTests
                 force: true,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -663,7 +664,7 @@ public class CommitDocumentsCommandTests
                 force: true,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -710,7 +711,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -754,7 +755,7 @@ public class CommitDocumentsCommandTests
                 force: true,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);
@@ -801,7 +802,7 @@ public class CommitDocumentsCommandTests
                 force: false,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 TextWriter.Null,
                 CancellationToken.None);
@@ -849,7 +850,7 @@ public class CommitDocumentsCommandTests
                 force: true,
                 eTag: null,
                 message: null,
-                "table",
+                OutputOptions.Table(XboxPartnerCommandSupport.DocumentCommitTableView),
                 TextWriter.Null,
                 stderr,
                 CancellationToken.None);
@@ -886,7 +887,7 @@ public class CommitDocumentsCommandTests
                 force: true,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 TextWriter.Null,
                 stderr,
                 CancellationToken.None);
@@ -931,7 +932,7 @@ public class CommitDocumentsCommandTests
                 force: true,
                 eTag: null,
                 message: null,
-                "json",
+                OutputOptions.Json,
                 stdout,
                 stderr,
                 CancellationToken.None);

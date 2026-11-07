@@ -17,15 +17,13 @@ internal sealed record E2EProfile(
 
 internal sealed record PlayFabProfile(
     string BaseUrlTemplate,
-    IReadOnlyList<RequestHeaderProfile> RequestHeaders,
+    string? HostHeader,
     string TitleId)
 {
     internal bool Enabled => false;
     internal string DisabledReason => "PlayFab does not yet authorize service principals.";
     internal TitleDataFixture TitleData { get; } = new("foo", "bar");
 }
-
-internal sealed record RequestHeaderProfile(string Name, string Value);
 
 internal sealed record TitleDataFixture(string Key, string Value);
 
@@ -47,8 +45,7 @@ internal static partial class E2EProfiles
     internal const string XboxPartnerBaseUrlVariable = "E2E_XBOX_PARTNER_BASE_URL";
     internal const string SellerIdVariable = "E2E_SELLER_ID";
 
-    internal const string PlayFabRoutingHeader = "X-PlayFab-Host";
-    internal const string PlayFabRoutingHeaderValue = "{titleId}.playfabapi.com";
+    internal const string PlayFabHostHeaderValue = "{titleId}.playfabapi.com";
 
     /// <summary>Loads and validates the environment's configuration before any service call.</summary>
     internal static E2EProfile Load(Func<string, string?> getVariable)
@@ -63,7 +60,7 @@ internal static partial class E2EProfiles
             Required(HostSuffixVariable),
             new PlayFabProfile(
                 Required(PlayFabBaseUrlVariable),
-                string.IsNullOrEmpty(header) ? [] : [new RequestHeaderProfile(PlayFabRoutingHeader, header)],
+                string.IsNullOrEmpty(header) ? null : header,
                 Required(TitleIdVariable)),
             new XboxPartnerProfile(Required(XboxPartnerBaseUrlVariable), Required(SellerIdVariable)));
 
@@ -120,8 +117,8 @@ internal static partial class E2EProfiles
     internal static string? GetScopeError(string? scope, string audience) =>
         string.Equals(scope, audience + "/.default", StringComparison.Ordinal)
             ? null
-            : $"Effective AzureAd:Scopes (from {LiveSettings.ScopesVariable} or the candidate's " +
-              $"{CliRunner.AppSettingsFileName}) must equal {AudienceVariable} followed by '/.default'.";
+            : $"Effective AzureAd:Scopes (from {LiveSettings.ScopesVariable} or the candidate's built-in " +
+              $"defaults, {CliRunner.CandidateDefaultsFileName}) must equal {AudienceVariable} followed by '/.default'.";
 
     private static void ValidatePlayFab(PlayFabProfile playFab, string hostSuffix, List<string> errors)
     {
@@ -146,14 +143,10 @@ internal static partial class E2EProfiles
                 errors);
         }
 
-        foreach (var header in playFab.RequestHeaders)
+        if (playFab.HostHeader is not null
+            && !string.Equals(playFab.HostHeader, PlayFabHostHeaderValue, StringComparison.Ordinal))
         {
-            if (!string.Equals(header.Name, PlayFabRoutingHeader, StringComparison.Ordinal)
-                || !string.Equals(header.Value, PlayFabRoutingHeaderValue, StringComparison.Ordinal))
-            {
-                errors.Add(
-                    $"{HostHeaderVariable} must be omitted or equal '{PlayFabRoutingHeaderValue}'.");
-            }
+            errors.Add($"{HostHeaderVariable} must be omitted or equal '{PlayFabHostHeaderValue}'.");
         }
     }
 

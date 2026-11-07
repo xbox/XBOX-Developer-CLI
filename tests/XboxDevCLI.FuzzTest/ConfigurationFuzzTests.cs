@@ -6,7 +6,7 @@ using XboxDevCLI;
 namespace XboxDevCLI.FuzzTest;
 
 /// <summary>
-/// Fuzz properties for configuration layering (<see cref="Program.BuildConfiguration"/>).
+/// Fuzz properties for configuration layering (<see cref="Program.LoadConfiguration"/>).
 /// CLI option overrides are the highest-priority layer; feeding adversarial values
 /// through the parser into the configuration must never throw, and accepted override
 /// values must round-trip into the resolved configuration.
@@ -21,7 +21,7 @@ public class ConfigurationFuzzTests
         (value ?? string.Empty).Replace("\0", string.Empty);
 
     [FuzzProperty]
-    public bool BuildConfiguration_NeverThrows(AdversarialText text)
+    public bool LoadConfiguration_NeverThrows(AdversarialText text)
     {
         var value = ArgvSafe(text.Value);
         var root = Program.BuildRootCommand();
@@ -36,11 +36,11 @@ public class ConfigurationFuzzTests
         if (parse.Errors.Count > 0)
         {
             // The parser rejected the value before configuration is ever built; that is
-            // a parse concern covered elsewhere, not a BuildConfiguration failure.
+            // a parse concern covered elsewhere, not a LoadConfiguration failure.
             return true;
         }
 
-        var config = Program.BuildConfiguration(parse);
+        var config = Program.LoadConfiguration(parse);
         return config is not null;
     }
 
@@ -58,7 +58,7 @@ public class ConfigurationFuzzTests
             return true;
         }
 
-        var config = Program.BuildConfiguration(parse);
+        var config = Program.LoadConfiguration(parse);
 
         // CLI overrides are applied last, so the accepted value, trimmed, must win over
         // every other layer.

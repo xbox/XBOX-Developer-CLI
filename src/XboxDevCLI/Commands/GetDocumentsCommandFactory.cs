@@ -143,7 +143,7 @@ internal static class GetDocumentsCommandFactory
                     (parseResult.GetValue(viewOption) ?? "working").ToLowerInvariant(),
                     parseResult.GetValue(versionOption),
                     parseResult.GetValue(documentOption) ?? []);
-                var configuration = Program.BuildConfiguration(parseResult);
+                var configuration = Program.GetConfiguration(parseResult);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
                         configuration,
@@ -194,9 +194,14 @@ internal static class GetDocumentsCommandFactory
         TableView? tableView = output.TableView;
         try
         {
-            XboxPartnerDocumentArchive archive = await client
-                .GetXboxLiveDocumentsAsync(sellerId, request, cancellationToken)
-                .ConfigureAwait(false);
+            XboxPartnerDocumentArchive archive;
+            using (RequestProgress.Start(DescribeDownload(request), stderr))
+            {
+                archive = await client
+                    .GetXboxLiveDocumentsAsync(sellerId, request, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+
             string directory = Path.GetFullPath(destination);
             string eTagFileName = request.DocumentType.Equals(
                 "account",
@@ -261,28 +266,10 @@ internal static class GetDocumentsCommandFactory
         }
     }
 
-    internal static Task<int> RunAsync(
-        XboxPartnerClient client,
-        long? sellerId,
-        XboxLiveGetDocumentsRequest request,
-        string destination,
-        string outputFormat,
-        TextWriter stdout,
-        TextWriter stderr,
-        CancellationToken cancellationToken) =>
-        RunAsync(
-            client,
-            sellerId,
-            request,
-            destination,
-            outputFormat.Equals("table", StringComparison.OrdinalIgnoreCase)
-                ? OutputOptions.Table(XboxPartnerCommandSupport.DocumentDownloadTableView)
-                : outputFormat.Equals("json-compact", StringComparison.OrdinalIgnoreCase)
-                    ? OutputOptions.JsonCompact
-                    : OutputOptions.Json,
-            stdout,
-            stderr,
-            cancellationToken);
+    internal static string DescribeDownload(XboxLiveGetDocumentsRequest request) =>
+        request.Sandbox is { } sandbox
+            ? $"Downloading {request.View} documents from {sandbox}"
+            : $"Downloading {request.View} account documents";
 
     private static readonly JsonSerializerOptions PrettyJsonOptions = new()
     {

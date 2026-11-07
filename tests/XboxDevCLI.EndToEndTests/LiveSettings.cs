@@ -22,6 +22,7 @@ public enum LiveService
 internal sealed record LiveSettings(
     E2EProfile Profile,
     string CliDirectory,
+    string Scope,
     string ClientId,
     string TenantId)
 {
@@ -88,11 +89,11 @@ internal sealed record LiveSettings(
             errors.Add($"{CliPathVariable} must name the directory that contains the CLI to test.");
         }
         else if (!File.Exists(Path.Combine(cliDirectory, CliRunner.ExecutableName))
-            || !File.Exists(Path.Combine(cliDirectory, CliRunner.AppSettingsFileName)))
+            || !File.Exists(Path.Combine(cliDirectory, CliRunner.CandidateDefaultsFileName)))
         {
             errors.Add(
                 $"{CliPathVariable} '{cliDirectory}' must contain {CliRunner.ExecutableName} " +
-                $"and {CliRunner.AppSettingsFileName}.");
+                $"and {CliRunner.CandidateDefaultsFileName}.");
         }
 
         foreach (var required in new[]
@@ -119,11 +120,12 @@ internal sealed record LiveSettings(
                 string.Join(System.Environment.NewLine + "  ", errors));
         }
 
-        CliRunner.ApplyProfile(CliRunner.ReadAppSettings(cliDirectory!), profile);
+        var scope = CliRunner.GetEffectiveScope(CliRunner.ReadCandidateDefaults(cliDirectory!), profile);
 
         return new LiveSettings(
             profile,
             Path.GetFullPath(cliDirectory!),
+            scope,
             getVariable(ClientIdVariable)!,
             getVariable(TenantIdVariable)!);
     }

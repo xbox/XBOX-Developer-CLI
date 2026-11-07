@@ -7,7 +7,7 @@
     <Product>$(CliProductName)</Product>
     <PackageId>$(CliProductName)</PackageId>
     <RootNamespace>XboxDevCLI</RootNamespace>
-    <Version>0.1.29</Version>
+    <Version>0.2.0</Version>
     <!-- Generated so the compiler checks doc comments, such as their crefs. Nothing reads it at
          runtime, so it isn't published. -->
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
@@ -38,15 +38,9 @@
 
   <ItemGroup>
     <EmbeddedResource Include="Resources\xbox-logo.txt" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <None Update="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Update="appsettings.*.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- The built-in settings. The CLI reads no settings file, so it runs from a symlink, a
+         package manager's shim, or a lone copy of the executable. -->
+    <EmbeddedResource Include="Resources\defaults.json" />
   </ItemGroup>
 
   <ItemGroup>

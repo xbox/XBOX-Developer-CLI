@@ -8,12 +8,7 @@
     "BaseUrlTemplate": "https://xboxdevcli.playfabapi.com",
     "MaxRequestBodyBytes": 1048576,
     "MaxResponseBytes": 4194304,
-    "RequestHeaders": [
-      {
-        "Name": "X-PlayFab-Host",
-        "Value": "{titleId}.playfabapi.com"
-      }
-    ]
+    "HostHeader": "{titleId}.playfabapi.com"
   },
   "AuditLog": {
     "Enabled": false
@@ -23,7 +18,6 @@
   },
   "Telemetry": {
     "Enabled": true,
-    "ConnectionString": "",
     "DependencyTracingEnabled": true,
     "DependencyTraceSamplingRatio": 0.1
   }
