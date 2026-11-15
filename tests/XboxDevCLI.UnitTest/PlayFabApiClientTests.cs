@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using System.Net;
-using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
@@ -22,7 +21,6 @@ public class PlayFabApiClientTests
         (string Name, string Value)[]? requestHeaders = null,
         string? hostHeader = null,
         bool telemetryEnabled = true,
-        bool dependencyTracingEnabled = true,
         long? maxResponseBytes = null,
         bool auditLogEnabled = false)
     {
@@ -34,7 +32,6 @@ public class PlayFabApiClientTests
             ["AzureAd:TenantId"] = "test-tenant-id",
             ["AzureAd:Scopes"] = "api://test/.default",
             ["Telemetry:Enabled"] = telemetryEnabled.ToString(),
-            ["Telemetry:DependencyTracingEnabled"] = dependencyTracingEnabled.ToString(),
             ["AuditLog:Enabled"] = auditLogEnabled.ToString(),
             ["PlayFab:HostHeader"] = hostHeader,
         };
@@ -72,40 +69,71 @@ public class PlayFabApiClientTests
             httpClient.BaseAddress);
     }
 
-    [Fact]
-    public async Task CallApiAsync_TelemetryOptOutDoesNotCreateDependencyActivity()
+    /// <summary>
+    /// Callers catch the client's failures and report them themselves, so the client records the
+    /// status and the reason for telemetry.
+    /// </summary>
+    [Theory]
+    [InlineData("ok", 200, null)]
+    [InlineData("rejected", 400, "service_rejected")]
+    [InlineData("error", 503, "service_error")]
+    [InlineData("transport", null, "transport")]
+    [InlineData("timeout", null, "transport")]
+    [InlineData("no-token", null, "auth")]
+    public async Task CallApiAsync_RecordsTheStatusAndFailureReasonForTelemetry(
+        string scenario, int? status, string? errorType)
     {
-        var config = CreateTestConfiguration(telemetryEnabled: false);
+        var config = CreateTestConfiguration();
         var mockAuthService = new Mock<AuthenticationService>(config) { CallBase = false };
         mockAuthService
             .Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMockAuthResult("entra-id-token-123"));
-
+            .ReturnsAsync(scenario == "no-token" ? null : CreateMockAuthResult("entra-id-token-123"));
         var handler = new MockHttpMessageHandler(
-            new HttpResponseMessage(HttpStatusCode.OK)
+            new HttpResponseMessage((HttpStatusCode)(status ?? 200))
             {
-                Content = new StringContent("{\"data\":{}}"),
-            });
+                Content = new StringContent(status is null or 200
+                    ? "{\"data\":{}}"
+                    : $"{{\"code\":{status},\"status\":\"Failed\",\"error\":\"Failed\",\"errorMessage\":\"failed\"}}"),
+            })
+        {
+            OnSend = _ =>
+            {
+                if (scenario == "transport")
+                {
+                    throw new HttpRequestException("connection refused");
+                }
 
+                // A wait the caller didn't cancel, which ended because it timed out.
+                if (scenario == "timeout")
+                {
+                    throw new OperationCanceledException();
+                }
+            },
+        };
         using var httpClient = new HttpClient(handler)
         {
             BaseAddress = new Uri("https://ABC123.playfabapi.com/"),
         };
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = source => source.Name == TelemetryInstrumentation.SourceName,
-            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
-                ActivitySamplingResult.AllDataAndRecorded,
-        };
-        Activity? observedActivity = null;
-        listener.ActivityStarted = activity => observedActivity = activity;
-        ActivitySource.AddActivityListener(listener);
-
         using var client = new PlayFabApiClient(config, mockAuthService.Object, httpClient);
+        var recorded = TelemetryRecorder.Start();
 
-        await client.CallApiAsync("/Admin/GetTitleData", null, CancellationToken.None);
+        try
+        {
+            try
+            {
+                await client.CallApiAsync("/Admin/GetTitleData", null, CancellationToken.None);
+            }
+            catch (PlayFabApiException) when (errorType is not null)
+            {
+            }
 
-        Assert.Null(observedActivity);
+            Assert.Equal(status, recorded.HttpStatusCode);
+            Assert.Equal(errorType, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
     }
 
     private static AuthenticationResult CreateMockAuthResult(string accessToken)
@@ -509,7 +537,7 @@ public class PlayFabApiClientTests
     }
 
     [Fact]
-    public void Constructor_ThrowsWhenTitleIdMissing()
+    public async Task CallApiAsync_TitlePathWithoutATitle_FailsBeforeSigningIn()
     {
         var config = new ConfigurationBuilder()
             .AddInMemoryCollection(new Dictionary<string, string?>
@@ -522,10 +550,59 @@ public class PlayFabApiClientTests
             .Build();
 
         var mockAuthService = new Mock<AuthenticationService>(config) { CallBase = false };
+        using var client = new PlayFabApiClient(config, mockAuthService.Object);
 
-        Assert.Throws<InvalidOperationException>(
-            () => new PlayFabApiClient(config, mockAuthService.Object));
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.CallApiAsync("/Admin/GetTitleData", null, CancellationToken.None));
+
+        Assert.StartsWith("No playfab-title-id is set.", error.Message, StringComparison.Ordinal);
+        mockAuthService.Verify(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("ABC123")]
+    public async Task CallApiAsync_StudioPath_GoesToTheStudioEndpointWithoutTheTitleHeader(string titleId)
+    {
+        var config = new ConfigurationBuilder()
+            .AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["PlayFab:TitleId"] = titleId,
+                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
+                ["PlayFab:HostHeader"] = "{titleId}.playfabapi.com",
+                ["PlayFab:StudioBaseUrl"] = "https://studio.nodpublishers.com",
+                ["AzureAd:ClientId"] = "test",
+                ["AzureAd:TenantId"] = "test",
+                ["AzureAd:Scopes"] = "test",
+            })
+            .Build();
+        var mockAuthService = new Mock<AuthenticationService>(config) { CallBase = false };
+        mockAuthService
+            .Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreateMockAuthResult("token"));
+        var handler = new MockHttpMessageHandler(
+            new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") });
+        using var httpClient = new HttpClient(handler);
+        using var client = new PlayFabApiClient(config, mockAuthService.Object, httpClient);
+
+        await client.CallApiAsync("/Studio/ListServicePrincipals", null, CancellationToken.None);
+
+        Assert.Equal(
+            new Uri("https://studio.nodpublishers.com/Studio/ListServicePrincipals"),
+            handler.LastRequest!.RequestUri);
+        Assert.False(handler.LastRequest.Headers.Contains("X-PlayFab-Host"));
+    }
+
+    [Theory]
+    [InlineData("/Studio/ListServicePrincipals", true)]
+    [InlineData("studio/listserviceprincipals", true)]
+    [InlineData("/%53tudio/ListServicePrincipals", true)]
+    [InlineData("/Studio/../Admin/DeleteTitle", false)]
+    [InlineData("/Admin/Studio/GetTitleData", false)]
+    [InlineData("/StudioX/List", false)]
+    [InlineData("/\u00A0Studio/ListServicePrincipals", false)]
+    public void IsStudioPath_ReadsThePathThatIsSent(string apiPath, bool expected) =>
+        Assert.Equal(expected, PlayFabApiClient.IsStudioPath(apiPath));
 
     [Fact]
     public void Constructor_BuildsCorrectBaseUrl()
@@ -1362,30 +1439,47 @@ public class PlayFabApiClientTests
         Assert.Equal(responseBody, result);
     }
 
-    [Fact]
-    public async Task CallApiAsync_ResponseBodyOverConfiguredLimit_ThrowsHelpfulError()
+    /// <summary>A body without a <c>Content-Length</c> is measured as it arrives.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CallApiAsync_ResponseBodyOverConfiguredLimit_ThrowsHelpfulError(bool declaresLength)
     {
-        var config = CreateTestConfiguration(maxResponseBytes: 8);
-        var mockAuthService = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuthService
-            .Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMockAuthResult("token"));
+        var content = new StringContent("{\"data\":{\"value\":\"too-large\"}}");
+        if (!declaresLength)
+        {
+            content.Headers.ContentLength = null;
+        }
 
-        var handler = new MockHttpMessageHandler(
-            new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent("{\"data\":{\"value\":\"too-large\"}}"),
-            });
-
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://ABC123.playfabapi.com/") };
-        using var client = new PlayFabApiClient(config, mockAuthService.Object, httpClient);
+        using var client = PlayFabTestClient.Create(
+            new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) { Content = content }),
+            maxResponseBytes: 8);
 
         var ex = await Assert.ThrowsAsync<PlayFabApiException>(
             () => client.CallApiAsync("/Admin/GetTitleData", null, CancellationToken.None));
 
         Assert.Equal(PlayFabCallOutcome.Succeeded, ex.Outcome);
-        Assert.Contains("PlayFab response exceeded the configured maximum size", ex.Message);
-        Assert.Contains("PlayFab:MaxResponseBytes", ex.Message);
+        Assert.Equal(
+            "PlayFab API request succeeded with HTTP 200 OK, but PlayFab response exceeded the configured maximum " +
+            "size of 8 bytes. Increase 'PlayFab:MaxResponseBytes' to allow larger responses.",
+            ex.Message);
+    }
+
+    [Theory]
+    [InlineData("utf-8")]
+    [InlineData("utf-16")]
+    public async Task CallApiAsync_DecodesTheResponseByItsByteOrderMark(string encodingName)
+    {
+        const string responseBody = "{\"data\":{\"value\":\"Nod Arena\"}}";
+        var encoding = System.Text.Encoding.GetEncoding(encodingName);
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent([.. encoding.GetPreamble(), .. encoding.GetBytes(responseBody)]),
+        }));
+
+        var result = await client.CallApiAsync("/Admin/GetTitleData", null, CancellationToken.None);
+
+        Assert.Equal(responseBody, result);
     }
 
     /// <summary>

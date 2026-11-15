@@ -4,14 +4,15 @@
 using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Diagnostics;
-using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using Microsoft.Extensions.Configuration;
 using XboxDevCLI.CommandLine;
+using XboxDevCLI.Presentation;
 using XboxDevCLI.Safety;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -80,7 +81,7 @@ internal static class GameCommandFactory
         var titleIdArgument = new Argument<string?>("title-id")
         {
             Description =
-                "Optional one-to-eight-digit hexadecimal XBOX title ID, with optional 0x prefix.",
+                "Optional one-to-eight-digit hexadecimal XBOX title ID, with optional 0x prefix. Pass a Store ID with --store-id.",
             Arity = ArgumentArity.ZeroOrOne,
         };
         var storeIdOption = new Option<string?>("--store-id")
@@ -99,7 +100,7 @@ internal static class GameCommandFactory
         var baseUrlOption = XboxPartnerCommandSupport.CreateBaseUrlOption();
         var command = new Command(
             "get",
-            "Get Partner Center games by Store ID, XBOX title ID, or name keyword");
+            "Get Partner Center games by XBOX title ID, or by --store-id or --keyword");
         command.Arguments.Add(titleIdArgument);
         command.Options.Add(storeIdOption);
         command.Options.Add(keywordOption);
@@ -203,14 +204,18 @@ internal static class GameCommandFactory
 
         var rawTitleId = Normalize(parseResult.GetValue(titleIdArgument));
         string? titleId = null;
-        if (rawTitleId != null && !TryNormalizeTitleId(rawTitleId, out titleId))
+        var rawStoreId = parseResult.GetValue(storeIdOption);
+        var rawKeyword = parseResult.GetValue(keywordOption);
+        if (rawTitleId != null && !XboxTitleId.TryNormalize(rawTitleId, out titleId))
         {
-            Console.Error.WriteLine(
-                "title-id must be one to eight hexadecimal digits, with an optional 0x prefix.");
+            Console.Error.WriteLine(InvalidTitleIdMessage(
+                parseResult,
+                titleIdArgument,
+                rawTitleId,
+                otherSelectorGiven: rawStoreId != null || rawKeyword != null));
             return 1;
         }
 
-        var rawStoreId = parseResult.GetValue(storeIdOption);
         var storeId = Normalize(rawStoreId);
         if (rawStoreId != null && storeId == null)
         {
@@ -219,7 +224,6 @@ internal static class GameCommandFactory
             return 1;
         }
 
-        var rawKeyword = parseResult.GetValue(keywordOption);
         var keyword = Normalize(rawKeyword);
         if (rawKeyword != null && keyword == null)
         {
@@ -283,26 +287,59 @@ internal static class GameCommandFactory
         return true;
     }
 
-    private static bool TryNormalizeTitleId(string value, out string? normalized)
+    private static string InvalidTitleIdMessage(
+        ParseResult parseResult,
+        Argument<string?> titleIdArgument,
+        string value,
+        bool otherSelectorGiven)
     {
-        var digits = value.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
-            ? value[2..]
-            : value;
-
-        if (digits.Length is < 1 or > 8 ||
-            !uint.TryParse(
-                digits,
-                NumberStyles.AllowHexSpecifier,
-                CultureInfo.InvariantCulture,
-                out var titleId))
+        const string Expected =
+            "title-id must be one to eight hexadecimal digits, with an optional 0x prefix.";
+        if (!LooksLikeStoreId(value))
         {
-            normalized = null;
-            return false;
+            return $"{Expected} Use --store-id for a Store ID, or --keyword for a game name.";
         }
 
-        normalized = titleId.ToString("X8", CultureInfo.InvariantCulture);
-        return true;
+        if (otherSelectorGiven)
+        {
+            return $"{Expected} {value} looks like a Store ID; pass it with --store-id.";
+        }
+
+        // Rewrite the typed command line with the positional value moved to --store-id, keeping
+        // every other token so the suggestion targets the same seller, profile, and output. The
+        // title ID is the only positional argument, so once it moves to --store-id a "--"
+        // end-of-options marker has nothing left to protect, and keeping it would make
+        // --store-id read as a positional value.
+        var positional = parseResult.GetResult(titleIdArgument)?.Tokens.FirstOrDefault();
+        var arguments = new List<string> { CliIdentity.CommandName };
+        foreach (var token in parseResult.Tokens)
+        {
+            if (token.Type == TokenType.DoubleDash)
+            {
+                continue;
+            }
+
+            if (ReferenceEquals(token, positional))
+            {
+                arguments.Add("--store-id");
+                arguments.Add(ShellQuoting.Quote(value));
+            }
+            else
+            {
+                arguments.Add(ShellQuoting.Quote(token.Value));
+            }
+        }
+
+        return $"{Expected} {value} looks like a Store ID. Did you mean:" +
+            Environment.NewLine +
+            $"  {string.Join(' ', arguments)}";
     }
+
+    // A value with a 0x prefix is a mistyped hexadecimal title ID, even when it has a Store ID's
+    // shape.
+    private static bool LooksLikeStoreId(string value) =>
+        !value.StartsWith("0x", StringComparison.OrdinalIgnoreCase) &&
+        XboxPartnerGameResolver.TryNormalizeStoreId(value, out _);
 
     private static async Task<int> ExecuteAsync(
         ParseResult parseResult,
@@ -460,7 +497,7 @@ internal static class GameCommandFactory
                         Console.Error.WriteLine(
                             "Game creation was interrupted or its response could not be verified; " +
                             "it is unknown whether the game was created. Do not resubmit.");
-                        var recovery = BuildGameRecoveryCommand(result, sellerId, url);
+                        var recovery = BuildGameRecoveryCommand(result, sellerId);
                         Console.Error.WriteLine($"Check its status with: {recovery}");
                         throw;
                     }
@@ -487,8 +524,9 @@ internal static class GameCommandFactory
             [
                 "Use 'xbox game job get <job-id>' to check an existing creation job without submitting again.",
                 "Waits up to 120 seconds, polling every 5 seconds unless the service supplies Retry-After. " +
-                "Timeout returns the accepted job and exits 0; " +
-                "terminal failure exits 2, request or polling failure exits 1.",
+                "If the wait ends, the command returns the accepted job and exits 0; creation might still be running. " +
+                "Exit 2 means the job ended without creating the game. Exit 1 means submission or status checking failed, " +
+                "not necessarily that creation failed. Follow the recovery instructions on stderr before retrying.",
             ],
             Examples:
             [
@@ -555,7 +593,7 @@ internal static class GameCommandFactory
         XboxPartnerJobDependencies dependencies,
         CancellationToken cancellationToken)
     {
-        var recovery = BuildGameRecoveryCommand(result, sellerId, baseUrl, initial.JobId);
+        var recovery = BuildGameRecoveryCommand(result, sellerId, initial.JobId);
         var displayJobId = XboxPartnerCommandSupport.ForTerminal(initial.JobId);
         string RecoveryLine(string lead, string unsafeIdAdvice) => CanPrintJobId(initial.JobId)
             ? $"{lead} with: {recovery}"
@@ -638,7 +676,8 @@ internal static class GameCommandFactory
             var sellerId = await XboxPartnerCommandSupport.GetSellerIdAsync(result, sellerOption).WaitAsync(cancellationToken);
             return await action(client, baseUrl, sellerId);
         }
-        catch (Exception exception) when (XboxPartnerCommandSupport.IsRequestError(exception))
+        catch (Exception exception) when (XboxPartnerCommandSupport.IsRequestError(exception)
+            && !XboxPartnerCommandSupport.IsCallerCancellation(exception, cancellationToken))
         {
             XboxPartnerCommandSupport.WriteRequestError(exception, result, cancellationToken);
             return 1;
@@ -660,11 +699,11 @@ internal static class GameCommandFactory
         {
             Console.Error.WriteLine(
                 "Re-run with --confirm (--yes, -y) to proceed without an interactive prompt.");
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
             return false;
         }
 
-        Console.Error.Write("Create this game? [y/N]: ");
-        Console.Error.Flush();
+        ConfirmationPrompt.Write(Console.Error, "Create this game? [y/N]: ");
         var answer = Console.ReadLine()?.Trim();
         if (string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase)
             || string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase))
@@ -673,6 +712,7 @@ internal static class GameCommandFactory
         }
 
         Console.Error.WriteLine("Game creation canceled.");
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
         return false;
     }
 
@@ -708,12 +748,11 @@ internal static class GameCommandFactory
     // A job ID that would change when printed safely can't be pasted back as the same ID, so
     // recovery lists games instead of naming a different job.
     private static string BuildGameRecoveryCommand(
-        ParseResult result, string sellerId, string baseUrl, string? jobId = null) =>
+        ParseResult result, string sellerId, string? jobId = null) =>
         XboxPartnerCommandSupport.BuildRecoveryCommand(
             result,
             jobId is null || !CanPrintJobId(jobId)
                 ? "game list"
                 : $"game job get {ShellQuoting.Quote(jobId)}",
-            sellerId,
-            baseUrl);
+            sellerId);
 }

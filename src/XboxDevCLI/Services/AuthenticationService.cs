@@ -358,9 +358,7 @@ public class AuthenticationService
     private static async Task<MsalCacheHelper> CreateCacheHelperAsync()
     {
         const string cacheFileName = "xboxdevcli_tokencache.bin";
-        var cacheDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "XboxDevCLI");
+        var cacheDir = CliState.GetDefaultDirectory();
 
         var encryptedProperties = new StorageCreationPropertiesBuilder(cacheFileName, cacheDir)
             .WithLinuxKeyring(
@@ -388,7 +386,7 @@ public class AuthenticationService
             // libsecret/gnome-keyring is absent or there is no D-Bus session to reach it.
             // Rather than fail every authenticated command, fall back to an unencrypted file.
             // Trade-off: on Linux the token is persisted in plaintext, protected only by file-
-            // system permissions (the file lives under the user's LocalApplicationData dir).
+            // system permissions (the file lives in the per-user CliState directory).
             // Windows (DPAPI) and macOS (Keychain) are unaffected — they don't hit this path.
             if (OperatingSystem.IsLinux())
             {

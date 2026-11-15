@@ -10,8 +10,6 @@ namespace XboxDevCLI.Commands;
 
 internal static class InfoCommandFactory
 {
-    internal static string Banner => WelcomeExperience.PlainLogo;
-
     public static Command Create(
         Func<bool>? useColor = null,
         Func<bool>? isInteractive = null,

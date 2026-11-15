@@ -36,13 +36,13 @@ public class TelemetryDisclosureTests
     }
 
     [Fact]
-    public void FormatDisclosure_StylesHeadingAndBrandWhenAnsiIsEnabled()
+    public void FormatDisclosure_StylesOnlyTheHeadingWhenAnsiIsEnabled()
     {
         var output = TelemetryDisclosure.FormatDisclosure(useAnsi: true);
 
         Assert.StartsWith("\u001b[1mTELEMETRY\u001b[0m", output, StringComparison.Ordinal);
         Assert.Contains(
-            "\u001b[1;38;2;139;240;0mXBOX\u001b[0m CLI collects anonymous usage telemetry.",
+            $"{Environment.NewLine}  XBOX CLI collects anonymous usage telemetry.",
             output,
             StringComparison.Ordinal);
         Assert.EndsWith(

@@ -32,9 +32,9 @@ internal sealed class AuditLogger : IDisposable
     private const int RetainedFileCountLimit = 31;
 
     private readonly Logger? _logger;
-    private readonly string _titleId;
+    private readonly string? _titleId;
 
-    internal AuditLogger(IConfiguration configuration, string titleId, string? logPath = null)
+    internal AuditLogger(IConfiguration configuration, string? titleId, string? logPath = null)
     {
         _titleId = titleId;
 
@@ -71,9 +71,10 @@ internal sealed class AuditLogger : IDisposable
     }
 
     /// <summary>
-    /// Records a completed invocation.
+    /// Records a completed invocation, with the title unless <paramref name="forTitle"/> is
+    /// <c>false</c>, as for a studio API, which isn't sent for a title.
     /// </summary>
-    internal void WriteInvocation(string apiPath, int exitStatus)
+    internal void WriteInvocation(string apiPath, int exitStatus, bool forTitle = true)
     {
         if (_logger == null)
         {
@@ -87,7 +88,7 @@ internal sealed class AuditLogger : IDisposable
             _logger.Information(
                 "PlayFab invocation {ResolvedApiPath} {TitleId} {ExitStatus}",
                 resolvedApiPath,
-                _titleId,
+                forTitle ? _titleId : null,
                 exitStatus);
         }
         catch (Exception ex)

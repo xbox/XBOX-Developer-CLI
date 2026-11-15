@@ -33,7 +33,11 @@ internal static class XboxPartnerTableFormatter
         return Render(XboxPartnerCommandSupport.ConfigurationTableView, rows);
     }
 
-    public static string FormatConfiguration(string responseBody)
+    /// <summary>
+    /// Renders <c>config status</c>: one sandbox's configuration state, then the status of its
+    /// last publish, blank when there's none.
+    /// </summary>
+    public static string FormatConfigurationStatus(string responseBody, string? publishStatus)
     {
         XboxLiveConfigurationSummary configuration;
         try
@@ -51,8 +55,8 @@ internal static class XboxPartnerTableFormatter
         }
 
         return Render(
-            XboxPartnerCommandSupport.ConfigurationRecordTableView,
-            [CreateConfigurationRow(configuration)]);
+            XboxPartnerCommandSupport.ConfigurationStatusTableView,
+            [[.. CreateConfigurationRow(configuration), publishStatus ?? ""]]);
     }
 
     public static string FormatSellers(string responseBody)

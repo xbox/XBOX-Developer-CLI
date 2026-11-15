@@ -40,7 +40,6 @@ internal sealed partial class XboxPartnerClient
                 return (HttpMethod.Get, TestAccountBatchesPath + BuildQueryString([.. filters, paging]), null);
             },
             cancellationToken,
-            serviceName: null,
             pageRead: pageRead).ConfigureAwait(false);
         return "{\"batches\":[" + string.Join(',', batches) + "]}";
     }

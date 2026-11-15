@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
-using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.Net;
 using System.Text;
 using Microsoft.Extensions.Configuration;
@@ -115,44 +113,7 @@ public class MpsSecretBodyTests
         var tempFile = source == "file" ? Path.GetTempFileName() : null;
         using var stdin = new MemoryStream(Encoding.UTF8.GetBytes(body));
 
-        var originalOptOut = Environment.GetEnvironmentVariable(TelemetryOptions.OptOutEnvironmentVariable);
-        var telemetry = new List<string>();
-        using var activities = new ActivityListener
-        {
-            ShouldListenTo = activitySource => activitySource.Name == TelemetryInstrumentation.SourceName,
-            Sample = static (ref ActivityCreationOptions<ActivityContext> _) =>
-                ActivitySamplingResult.AllDataAndRecorded,
-            ActivityStopped = activity =>
-            {
-                lock (telemetry)
-                {
-                    telemetry.Add(activity.DisplayName);
-                    telemetry.AddRange(activity.TagObjects.Select(tag => $"{tag.Key}={tag.Value}"));
-                }
-            },
-        };
-        using var metrics = new MeterListener
-        {
-            InstrumentPublished = (instrument, listener) =>
-            {
-                if (instrument.Meter.Name == TelemetryInstrumentation.SourceName)
-                {
-                    listener.EnableMeasurementEvents(instrument);
-                }
-            },
-        };
-
-        void Measured<T>(Instrument instrument, T value, ReadOnlySpan<KeyValuePair<string, object?>> tags, object? state)
-        {
-            var captured = tags.ToArray().Select(tag => $"{tag.Key}={tag.Value}");
-            lock (telemetry)
-            {
-                telemetry.AddRange(captured);
-            }
-        }
-
-        metrics.SetMeasurementEventCallback<long>(Measured);
-        metrics.SetMeasurementEventCallback<double>(Measured);
+        var recorded = TelemetryRecorder.Start();
 
         try
         {
@@ -161,12 +122,6 @@ public class MpsSecretBodyTests
                 await File.WriteAllTextAsync(tempFile, body);
             }
 
-            // The client turns its own telemetry off under the opt-out, which would leave nothing
-            // to inspect.
-            Environment.SetEnvironmentVariable(TelemetryOptions.OptOutEnvironmentVariable, null);
-            ActivitySource.AddActivityListener(activities);
-            metrics.Start();
-
             var result = await InvokeAsync(
                 noun,
                 ["--verbose", "--body-file", tempFile ?? "-"],
@@ -174,38 +129,40 @@ public class MpsSecretBodyTests
                 status,
                 telemetryEnabled: true);
 
-            // Program.Main records the command by its path in the tree, never its arguments.
-            TelemetryInstrumentation.RecordCommand(
-                CommandPathResolver.ResolveTelemetryIdentity(result.Root, result.Command),
+            // Program.Main sends the command by its path in the tree and the names of the options
+            // supplied, never their values.
+            var attributes = TelemetryInstrumentation.ToAttributes(new CommandInvocationEvent(
+                CommandPathResolver.ResolveTelemetryIdentity(result.Root, result.ParseResult.CommandResult.Command),
+                "user",
                 result.ExitCode,
+                recorded.ErrorType,
+                recorded.HttpStatusCode,
                 TimeSpan.Zero,
-                authMode: "user");
+                TelemetryInstrumentation.GetSuppliedOptions(result.ParseResult),
+                recorded.ContextKeys,
+                Ci: false));
 
             Assert.Equal(status == HttpStatusCode.OK ? 0 : 1, result.ExitCode);
             Assert.Equal(body, result.Handler.LastRequestBody);
             Assert.Contains($"[verbose] POST {apiPath}", result.Stderr, StringComparison.Ordinal);
             Assert.DoesNotContain(Marker, result.Stdout + result.Stderr, StringComparison.Ordinal);
 
-            string[] captured;
-            lock (telemetry)
-            {
-                captured = [.. telemetry];
-            }
-
-            Assert.Contains($"rpc.method={apiPath.Split('/')[^1]}", captured);
-            Assert.Contains($"cli.command=playfab-mps-{noun}-upload", captured);
+            var captured = attributes.Select(attribute => $"{attribute.Key}={attribute.Value}").ToArray();
+            Assert.Contains($"xbox.cli.command=playfab-mps-{noun}-upload", captured);
+            Assert.Contains($"http.response.status_code={(int)status}", captured);
+            Assert.Contains("xbox.cli.options=body-file,playfab-title-id,verbose", captured);
             Assert.DoesNotContain(captured, value => value.Contains(Marker, StringComparison.Ordinal));
+            Assert.DoesNotContain(captured, value => tempFile is not null && value.Contains(Path.GetFileName(tempFile), StringComparison.Ordinal));
         }
         finally
         {
-            Environment.SetEnvironmentVariable(TelemetryOptions.OptOutEnvironmentVariable, originalOptOut);
+            TelemetryRecorder.Stop();
             if (tempFile is not null)
             {
                 File.Delete(tempFile);
             }
         }
     }
-
     [Theory]
     [InlineData("certificate", "GameCertificate (Name, Base64EncodedValue, Password)")]
     [InlineData("secret", "GameSecret (Name, Value, ExpirationDate)")]
@@ -284,7 +241,7 @@ public class MpsSecretBodyTests
                 stderr.ToString(),
                 handler,
                 root,
-                parseResult.CommandResult.Command);
+                parseResult);
         }
         finally
         {
@@ -301,5 +258,5 @@ public class MpsSecretBodyTests
         string Stderr,
         MockHttpMessageHandler Handler,
         RootCommand Root,
-        Command Command);
+        ParseResult ParseResult);
 }

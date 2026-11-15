@@ -6,8 +6,10 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using XboxDevCLI.CommandLine;
+using XboxDevCLI.Output;
 using XboxDevCLI.PlayFab.Generated.Multiplayer;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.PlayFab.Commands;
 
@@ -676,9 +678,7 @@ internal static class MpsCommandFactory
 
         try
         {
-            var config = Program.GetConfiguration(parseResult);
-            var authService = Program.GetAuthentication(parseResult);
-            using var client = new PlayFabApiClient(config, authService);
+            using var client = PlayFabCommandHelper.CreateClient(parseResult);
 
             var uploadUrlRequest = JsonSerializer.Serialize(new Dictionary<string, string> { ["FileName"] = assetName });
             var uploadUrlResponse = await client.CallApiAsync(GetAssetUploadUrlPath, uploadUrlRequest, cancellationToken: cancellationToken);
@@ -706,9 +706,20 @@ internal static class MpsCommandFactory
             Console.Error.WriteLine(Program.FormatErrorOutput(ex, compact));
             return 1;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (CommandErrorBoundary.IsExpected(ex)
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
         {
-            Console.Error.WriteLine($"Asset upload failed: {ex.Message}");
+            // A block that timed out is reported too. Ctrl-C isn't caught, so it stops the command quietly.
+            if (ex is OperationCanceledException)
+            {
+                TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
+            }
+            else
+            {
+                TelemetryRecorder.RecordError(ex);
+            }
+
+            Console.Error.WriteLine($"Asset upload failed: {TerminalText.Message(ex.Message)}");
             return 1;
         }
     }
@@ -731,7 +742,7 @@ internal static class MpsCommandFactory
     /// staging the file in fixed-size blocks and committing the block list, including per-block
     /// retries.
     /// </summary>
-    private static async Task UploadBlockBlobAsync(
+    internal static async Task UploadBlockBlobAsync(
         HttpClient httpClient,
         string assetUploadUrl,
         string filePath,
@@ -762,6 +773,7 @@ internal static class MpsCommandFactory
                     var uri = $"{assetUploadUrl}&comp=block&blockId={Uri.EscapeDataString(base64BlockId)}";
                     using var content = new ByteArrayContent(buffer, 0, numBytesRead);
                     using var response = await httpClient.PutAsync(uri, content, cancellationToken);
+                    TelemetryRecorder.RecordResponseStatus((int)response.StatusCode);
                     response.EnsureSuccessStatusCode();
 
                     lastError = null;
@@ -776,6 +788,11 @@ internal static class MpsCommandFactory
 
             if (lastError != null || base64BlockId == null)
             {
+                if (lastError is not null)
+                {
+                    TelemetryRecorder.RecordError(lastError);
+                }
+
                 throw new InvalidOperationException(
                     $"Failed to upload block {blockNum} after {maxRetries} retries. " +
                     $"Last error: {lastError?.Message}",
@@ -801,6 +818,7 @@ internal static class MpsCommandFactory
         using var blockListContent = new StringContent(blockList.ToString(), Encoding.UTF8);
         blockListContent.Headers.ContentType = new MediaTypeHeaderValue("application/xml");
         using var blockListResponse = await httpClient.PutAsync(blockListUri, blockListContent, cancellationToken);
+        TelemetryRecorder.RecordResponseStatus((int)blockListResponse.StatusCode);
         blockListResponse.EnsureSuccessStatusCode();
     }
 }

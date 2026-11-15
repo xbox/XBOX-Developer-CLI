@@ -141,8 +141,24 @@ internal sealed record TableColumn(
     /// <summary>What a redacted cell shows in place of the value.</summary>
     internal const string RedactedCell = "********";
 
+    /// <summary>
+    /// The property of a merged view's label column, which shows the label of the collection its
+    /// row came from rather than a field. See <see cref="TableView.Merged"/>.
+    /// </summary>
+    internal const string SourceLabel = "<source>";
+
     /// <summary>Whether this column reads the array element itself rather than a property of it.</summary>
     internal bool IsElementItself => string.IsNullOrEmpty(Property);
+
+    /// <summary>Whether this column shows its row's collection label rather than a field.</summary>
+    internal bool IsSourceLabel => Property == SourceLabel;
+
+    /// <summary>
+    /// The collections of a merged view that have this column's field, when only some do, such
+    /// as an invitation's role, which applications don't have. Rows from the others show "-".
+    /// Unset means every collection has it, which the tests check against the generated models.
+    /// </summary>
+    internal IReadOnlyList<string>? OnlyIn { get; init; }
 }
 
 /// <summary>Whether a view describes many records or a single one.</summary>
@@ -196,13 +212,56 @@ internal sealed record TableView(
     internal static TableView Record(string property, IReadOnlyList<TableColumn> columns) =>
         new(property, columns, TableShape.Record);
 
+    /// <summary>
+    /// A view showing several collections as one table, for a response that returns related
+    /// records in separate lists, such as an entity's group invitations and applications.
+    /// </summary>
+    /// <remarks>
+    /// The first column, headed <paramref name="labelHeader"/>, says which collection each row
+    /// came from. A column that only some of the collections have names them in
+    /// <see cref="TableColumn.OnlyIn"/>.
+    /// </remarks>
+    internal static TableView Merged(
+        string labelHeader,
+        IReadOnlyList<TableSource> sources,
+        IReadOnlyList<TableColumn> columns) =>
+        new(
+            string.Join(", ", sources.Select(source => source.Collection)),
+            [
+                new TableColumn(
+                    labelHeader,
+                    TableColumn.SourceLabel,
+                    Math.Max(labelHeader.Length, sources.Max(source => source.Label.Length))),
+                .. columns,
+            ])
+        {
+            Sources = sources,
+        };
+
+    /// <summary>
+    /// A list on each record whose items become the rows, for a response that nests its records,
+    /// such as group roles that each hold their members.
+    /// </summary>
+    /// <remarks>
+    /// A column reads the row's item through this name, as in <c>Members.Key.Id</c>, and its
+    /// record's own fields as usual, so each row repeats its record's fields. A record whose list
+    /// is empty still gets one row, so it isn't hidden.
+    /// </remarks>
+    internal string? Expand { get; init; }
+
+    /// <summary>The collections a merged view shows, or empty for any other view.</summary>
+    internal IReadOnlyList<TableSource> Sources { get; init; } = [];
+
     /// <summary>Whether this view describes one record rather than a collection.</summary>
     internal bool IsRecord => Shape == TableShape.Record;
 }
 
+/// <summary>One of the collections a merged <see cref="TableView"/> shows, and the label its rows carry.</summary>
+internal sealed record TableSource(string Collection, string Label);
+
 /// <summary>
-/// Declares that a command returns one page of results per call, and which request-body fields
-/// get the next page.
+/// Declares that a command returns one page of results per call, and how a caller gets the next
+/// page: through request-body fields, or through the command's own options.
 /// </summary>
 /// <remarks>
 /// Help says so from this declaration, and table output, which has nowhere to show the token,
@@ -217,7 +276,20 @@ internal sealed record TableView(
 /// The field that carries the next-page token: the response sets it when more results exist, and
 /// the request takes it back to get them. Written as <c>nameof(SomeResponse.SkipToken)</c>.
 /// </param>
-internal sealed record CommandPaging(string PageSize, string Token);
+/// <param name="PageSizeOption">
+/// The option that sets <paramref name="PageSize"/>, such as <c>--limit</c>, for a command that
+/// takes no request body. Set it together with <paramref name="TokenOption"/>.
+/// </param>
+/// <param name="TokenOption">
+/// The option that sends <paramref name="Token"/> back, such as <c>--continuation-token</c>, for
+/// a command that takes no request body. When set, Help and the table notice tell the user to
+/// rerun the command with it rather than to edit a request body.
+/// </param>
+internal sealed record CommandPaging(
+    string PageSize,
+    string Token,
+    string? PageSizeOption = null,
+    string? TokenOption = null);
 
 /// <summary>
 /// Supplemental Help information for a command that cannot be derived from the

@@ -10,6 +10,7 @@
 *.userosscache
 *.sln.docstates
 *.env
+/scripts/development/profiles.local.json
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
@@ -419,7 +420,6 @@ FodyWeavers.xsd
 *.msm
 *.msp
 /cred_in.txt
-/src/XboxDevCLI/appsettings.Development.json
 
 # Test coverage output
 TestResults/

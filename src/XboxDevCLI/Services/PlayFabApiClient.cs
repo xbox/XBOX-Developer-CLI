@@ -18,7 +18,9 @@ namespace XboxDevCLI.Services;
 /// https://xboxdevcli.playfabapi.com by default), with API paths supplied as relative
 /// request URIs. The target title is carried in an <c>X-PlayFab-Host</c> header set by
 /// <c>PlayFab:HostHeader</c> (built in as <c>{titleId}.playfabapi.com</c>) rather than in the
-/// request host. <c>PlayFab:RequestHeaders</c> adds other headers.
+/// request host. <c>/Studio/*</c> paths aren't scoped to a title: they go to
+/// <c>PlayFab:StudioBaseUrl</c> with no <c>X-PlayFab-Host</c> header, and need no title.
+/// <c>PlayFab:RequestHeaders</c> adds other headers.
 /// </summary>
 public class PlayFabApiClient : IDisposable
 {
@@ -26,11 +28,22 @@ public class PlayFabApiClient : IDisposable
 
     private readonly HttpClient _httpClient;
 
-    /// <summary>The only address requests are sent to, captured when the client is built.</summary>
-    private readonly Uri _baseAddress;
+    /// <summary>
+    /// The address title requests are sent to, captured when the client is built; <c>null</c>
+    /// without a title.
+    /// </summary>
+    private readonly Uri? _baseAddress;
+
+    /// <summary>The address <c>/Studio/*</c> requests are sent to, or <c>null</c> if it isn't a valid URL.</summary>
+    private readonly Uri? _studioBaseAddress;
+
+    /// <summary>The selected PlayFab title, or <c>null</c> when none is set.</summary>
+    private readonly string? _titleId;
+
+    /// <summary>The <see cref="RoutingHeader"/> sent with title requests, if any.</summary>
+    private readonly KeyValuePair<string, string>? _routingHeader;
     private readonly AuthenticationService _authService;
     private readonly bool _ownsHttpClient;
-    private readonly bool _dependencyTelemetryEnabled;
     private readonly long _maxResponseBytes;
     private readonly AuditLogger _auditLogger;
     private readonly List<KeyValuePair<string, string>> _requestHeaders = new();
@@ -94,46 +107,45 @@ public class PlayFabApiClient : IDisposable
     {
         _authService = authService;
         _ownsHttpClient = httpClient == null;
-        // Resolve telemetry state through TelemetryOptions so the client honors every
-        // opt-out path (the --disable-telemetry flag maps to Telemetry:Enabled=false, and
-        // the XBOX_TELEMETRY_OPTOUT environment variable is applied here too). Reading
-        // the raw config keys directly would miss the env-var opt-out.
-        var telemetryOptions = TelemetryOptions.FromConfiguration(configuration);
-        _dependencyTelemetryEnabled =
-            telemetryOptions.Enabled && telemetryOptions.DependencyTracingEnabled;
         _maxResponseBytes = ResolveMaxResponseBytes(configuration);
 
-        var titleId = configuration["PlayFab:TitleId"];
-        if (string.IsNullOrWhiteSpace(titleId))
+        var titleId = configuration["PlayFab:TitleId"]?.Trim();
+        _titleId = string.IsNullOrEmpty(titleId) ? null : titleId;
+        _auditLogger = new AuditLogger(configuration, _titleId, auditLogPath);
+
+        // Studio APIs aren't scoped to a title, so they go to their own endpoint, with no title
+        // routing header. A bad value fails only the studio call that needs it.
+        Uri.TryCreate(
+            EndpointOverrideWarning.GetEffectiveStudioBaseUrl(
+                configuration[EndpointOverrideWarning.StudioConfigurationKey]).Trim().TrimEnd('/') + "/",
+            UriKind.Absolute,
+            out _studioBaseAddress);
+
+        string? baseUrl = null;
+        if (_titleId is not null)
         {
-            throw new InvalidOperationException(
-                "No playfab-title-id is set. Pass --playfab-title-id, set XBOX_PLAYFAB_TITLE_ID, or run " +
-                $"'{CliIdentity.CommandName} context set playfab-title-id <value>'.");
-        }
+            var baseUrlTemplate = EndpointOverrideWarning.GetEffectiveBaseUrlTemplate(
+                configuration[EndpointOverrideWarning.ConfigurationKey]);
+            baseUrl = string.Format(baseUrlTemplate, _titleId);
 
-        _auditLogger = new AuditLogger(configuration, titleId, auditLogPath);
-
-        var baseUrlTemplate = EndpointOverrideWarning.GetEffectiveBaseUrlTemplate(
-            configuration[EndpointOverrideWarning.ConfigurationKey]);
-        var baseUrl = string.Format(baseUrlTemplate, titleId);
-
-        string? hostHeader = configuration[HostHeaderKey]?.Trim();
-        if (!string.IsNullOrEmpty(hostHeader) && !string.Equals(hostHeader, NoHostHeader, StringComparison.OrdinalIgnoreCase))
-        {
-            // Context checks and the audit log use the selected title, so the header that carries
-            // the target title must be a single host name that starts with it.
-            var value = hostHeader.Replace("{titleId}", titleId);
-            if (Uri.CheckHostName(value) != UriHostNameType.Dns
-                || !string.Equals(value.Split('.')[0], titleId, StringComparison.OrdinalIgnoreCase))
+            string? hostHeader = configuration[HostHeaderKey]?.Trim();
+            if (!string.IsNullOrEmpty(hostHeader) && !string.Equals(hostHeader, NoHostHeader, StringComparison.OrdinalIgnoreCase))
             {
-                throw new InvalidOperationException(
-                    $"The {RoutingHeader} header is '{value}', but it must be a single host name whose first label is the " +
-                    $"selected PlayFab title '{titleId}'. Make {{titleId}} the first label of {HostHeaderKey} " +
-                    $"(XBOX_PLAYFAB__HOSTHEADER), as in the built-in '{{titleId}}.playfabapi.com', or set it to " +
-                    $"'{NoHostHeader}' to send no {RoutingHeader} header.");
-            }
+                // Context checks and the audit log use the selected title, so the header that carries
+                // the target title must be a single host name that starts with it.
+                var value = hostHeader.Replace("{titleId}", _titleId);
+                if (Uri.CheckHostName(value) != UriHostNameType.Dns
+                    || !string.Equals(value.Split('.')[0], _titleId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException(
+                        $"The {RoutingHeader} header is '{value}', but it must be a single host name whose first label is the " +
+                        $"selected PlayFab title '{_titleId}'. Make {{titleId}} the first label of {HostHeaderKey} " +
+                        $"(XBOX_PLAYFAB__HOSTHEADER), as in the built-in '{{titleId}}.playfabapi.com', or set it to " +
+                        $"'{NoHostHeader}' to send no {RoutingHeader} header.");
+                }
 
-            _requestHeaders.Add(new KeyValuePair<string, string>(RoutingHeader, value));
+                _routingHeader = new KeyValuePair<string, string>(RoutingHeader, value);
+            }
         }
 
         var headerSection = configuration.GetSection("PlayFab:RequestHeaders").GetChildren();
@@ -167,13 +179,12 @@ public class PlayFabApiClient : IDisposable
                     "of its value.");
             }
 
-            var value = (valueTemplate ?? string.Empty).Replace("{titleId}", titleId);
-            _requestHeaders.Add(new KeyValuePair<string, string>(name, value));
+            _requestHeaders.Add(new KeyValuePair<string, string>(name, valueTemplate ?? string.Empty));
         }
 
         _httpClient = httpClient ?? new HttpClient();
 
-        if (_httpClient.BaseAddress == null)
+        if (_httpClient.BaseAddress == null && baseUrl is not null)
         {
             _httpClient.BaseAddress = new Uri(baseUrl.TrimEnd('/') + "/");
         }
@@ -227,31 +238,39 @@ public class PlayFabApiClient : IDisposable
         bool confirmedDestructive,
         CancellationToken cancellationToken)
     {
-        using var dependency = TelemetryInstrumentation.StartPlayFabDependency(
-            apiPath,
-            _dependencyTelemetryEnabled);
         var exitStatus = 1;
 
         try
         {
             var response = await CallApiCoreAsync(apiPath, jsonBody, confirmedDestructive, cancellationToken);
-            dependency.SetSuccess(response.StatusCode);
+            TelemetryRecorder.RecordHttpStatus(response.StatusCode);
             exitStatus = 0;
             return response;
         }
-        catch (PlayFabApiException exception)
-        {
-            dependency.SetFailure(exception, exception.HttpStatusCode);
-            throw;
-        }
         catch (Exception exception)
         {
-            dependency.SetFailure(exception);
+            // Callers catch and report these themselves, so the reason is recorded here.
+            if (exception is PlayFabApiException { HttpStatusCode: { } statusCode })
+            {
+                TelemetryRecorder.RecordHttpStatus(statusCode);
+            }
+
+            // A wait that ended without the caller canceling it timed out.
+            if (exception is PlayFabApiException { InnerException: OperationCanceledException }
+                && !cancellationToken.IsCancellationRequested)
+            {
+                TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
+            }
+            else
+            {
+                TelemetryRecorder.RecordError(exception);
+            }
+
             throw;
         }
         finally
         {
-            _auditLogger.WriteInvocation(apiPath, exitStatus);
+            _auditLogger.WriteInvocation(apiPath, exitStatus, forTitle: !IsStudioPath(apiPath));
         }
     }
 
@@ -295,8 +314,10 @@ public class PlayFabApiClient : IDisposable
         }
 
         // Resolve the request URI here and send exactly this, so what is checked is what is sent.
-        if (!Uri.TryCreate(_baseAddress, effectivePath, out var requestUri) ||
-            !IsSameOrigin(requestUri, _baseAddress))
+        var studio = IsStudioPath(effectivePath);
+        var baseAddress = studio ? GetStudioBaseAddress() : GetTitleBaseAddress();
+        if (!Uri.TryCreate(baseAddress, effectivePath, out var requestUri) ||
+            !IsSameOrigin(requestUri, baseAddress))
         {
             throw new ArgumentException(
                 "API path must resolve to the configured PlayFab address; it can't name another scheme, host, or port.",
@@ -318,7 +339,7 @@ public class PlayFabApiClient : IDisposable
         {
             var token = await AcquireTokenAsync(cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            request = BuildRequest(requestUri, token.AccessToken, jsonBody);
+            request = BuildRequest(requestUri, token.AccessToken, jsonBody, studio);
         }
         catch (Exception exception)
         {
@@ -355,7 +376,11 @@ public class PlayFabApiClient : IDisposable
                 // HttpClient's timeout ends at the headers, so bound the body read too.
                 using var bodyTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
                 bodyTimeout.CancelAfter(_httpClient.Timeout);
-                body = await ReadResponseBodyWithLimitAsync(response.Content, bodyTimeout.Token);
+                body = await ResponseBodyReader.ReadTextAsync(
+                    response.Content,
+                    _maxResponseBytes,
+                    () => new ResponseTooLargeException(_maxResponseBytes),
+                    bodyTimeout.Token);
             }
             catch (Exception exception)
             {
@@ -378,6 +403,34 @@ public class PlayFabApiClient : IDisposable
     }
 
     /// <summary>
+    /// Whether <paramref name="apiPath"/> is a studio API (<c>/Studio/*</c>), judged on the path
+    /// <see cref="System.Uri"/> will send, the way <see cref="DestructiveOperations.GetOperationName"/>
+    /// reads it, so a dot segment or percent-encoding can't change which endpoint it goes to.
+    /// </summary>
+    internal static bool IsStudioPath(string apiPath)
+    {
+        var relative = apiPath.Replace('\\', '/').TrimStart('/');
+        return Uri.TryCreate(StudioNormalizationBase, relative, out var resolved)
+            && resolved.AbsolutePath.StartsWith("/Studio/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static readonly Uri StudioNormalizationBase = new("https://placeholder.invalid/", UriKind.Absolute);
+
+    private Uri GetTitleBaseAddress() =>
+        _titleId is null || _baseAddress is null
+            ? throw new InvalidOperationException(
+                "No playfab-title-id is set. Pass --playfab-title-id, set XBOX_PLAYFAB_TITLE_ID, or run " +
+                $"'{CliIdentity.CommandName} context set playfab-title-id <value>'.")
+            : _baseAddress;
+
+    private Uri GetStudioBaseAddress() =>
+        _studioBaseAddress is { Host.Length: > 0 }
+            ? _studioBaseAddress
+            : throw new InvalidOperationException(
+                $"{EndpointOverrideWarning.StudioConfigurationKey} must be an absolute URL, such as " +
+                $"'{EndpointOverrideWarning.DefaultStudioBaseUrl}'. Check XBOX_PLAYFAB__STUDIOBASEURL.");
+
+    /// <summary>
     /// Whether <paramref name="requestUri"/> goes to the same scheme, host, and port as
     /// <paramref name="baseAddress"/>, with no user information the base doesn't have.
     /// </summary>
@@ -388,7 +441,7 @@ public class PlayFabApiClient : IDisposable
         requestUri.Port == baseAddress.Port &&
         string.Equals(requestUri.UserInfo, baseAddress.UserInfo, StringComparison.Ordinal);
 
-    private HttpRequestMessage BuildRequest(Uri requestUri, string accessToken, string? jsonBody)
+    private HttpRequestMessage BuildRequest(Uri requestUri, string accessToken, string? jsonBody, bool studio)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, requestUri);
         try
@@ -396,9 +449,21 @@ public class PlayFabApiClient : IDisposable
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Headers.UserAgent.ParseAdd(CliIdentity.UserAgent);
 
-            foreach (var header in _requestHeaders)
+            var headers = studio || _routingHeader is not { } routing
+                ? _requestHeaders
+                : _requestHeaders.Prepend(routing);
+            foreach (var header in headers)
             {
-                if (!request.Headers.TryAddWithoutValidation(header.Key, header.Value))
+                var value = header.Value;
+                if (value.Contains("{titleId}", StringComparison.Ordinal))
+                {
+                    value = studio
+                        ? throw new InvalidOperationException(
+                            $"Configured header '{header.Key}' uses {{titleId}}, but studio APIs aren't sent for a title.")
+                        : value.Replace("{titleId}", _titleId);
+                }
+
+                if (!request.Headers.TryAddWithoutValidation(header.Key, value))
                 {
                     throw new InvalidOperationException(
                         $"Configured header '{header.Key}' could not be added to the request. The header may be invalid or unsupported as a request header.");
@@ -546,6 +611,7 @@ public class PlayFabApiClient : IDisposable
         var token = await _authService.AcquireTokenSilentAsync(cancellationToken);
         if (token == null)
         {
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.Auth);
             throw new InvalidOperationException(
                 $"No cached authentication token. Run '{CliIdentity.CommandName} auth login' first.");
         }
@@ -575,41 +641,5 @@ public class PlayFabApiClient : IDisposable
         }
 
         return maxResponseBytes;
-    }
-
-    private async Task<string> ReadResponseBodyWithLimitAsync(
-        HttpContent responseContent,
-        CancellationToken cancellationToken)
-    {
-        if (responseContent.Headers.ContentLength is long contentLength && contentLength > _maxResponseBytes)
-        {
-            throw new ResponseTooLargeException(_maxResponseBytes);
-        }
-
-        await using var responseStream = await responseContent.ReadAsStreamAsync(cancellationToken);
-        await using var buffer = new MemoryStream();
-        var chunk = new byte[8192];
-        long totalBytesRead = 0;
-
-        while (true)
-        {
-            var bytesRead = await responseStream.ReadAsync(chunk, cancellationToken);
-            if (bytesRead == 0)
-            {
-                break;
-            }
-
-            totalBytesRead += bytesRead;
-            if (totalBytesRead > _maxResponseBytes)
-            {
-                throw new ResponseTooLargeException(_maxResponseBytes);
-            }
-
-            await buffer.WriteAsync(chunk.AsMemory(0, bytesRead), cancellationToken);
-        }
-
-        buffer.Position = 0;
-        using var reader = new StreamReader(buffer, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, leaveOpen: false);
-        return await reader.ReadToEndAsync(cancellationToken);
     }
 }

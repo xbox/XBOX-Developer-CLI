@@ -1,8 +1,8 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.CommandLine;
 using System.Diagnostics;
-using System.Diagnostics.Metrics;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
@@ -457,27 +457,15 @@ public class ServicePrincipalAuthenticationTests
         var reads = 0;
         AutomationAuthenticationSettings.ReadEnvironment = () =>
             ++reads == 1 ? ConflictingAuthenticationEnvironment(setting) : new Dictionary<string, string>();
-        KeyValuePair<string, object?>[]? commandTags = null;
-        using var listener = new MeterListener
+        CommandInvocationEvent? commandEvent = null;
+        var originalObserver = Program.TelemetryEventObserver;
+        Program.TelemetryEventObserver = invocationEvent =>
         {
-            InstrumentPublished = (instrument, meterListener) =>
+            if (invocationEvent.AuthMode == "invalid")
             {
-                if (instrument.Meter.Name == TelemetryInstrumentation.SourceName
-                    && instrument.Name == "xboxdevcli.command.invocations")
-                {
-                    meterListener.EnableMeasurementEvents(instrument);
-                }
-            },
-        };
-        listener.SetMeasurementEventCallback<long>((_, _, tags, _) =>
-        {
-            var captured = tags.ToArray();
-            if (captured.Any(tag => tag.Key == "cli.auth_mode" && Equals(tag.Value, "invalid")))
-            {
-                commandTags = captured;
+                commandEvent = invocationEvent;
             }
-        });
-        listener.Start();
+        };
         Console.SetOut(stdout);
         Console.SetError(stderr);
 
@@ -525,18 +513,21 @@ public class ServicePrincipalAuthenticationTests
 
             if (disableTelemetry)
             {
-                Assert.Null(commandTags);
+                Assert.Null(commandEvent);
             }
             else
             {
-                Assert.NotNull(commandTags);
-                Assert.Contains(commandTags, tag => tag.Key == "cli.auth_mode" && Equals(tag.Value, "invalid"));
-                Assert.Contains(commandTags, tag => tag.Key == "cli.outcome"
-                    && Equals(tag.Value, requiresAuthentication ? "failure" : "success"));
+                Assert.NotNull(commandEvent);
+                var attributes = TelemetryInstrumentation.ToAttributes(commandEvent)
+                    .ToDictionary(attribute => attribute.Key, attribute => attribute.Value);
+                Assert.Equal("invalid", attributes["xbox.cli.auth_mode"]);
+                Assert.Equal(requiresAuthentication ? "failure" : "success", attributes["xbox.cli.outcome"]);
+                Assert.Equal(requiresAuthentication ? "auth" : null, attributes.GetValueOrDefault("error.type"));
             }
         }
         finally
         {
+            Program.TelemetryEventObserver = originalObserver;
             AutomationAuthenticationSettings.ReadEnvironment = originalReader;
             Console.SetOut(originalOut);
             Console.SetError(originalError);

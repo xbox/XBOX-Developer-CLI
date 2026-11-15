@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.CommandLine;
 using System.CommandLine.Parsing;
@@ -164,7 +165,7 @@ internal static class DownloadAchievementImagesCommandFactory
                     Console.Error,
                     cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
             {
                 Console.Error.WriteLine($"Request failed: {ex.Message}");
                 return 1;
@@ -254,7 +255,6 @@ internal static class DownloadAchievementImagesCommandFactory
         }
         catch (XboxPartnerApiException ex)
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, stderr);
             stderr.WriteLine(XboxPartnerCommandErrorFormatter.Format(ex, output.IsCompact));
             return 1;
         }
@@ -264,7 +264,7 @@ internal static class DownloadAchievementImagesCommandFactory
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
         {
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;

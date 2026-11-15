@@ -5,11 +5,7 @@ using System.IO.Pipes;
 using System.Net;
 using System.Text;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using XboxDevCLI.PlayFab.Commands;
-using XboxDevCLI.Services;
 using XboxDevCLI.Output;
 using Xunit;
 
@@ -318,44 +314,6 @@ public class CloudScriptCommandTests
 
     #region Run Method Tests (SetAction lambda logic)
 
-    private static IConfiguration CreateTestConfiguration()
-    {
-        return new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-    }
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken)
-    {
-        return new AuthenticationResult(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-    }
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     private static HttpResponseMessage Ok(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
@@ -365,8 +323,8 @@ public class CloudScriptCommandTests
     public async Task RunGetRevisionAsync_Success_SendsVersionAndRevisionAndPrintsData()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Version":2,"Revision":3,"IsPublished":true}}""";
-        var handler = new FileCommandMockHandler(Ok(responseJson));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(responseJson));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await CloudScriptClassicCommandFactory.RunGetRevisionAsync(
@@ -375,8 +333,8 @@ public class CloudScriptCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/Admin/GetCloudScriptRevision", handler.LastRequestUri);
-        Assert.NotNull(handler.CapturedBody);
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.NotNull(handler.LastRequestBody);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal(2, body.RootElement.GetProperty("Version").GetInt32());
         Assert.Equal(3, body.RootElement.GetProperty("Revision").GetInt32());
         Assert.Contains("IsPublished", stdout.ToString());
@@ -386,7 +344,7 @@ public class CloudScriptCommandTests
     public async Task RunGetRevisionAsync_DataOutput_StripsEnvelope()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Version":5}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
         var stdout = new StringWriter();
 
         var exit = await CloudScriptClassicCommandFactory.RunGetRevisionAsync(
@@ -402,9 +360,9 @@ public class CloudScriptCommandTests
     public async Task RunGetRevisionAsync_ApiError_ReturnsOneAndWritesStderr()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad"}""";
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -423,8 +381,8 @@ public class CloudScriptCommandTests
     public async Task RunListVersionsAsync_Success_CallsVersionsEndpoint()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Versions":[{"Version":1}]}}""";
-        var handler = new FileCommandMockHandler(Ok(responseJson));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(responseJson));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await CloudScriptClassicCommandFactory.RunListVersionsAsync(
@@ -441,8 +399,8 @@ public class CloudScriptCommandTests
     [Fact]
     public async Task RunUpdateAsync_LocalFileMissing_ReturnsOneWithoutCallingApi()
     {
-        var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
         var missing = Path.Combine(Path.GetTempPath(), $"does-not-exist-{Guid.NewGuid():N}.js");
 
@@ -463,8 +421,8 @@ public class CloudScriptCommandTests
             var filePath = Path.Combine(tempDir, "handlers.js");
             await File.WriteAllTextAsync(filePath, "handlers.foo = function() {};");
             var responseJson = """{"code":200,"status":"OK","data":{"Version":9,"Revision":1}}""";
-            var handler = new FileCommandMockHandler(Ok(responseJson));
-            using var client = CreateClientWithHandler(handler);
+            var handler = new MockHttpMessageHandler(Ok(responseJson));
+            using var client = PlayFabTestClient.Create(handler);
             var stdout = new StringWriter();
 
             var exit = await CloudScriptClassicCommandFactory.RunUpdateAsync(
@@ -472,8 +430,8 @@ public class CloudScriptCommandTests
 
             Assert.Equal(0, exit);
             Assert.Contains("/Admin/UpdateCloudScript", handler.LastRequestUri);
-            Assert.NotNull(handler.CapturedBody);
-            using var body = JsonDocument.Parse(handler.CapturedBody!);
+            Assert.NotNull(handler.LastRequestBody);
+            using var body = JsonDocument.Parse(handler.LastRequestBody!);
             Assert.True(body.RootElement.GetProperty("Publish").GetBoolean());
             var file = body.RootElement.GetProperty("Files").EnumerateArray().Single();
             Assert.Equal("handlers.js", file.GetProperty("Filename").GetString());
@@ -491,8 +449,8 @@ public class CloudScriptCommandTests
     public async Task RunPublishAsync_Success_SendsVersionAndRevision()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Version":4}}""";
-        var handler = new FileCommandMockHandler(Ok(responseJson));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(responseJson));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await CloudScriptClassicCommandFactory.RunPublishAsync(
@@ -501,8 +459,8 @@ public class CloudScriptCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/Admin/SetPublishedRevision", handler.LastRequestUri);
-        Assert.NotNull(handler.CapturedBody);
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.NotNull(handler.LastRequestBody);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal(4, body.RootElement.GetProperty("Version").GetInt32());
         Assert.Equal(7, body.RootElement.GetProperty("Revision").GetInt32());
     }
@@ -516,8 +474,8 @@ public class CloudScriptCommandTests
     public async Task RunListAsync_SelectsEndpointByType(string? type, string expectedPath)
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Functions":[]}}""";
-        var handler = new FileCommandMockHandler(Ok(responseJson));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(responseJson));
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await CloudScriptFunctionCommandFactory.RunListAsync(
             client, type, OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -534,8 +492,8 @@ public class CloudScriptCommandTests
     [InlineData("abc/DEF==", "https://nodpublishers.azurewebsites.net/api/MatchWebhook?code=abc/DEF==")]
     public async Task RunRegisterHttpAsync_Success_SendsNameAndCompleteUrl(string? functionKey, string expectedUrl)
     {
-        var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await CloudScriptFunctionCommandFactory.RunRegisterHttpAsync(
             client, "MatchWebhook", "https://nodpublishers.azurewebsites.net/api/MatchWebhook", functionKey,
@@ -543,8 +501,8 @@ public class CloudScriptCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/CloudScript/RegisterHttpFunction", handler.LastRequestUri);
-        Assert.NotNull(handler.CapturedBody);
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.NotNull(handler.LastRequestBody);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("MatchWebhook", body.RootElement.GetProperty("FunctionName").GetString());
         Assert.Equal(expectedUrl, body.RootElement.GetProperty("FunctionUrl").GetString());
     }
@@ -554,8 +512,8 @@ public class CloudScriptCommandTests
     [Fact]
     public async Task RunUnregisterAsync_Success_SendsName()
     {
-        var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await CloudScriptFunctionCommandFactory.RunUnregisterAsync(
             client, "OldFunc", OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -563,8 +521,8 @@ public class CloudScriptCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/CloudScript/UnregisterFunction", handler.LastRequestUri);
-        Assert.NotNull(handler.CapturedBody);
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.NotNull(handler.LastRequestBody);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("OldFunc", body.RootElement.GetProperty("FunctionName").GetString());
     }
 
@@ -572,9 +530,9 @@ public class CloudScriptCommandTests
     public async Task RunUnregisterAsync_ApiError_ReturnsOneAndWritesStderr()
     {
         var errorJson = """{"code":404,"status":"NotFound","error":"NotFound","errorCode":1,"errorMessage":"missing"}""";
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await CloudScriptFunctionCommandFactory.RunUnregisterAsync(

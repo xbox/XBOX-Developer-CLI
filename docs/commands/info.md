@@ -11,23 +11,17 @@ Show the installed CLI version, the project URL, and the first command to run.
 xbox info
 ```
 
-Use this command for a quick local sanity check after installing or updating the
-CLI. It does not call PlayFab.
-
-`info` has no machine-readable form. It prints the same banner for `json` and
-`json-compact`, and refuses `--output table`. Use [`xbox upgrade`](upgrade.md)
-when you need a version check that a script can parse.
+Use it to check an installation or an update. `info` writes text for people, whatever
+`--output` is, and refuses `--output table`. For a version check a script can read, use
+[`xbox upgrade`](upgrade.md).
 
 ## First run and terminal output
 
-The first interactive bare `xbox` invocation of each installed version shows a
-focused launch screen with the colored XBOX sphere, `xbox auth login`, and
-`xbox --help`. When telemetry is enabled, the one-time disclosure follows with
-links to details and opt-out instructions. Explicit help invocations show the
-complete command overview. The first interactive invocation of another command
-retains the full welcome, and `xbox info` replays the logo.
+The first time you run a newly installed version at a terminal, the CLI writes a welcome to
+stderr. A bare `xbox` shows a launch screen that points to `xbox auth login` and `xbox --help`;
+any other command shows the full welcome before its own output. When telemetry is on, the
+welcome includes a notice with how to turn it off; see [Telemetry](../telemetry.md). `xbox info`
+shows the logo again.
 
-First-run output goes to standard error to keep command results on standard
-output clean. ANSI color is omitted when output is redirected and respects
-`NO_COLOR`, `TERM=dumb`, and `CLICOLOR=0`. See [Telemetry](../telemetry.md) for
-the disclosure and opt-out policy.
+Color is left out when output is redirected, or when `NO_COLOR`, `TERM=dumb`, or `CLICOLOR=0` is
+set.

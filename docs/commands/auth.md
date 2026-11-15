@@ -5,92 +5,77 @@ description: Sign in and out with Microsoft Entra ID, and check who is signed in
 
 # Auth
 
-`xbox auth` manages the Microsoft Entra ID account that later commands use to call
-PlayFab and the XBOX partner services.
+`xbox auth` manages the Microsoft Entra ID account that other commands use. See
+[Authentication](../authentication.md) for how sign-in works, including as a service principal.
 
-```bash
+```text
 xbox auth <command>
 ```
 
 | Command | Description |
 | --- | --- |
-| `xbox auth login` | Sign in with Microsoft Entra ID through the system browser, replacing any account already signed in. |
+| `xbox auth login` | Sign in through the system browser, replacing any account already signed in. |
 | `xbox auth logout` | Sign out every cached account. |
 | `xbox auth status` | Show the signed-in account. |
 
-The CLI uses one account at a time. `auth login` signs out any other account, so signing in
-with a different account switches every later command to it. `auth status` shows which
-account that is. If more than one account is cached, for example by an older CLI version,
-commands fail until you run `auth login` again.
+No `auth` command accepts `--output table`.
 
-No `auth` command declares a table view, so all three refuse `--output table`
-rather than quietly returning their default output.
-
-When `XBOX_AUTHENTICATION__MODE` selects a service-principal mode, there is no
-account to sign in or out: `auth login` and `auth logout` print why on stderr and exit
-`1`, and `auth status` describes the service principal instead. See
-[Automation (service principal) authentication](../authentication.md#automation-service-principal-authentication).
-
-See [Authentication](../authentication.md) for the full
-sign-in flow and [Configuration](../configuration.md) for
-configuration precedence.
+When `XBOX_AUTHENTICATION__MODE` selects a service-principal mode, `auth login` and
+`auth logout` exit `1`, and `auth status` describes the service principal.
 
 ## `auth login`
 
-Sign in interactively with Microsoft Entra ID, replacing any account already signed in.
+Sign in with Microsoft Entra ID, replacing any account already signed in.
 
 ```bash
 xbox auth login
 ```
 
-The command opens the system browser for authentication and prints the signed-in
-username and token expiration time on success. It then signs out every other cached
-account, so later commands use the account you just chose. It does not require a PlayFab
-title ID.
+The command opens the system browser and, on success, prints the account and when its token
+expires. Every later command uses that account. If more than one account is cached, for example
+by an earlier CLI version, commands fail until you run `auth login` again.
 
 ## `auth logout`
 
-Sign out every cached account and clear cached Microsoft Entra credentials.
+Sign out every cached account.
 
 ```bash
 xbox auth logout
 ```
 
-The command reports whether no cached account was present, one account was
-removed, or multiple cached accounts were removed. Values saved with
-[`context set`](context.md) are kept, and signing back in as the same account
-restores them.
+The command prints the accounts it signed out, or that no account was signed in. Values saved
+with [`context set`](context.md) are kept, and signing back in as the same account restores
+them.
 
 ## `auth status`
 
-Show the signed-in developer identity. It reads the local token cache, refreshing the
-token with Microsoft Entra ID when needed, and doesn't call PlayFab or the XBOX partner
-services, so it doesn't confirm access to them. To see the saved PlayFab title and
-seller, run [`xbox context get`](context.md).
+Show the signed-in account and its token. The command can refresh the token with Entra ID, but
+doesn't use it, so it doesn't confirm that other commands will accept it.
+To see the saved seller and PlayFab title, run [`xbox context get`](context.md).
 
 ```bash
 xbox auth status
 ```
 
-`auth status` defaults to human-readable text rather than JSON. For automation,
-request JSON explicitly:
+The output is text unless you pass `--output`. For a script, request JSON and check `signedIn`:
 
 ```bash
 xbox auth status --output json-compact
 ```
 
-When JSON output is requested and the user is not signed in, `auth status` still
-exits `0` with the payload `{"signedIn":false}`.
-That lets scripts branch on the JSON instead of treating signed-out state as a
-process failure. Only a missing account counts as signed out: if the configuration,
-the sign-in settings, or the token cache can't be read, `auth status` exits `1`. With
-JSON output, it writes `"signedIn": false` and an `error` message to stderr and nothing
-to stdout; text output writes `Failed to retrieve status:` and the error to stderr.
+```json
+{"signedIn":false}
+```
+
+| Exit code | Meaning |
+| --- | --- |
+| `0` | The status was read, whether or not an account is signed in. |
+| `1` | The CLI couldn't read its settings or token cache, or, in a service-principal mode, couldn't get a token. The error is on stderr, and stdout is empty. |
 
 ### Service-principal modes
 
-In a service-principal mode, `auth status` acquires an app-only token and reports
-its claims. It never prints the token itself.
+In a service-principal mode, `auth status` gets an app-only token and reports its claims. It
+never prints the token.
 
 ```bash
 XBOX_AUTHENTICATION__MODE=azurecli xbox auth status --output json
@@ -112,11 +97,5 @@ XBOX_AUTHENTICATION__MODE=azurecli xbox auth status --output json
 }
 ```
 
-`principalType` is `app` for a service principal or managed identity. Every
-service-principal mode accepts only an app-only token, so `azurecli` fails, rather than
-reporting `user`, when the Azure CLI is signed in as a person. If the token can't be
-acquired, or the service-principal settings or configuration are invalid, or a profile is selected with
-`--profile` or `XBOX_PROFILE`, `auth status` exits `1`. With JSON output, it
-writes `"signedIn": false` and an `error` message to stderr and nothing to stdout; text
-output writes the error to stderr. Unlike a signed-out user, a broken service-principal
-credential is a failure, so a pipeline step running `auth status` fails with it.
+`principalType` is `app` for a service principal or managed identity. See
+[Confirm the identity](../authentication.md#confirm-the-identity).

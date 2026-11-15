@@ -8,7 +8,7 @@ body:
       value: |
         Thanks for suggesting an improvement! Please describe the problem you're trying to solve before jumping to a solution — that helps us evaluate whether a different approach might fit better.
 
-        **Before you file**: please search [existing issues](https://github.com/microsoft/XBOX-Developer-CLI/issues?q=is%3Aissue) to see whether this has already been requested.
+        **Before you file**: please search [existing issues](https://github.com/xbox/cli/issues?q=is%3Aissue) to see whether this has already been requested.
 
         Do not include credentials, account details, or other sensitive information.
 

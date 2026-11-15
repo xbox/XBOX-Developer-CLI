@@ -91,41 +91,83 @@ public class GetDocumentsCommandTests
     public void Command_ValidatesScopeSpecificOptions()
     {
         ParseResult validSandbox = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 " +
+            "xbl config download --seller-id 2 " +
             "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 " +
-            "--dest output");
+            "--view draft --dest output");
         ParseResult validAccount = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 " +
-            "--type account --dest output");
+            "xbl config download --seller-id 2 " +
+            "--type account --view draft --dest output");
         ParseResult missingScid = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 " +
-            "--sandbox-id XDKS.1 --dest output");
+            "xbl config download --seller-id 2 " +
+            "--sandbox-id XDKS.1 --view draft --dest output");
         ParseResult mixedScope = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 " +
-            "--type account --sandbox-id XDKS.1 --dest output");
+            "xbl config download --seller-id 2 " +
+            "--type account --sandbox-id XDKS.1 --view draft --dest output");
         ParseResult unsafeSandbox = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 " +
+            "xbl config download --seller-id 2 " +
             "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id ../outside " +
-            "--dest output");
+            "--view draft --dest output");
         ParseResult removedAccountId = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 " +
-            "--type account --account-id 11111111-2222-3333-4444-555555555555 --dest output");
+            "xbl config download --seller-id 2 " +
+            "--type account --account-id 11111111-2222-3333-4444-555555555555 --view draft --dest output");
+        ParseResult published = Program.BuildRootCommand().Parse(
+            "xbl config download --type account --view published --dest output");
+        ParseResult missingView = Program.BuildRootCommand().Parse(
+            "xbl config download --type account --dest output");
+        ParseResult unknownView = Program.BuildRootCommand().Parse(
+            "xbl config download --type account --view working --dest output");
+        ParseResult removedLive = Program.BuildRootCommand().Parse(
+            "xbl config download --type account --live --dest output");
+        ParseResult removedAlias = Program.BuildRootCommand().Parse(
+            "xbl config download --type account --view draft -d output");
 
         Assert.Empty(validSandbox.Errors);
         Assert.Empty(validAccount.Errors);
-        Assert.NotEmpty(missingScid.Errors);
+        Assert.Empty(missingScid.Errors); // Title context is filled after parsing.
         Assert.NotEmpty(mixedScope.Errors);
         Assert.NotEmpty(unsafeSandbox.Errors);
         Assert.NotEmpty(removedAccountId.Errors);
+        Assert.Empty(published.Errors);
+        Assert.NotEmpty(missingView.Errors);
+        Assert.Contains(
+            unknownView.Errors,
+            error => error.Message == "Invalid value 'working' for option '--view'. Allowed values: draft, published.");
+        Assert.NotEmpty(removedLive.Errors);
+        Assert.NotEmpty(removedAlias.Errors);
     }
 
     [Fact]
     public void Command_ReportsAnScidThatIsntAGuidAsAParseError()
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            "xbl document download --seller-id 2 --scid notaguid --sandbox-id XDKS.1 --dest output");
+            "xbl config download --seller-id 2 --scid notaguid --sandbox-id XDKS.1 --view draft --dest output");
 
         Assert.Contains(result.Errors, error => error.Message.Contains("notaguid", StringComparison.Ordinal));
+    }
+
+    [Theory]
+    [InlineData("x")]
+    [InlineData("-1")]
+    [InlineData("99999999999999999999")]
+    public void Command_ReportsAVersionThatIsNotAValidNumberAsAParseError(string version)
+    {
+        ParseResult result = Program.BuildRootCommand().Parse(
+            ["xbl", "config", "download", "--scid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "--sandbox-id", "XDKS.1", "--view", "draft", "--dest", "output", "--version", version],
+            Program.NoResponseFileConfig);
+
+        Assert.Contains(result.Errors, error => error.Message.Contains($"'{version}'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Command_RejectsAVersionOfZero()
+    {
+        ParseResult result = Program.BuildRootCommand().Parse(
+            "xbl config download --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 " +
+            "--view draft --dest output --version 0",
+            Program.NoResponseFileConfig);
+
+        Assert.Contains(result.Errors, error => error.Message == "--version must be positive when provided.");
     }
 
     [Fact]
@@ -227,7 +269,7 @@ public class GetDocumentsCommandTests
             Assert.Contains("SANDBOX", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("FILES", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("XDKS.1", stdout.ToString(), StringComparison.Ordinal);
-            Assert.Contains("working", stdout.ToString(), StringComparison.Ordinal);
+            Assert.Contains("draft", stdout.ToString(), StringComparison.Ordinal);
             Assert.Contains("2", stdout.ToString(), StringComparison.Ordinal);
             Assert.Empty(stderr.ToString());
         }
@@ -461,7 +503,7 @@ public class GetDocumentsCommandTests
     }
 
     [Fact]
-    public async Task Command_NormalizesTypeViewAndSandboxBeforeRequest()
+    public async Task Command_NormalizesTypeAndSandboxAndReadsTheLiveSetBeforeRequest()
     {
         string directory = Path.Combine(Path.GetTempPath(), $"XboxDevCLI-{Guid.NewGuid():N}");
         TextWriter originalOut = Console.Out;
@@ -484,7 +526,7 @@ public class GetDocumentsCommandTests
             int exitCode = await Program.Main(
             [
                 "xbl",
-                "document",
+                "config",
                 "download",
                 "--seller-id",
                 "2",
@@ -495,7 +537,7 @@ public class GetDocumentsCommandTests
                 "--sandbox-id",
                 " XDKS.1 ",
                 "--view",
-                "PUBLISHED",
+                "Published",
                 "--dest",
                 directory,
                 "--output",

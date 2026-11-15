@@ -8,19 +8,18 @@ namespace XboxDevCLI.UnitTest;
 /// </summary>
 internal class XboxPartnerHttpMessageHandler : HttpMessageHandler
 {
-    private readonly Queue<HttpResponseMessage> _responses;
+    private readonly Queue<Func<HttpResponseMessage>> _responses;
 
     public XboxPartnerHttpMessageHandler(params HttpResponseMessage[] responses)
     {
-        ArgumentNullException.ThrowIfNull(responses);
-        if (responses.Length == 0)
-        {
-            throw new ArgumentException(
-                "At least one response is required.",
-                nameof(responses));
-        }
+        _responses = new Queue<Func<HttpResponseMessage>>(
+            responses.Select(response => (Func<HttpResponseMessage>)(() => response)));
+    }
 
-        _responses = new Queue<HttpResponseMessage>(responses);
+    /// <summary>Answers one request by calling <paramref name="response"/>, which may throw.</summary>
+    public XboxPartnerHttpMessageHandler(Func<HttpResponseMessage> response)
+    {
+        _responses = new Queue<Func<HttpResponseMessage>>([response]);
     }
 
     public HttpRequestMessage? LastRequest { get; private set; }
@@ -51,7 +50,7 @@ internal class XboxPartnerHttpMessageHandler : HttpMessageHandler
                 "No mock HTTP response remains for this request.");
         }
 
-        return _responses.Dequeue();
+        return _responses.Dequeue()();
     }
 }
 

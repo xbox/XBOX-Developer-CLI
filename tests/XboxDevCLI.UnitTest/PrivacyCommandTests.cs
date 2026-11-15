@@ -1,14 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.Net;
 using System.Text.Json;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.PlayFab.Commands;
-using XboxDevCLI.Services;
 using XboxDevCLI.Output;
 using Xunit;
 
@@ -81,8 +77,8 @@ public class PrivacyCommandTests
     [Fact]
     public async Task Export_SendsPlayFabIdToExportEndpoint()
     {
-        var handler = new PrivacyMockHandler(Ok("""{"code":200,"status":"OK","data":{"JobReceiptId":"job-123"}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"JobReceiptId":"job-123"}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await PrivacyCommandFactory.RunExportAsync(
@@ -93,7 +89,7 @@ public class PrivacyCommandTests
         Assert.NotNull(handler.LastRequestUri);
         Assert.Contains("/Admin/ExportMasterPlayerData", handler.LastRequestUri);
 
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("ABC123", body.RootElement.GetProperty("PlayFabId").GetString());
 
         using var outDoc = JsonDocument.Parse(stdout.ToString());
@@ -103,12 +99,12 @@ public class PrivacyCommandTests
     [Fact]
     public async Task Export_DataOnly_StripsEnvelope()
     {
-        var handler = new PrivacyMockHandler(Ok("""{"code":200,"status":"OK","data":{"JobReceiptId":"job-9"}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"JobReceiptId":"job-9"}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await PrivacyCommandFactory.RunExportAsync(
-            client, "P1", OutputOptions.JsonDataOnly, stdout, new StringWriter(),
+            client, "P1", new OutputOptions("json", DataOnly: true), stdout, new StringWriter(),
             CancellationToken.None);
 
         Assert.Equal(0, exit);
@@ -120,10 +116,10 @@ public class PrivacyCommandTests
     [Fact]
     public async Task Export_ApiError_WritesStderrAndReturns1()
     {
-        var handler = new PrivacyMockHandler(Error(
+        var handler = new MockHttpMessageHandler(Error(
             HttpStatusCode.BadRequest,
             """{"code":400,"status":"BadRequest","error":"InvalidParams","errorMessage":"bad id"}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -143,9 +139,9 @@ public class PrivacyCommandTests
     [Fact]
     public async Task PlayedTitles_SendsPlayFabIdToPlayedTitleListEndpoint()
     {
-        var handler = new PrivacyMockHandler(Ok(
+        var handler = new MockHttpMessageHandler(Ok(
             """{"code":200,"status":"OK","data":{"TitleIds":["AAA","BBB"]}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await PrivacyCommandFactory.RunPlayedTitlesAsync(
@@ -156,7 +152,7 @@ public class PrivacyCommandTests
         Assert.NotNull(handler.LastRequestUri);
         Assert.Contains("/Admin/GetPlayedTitleList", handler.LastRequestUri);
 
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("XYZ", body.RootElement.GetProperty("PlayFabId").GetString());
 
         // json-compact writes single-line JSON.
@@ -171,10 +167,10 @@ public class PrivacyCommandTests
     [Fact]
     public async Task PlayedTitles_ApiError_WritesStderrAndReturns1()
     {
-        var handler = new PrivacyMockHandler(Error(
+        var handler = new MockHttpMessageHandler(Error(
             HttpStatusCode.Forbidden,
             """{"code":403,"status":"Forbidden","error":"NotAuthorized","errorMessage":"nope"}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -197,65 +193,5 @@ public class PrivacyCommandTests
     private static HttpResponseMessage Error(HttpStatusCode status, string json) =>
         new(status) { Content = new StringContent(json) };
 
-    private static IConfiguration CreateTestConfiguration() =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken) =>
-        new(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     #endregion
-}
-
-/// <summary>
-/// Mock handler that captures the outgoing request URI and body for assertion, then returns a
-/// fixed response.
-/// </summary>
-internal sealed class PrivacyMockHandler : HttpMessageHandler
-{
-    private readonly HttpResponseMessage _response;
-
-    public PrivacyMockHandler(HttpResponseMessage response) => _response = response;
-
-    public string? CapturedBody { get; private set; }
-
-    public string? LastRequestUri { get; private set; }
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        LastRequestUri = request.RequestUri?.ToString();
-        if (request.Content != null)
-        {
-            CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
-        }
-
-        return _response;
-    }
 }

@@ -16,6 +16,13 @@ internal static class WelcomeExperience
     private const string AnsiBrand = "\u001b[1;38;2;139;240;0m";
     private static readonly Lazy<string> Logo = new(LoadLogo);
 
+    // Places the registered trademark mark one column past the logo's lower-right edge.
+    private static readonly Lazy<string> LogoMarkPadding = new(() =>
+    {
+        var lines = PlainLogo.Split(Environment.NewLine);
+        return new string(' ', lines.Max(line => line.Length) - lines[^1].Length + 1);
+    });
+
     internal static string PlainLogo => Logo.Value;
 
     internal static string RenderLogo(bool useColor)
@@ -53,9 +60,9 @@ internal static class WelcomeExperience
 
     internal static void WriteHeader(TextWriter writer, bool useColor)
     {
-        WriteLogo(writer, useColor);
+        WriteLogo(writer, useColor, animate: true);
         writer.WriteLine(
-            $"{ColorizeBrand("XBOX", useColor)} CLI: {CliIdentity.Tagline}");
+            $"{ColorizeBrand("XBOX" + RegisteredMark(writer), useColor)} CLI: {CliIdentity.Tagline}");
     }
 
     internal static void WriteInfo(TextWriter writer, string version, bool useColor)
@@ -64,7 +71,8 @@ internal static class WelcomeExperience
         ArgumentException.ThrowIfNullOrWhiteSpace(version);
 
         WriteLogo(writer, useColor);
-        WriteVersion(writer, version, useColor);
+        writer.WriteLine(
+            $"{ColorizeBrand("XBOX" + RegisteredMark(writer), useColor)} CLI version {version}");
         writer.WriteLine(ProjectLinks.Home);
         writer.WriteLine();
         writer.WriteLine("Run this command to get started:");
@@ -93,22 +101,42 @@ internal static class WelcomeExperience
         writer.WriteLine();
     }
 
-    internal static void WriteVersion(TextWriter writer, string version, bool useColor)
-    {
-        ArgumentNullException.ThrowIfNull(writer);
-        ArgumentException.ThrowIfNullOrWhiteSpace(version);
-
-        writer.WriteLine($"{ColorizeBrand("XBOX", useColor)} CLI version {version}");
-    }
-
-    private static void WriteLogo(TextWriter writer, bool useColor)
+    private static void WriteLogo(TextWriter writer, bool useColor, bool animate = false)
     {
         ArgumentNullException.ThrowIfNull(writer);
 
         writer.WriteLine();
-        writer.WriteLine(RenderLogo(useColor));
+        var suffix = LogoMarkPadding.Value + RegisteredMark(writer);
+        // Animate only on the live terminal, so redirected output and tests get the logo at once.
+        if (animate && useColor && writer == Console.Error && !Console.IsErrorRedirected && TerminalFits(suffix))
+        {
+            LogoAnimation.Write(writer, PlainLogo, RenderLogo(useColor), suffix, LogoAnimation.FrameDelay);
+            writer.WriteLine();
+        }
+        else
+        {
+            writer.WriteLine(RenderLogo(useColor) + suffix);
+        }
+
         writer.WriteLine();
     }
+
+    private static bool TerminalFits(string suffix)
+    {
+        try
+        {
+            return LogoAnimation.Fits(PlainLogo, suffix, Console.WindowWidth, Console.WindowHeight);
+        }
+        catch (Exception ex) when (ex is IOException or PlatformNotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    // The XBOX logo and name are registered trademarks. A console on a legacy code page,
+    // such as 437, would print ® as "r", so fall back to "(R)" there.
+    internal static string RegisteredMark(TextWriter writer) =>
+        writer.Encoding.GetString(writer.Encoding.GetBytes("\u00AE")) == "\u00AE" ? "\u00AE" : "(R)";
 
     internal static bool WriteIfFirstRun(
         string stateDirectory,
@@ -146,7 +174,7 @@ internal static class WelcomeExperience
             stateDirectory,
             version,
             writer,
-            () => WriteLogo(writer, useColor));
+            () => WriteLogo(writer, useColor, animate: true));
     }
 
     private static bool WriteOnce(

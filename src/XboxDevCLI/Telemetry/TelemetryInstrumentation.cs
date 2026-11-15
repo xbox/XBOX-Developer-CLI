@@ -1,134 +1,213 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using System.Diagnostics;
-using System.Diagnostics.Metrics;
+using System.CommandLine;
+using System.CommandLine.Parsing;
+using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
-using XboxDevCLI.PlayFab.Generated;
+using Microsoft.Identity.Client;
+using Microsoft.Identity.Client.Extensions.Msal;
+using XboxDevCLI.Safety;
 using XboxDevCLI.Services;
 
 namespace XboxDevCLI.Telemetry;
 
+/// <summary>The fixed set of <c>error.type</c> values the telemetry event can carry.</summary>
+internal static class TelemetryErrorTypes
+{
+    internal const string Usage = "usage";
+    internal const string Context = "context";
+    internal const string Auth = "auth";
+    internal const string NotConfirmed = "not_confirmed";
+    internal const string Transport = "transport";
+    internal const string ServiceRejected = "service_rejected";
+    internal const string ServiceError = "service_error";
+    internal const string LocalTool = "local_tool";
+    internal const string Io = "io";
+    internal const string Cancelled = "cancelled";
+    internal const string Other = "_OTHER";
+
+    internal static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
+    {
+        Usage, Context, Auth, NotConfirmed, Transport, ServiceRejected, ServiceError, LocalTool, Io,
+        Cancelled, Other,
+    };
+}
+
+/// <summary>
+/// The one telemetry event the CLI sends per invocation, before sanitization. Every field is
+/// sanitized in <see cref="TelemetryInstrumentation.ToAttributes"/>, the only place the event's
+/// attributes are built.
+/// </summary>
+internal sealed record CommandInvocationEvent(
+    string Command,
+    string AuthMode,
+    int ExitCode,
+    string? ErrorType,
+    int? HttpStatusCode,
+    TimeSpan Duration,
+    IReadOnlyCollection<string> Options,
+    IReadOnlyCollection<string> ContextKeys,
+    bool Ci);
+
 internal static class TelemetryInstrumentation
 {
-    internal const string SourceName = "Microsoft.XboxDevCLI";
-    internal const string SchemaVersion = "2";
+    internal const string SchemaVersion = "3";
+    internal const string EventName = "xbox.cli.command_invocation";
+    internal const string CustomEventNameAttribute = "microsoft.custom_event.name";
+    internal const string Unknown = "unknown";
+
+    /// <summary>
+    /// The context keys whose names may appear in <c>xbox.cli.context_keys</c> when they had a
+    /// value, from the command line, an <c>XBOX_</c> variable, or saved context. Never their values.
+    /// </summary>
+    internal static readonly IReadOnlySet<string> ContextKeyNames = new HashSet<string>(StringComparer.Ordinal)
+    {
+        "playfab-title-id", "sandbox-id", "seller-id", "title-id",
+    };
+
+    /// <summary>Environment variables whose presence, never value, marks a CI run.</summary>
+    internal static readonly IReadOnlyList<string> CiVariables =
+    [
+        "CI", "TF_BUILD", "GITHUB_ACTIONS", "BUILD_NUMBER", "RUN_ID", "TEAMCITY_VERSION", "JENKINS_URL",
+        "CODEBUILD_BUILD_ID", "GITLAB_CI", "CIRCLECI", "BUILDKITE", "APPVEYOR", "TRAVIS",
+    ];
 
     internal static readonly string ServiceVersion =
         typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
         ?? typeof(Program).Assembly.GetName().Version?.ToString()
-        ?? "unknown";
+        ?? Unknown;
 
-    internal static readonly ActivitySource ActivitySource = new(SourceName, ServiceVersion);
-    internal static readonly Meter Meter = new(SourceName, ServiceVersion);
-
-    private static readonly Counter<long> CommandInvocations =
-        Meter.CreateCounter<long>("xboxdevcli.command.invocations", description: "CLI command invocations.");
-
-    private static readonly Histogram<double> CommandDuration =
-        Meter.CreateHistogram<double>("xboxdevcli.command.duration", "ms", "CLI command duration.");
-
-    private static readonly Counter<long> PlayFabRequests =
-        Meter.CreateCounter<long>("xboxdevcli.playfab.requests", description: "PlayFab dependency calls.");
-
-    private static readonly Histogram<double> PlayFabRequestDuration =
-        Meter.CreateHistogram<double>("xboxdevcli.playfab.duration", "ms", "PlayFab dependency call duration.");
-
-    private static readonly Counter<long> UnhandledFailures =
-        Meter.CreateCounter<long>("xboxdevcli.process.unhandled_failures", description: "Unhandled CLI failures.");
-
-    private static readonly IReadOnlyDictionary<string, PlayFabApiMetadata.ApiEndpoint> KnownEndpoints =
-        PlayFabApiMetadata.AllEndpoints
-            .GroupBy(endpoint => NormalizeApiPath(endpoint.Path), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => group.First(),
-                StringComparer.OrdinalIgnoreCase);
-
-    internal static void RecordCommand(string commandName, int exitCode, TimeSpan duration, string authMode)
+    /// <summary>
+    /// Builds the event's attributes. Anything unexpected becomes <c>unknown</c> or <c>_OTHER</c>,
+    /// or is dropped, so a value the CLI didn't intend to send never leaves the process.
+    /// </summary>
+    internal static IReadOnlyList<KeyValuePair<string, object?>> ToAttributes(CommandInvocationEvent invocation)
     {
-        var tags = CreateCommonTags();
-        tags.Add("cli.command", SanitizeCommandName(commandName));
-        tags.Add("cli.outcome", exitCode == 0 ? "success" : "failure");
-        tags.Add("cli.exit_code", BucketExitCode(exitCode));
-        tags.Add("cli.auth_mode", authMode);
-
-        CommandInvocations.Add(1, tags);
-        CommandDuration.Record(duration.TotalMilliseconds, tags);
-    }
-
-    internal static void RecordUnhandledFailure(Exception exception)
-    {
-        var tags = CreateCommonTags();
-        tags.Add("error.type", ClassifyException(exception));
-        UnhandledFailures.Add(1, tags);
-    }
-
-    internal static PlayFabDependencyOperation StartPlayFabDependency(
-        string apiPath,
-        bool telemetryEnabled)
-    {
-        var normalizedPath = NormalizeApiPath(apiPath);
-        var known = KnownEndpoints.TryGetValue(normalizedPath, out var endpoint);
-        var group = known ? endpoint!.Group : "unknown";
-        var operation = known ? endpoint!.OperationId : "unknown";
-
-        Activity? activity = null;
-        if (telemetryEnabled)
+        var errorType = invocation.ErrorType is null ? null : SanitizeErrorType(invocation.ErrorType);
+        var outcome = errorType == TelemetryErrorTypes.Cancelled ? "cancelled"
+            : invocation.ExitCode == 0 ? "success"
+            : "failure";
+        if (outcome == "success")
         {
-            activity = ActivitySource.StartActivity("PlayFab API", ActivityKind.Client);
-            activity?.SetTag("rpc.system", "playfab");
-            activity?.SetTag("rpc.service", group);
-            activity?.SetTag("rpc.method", operation);
+            errorType = null;
+        }
+        else
+        {
+            errorType ??= TelemetryErrorTypes.Other;
         }
 
-        return new PlayFabDependencyOperation(activity, group, operation, telemetryEnabled);
+        var attributes = new List<KeyValuePair<string, object?>>
+        {
+            new(CustomEventNameAttribute, EventName),
+            new("xbox.cli.schema_version", SchemaVersion),
+            new("service.version", ServiceVersion),
+            new("os.type", GetOsType()),
+            new("os.version", GetOsMajorVersion()),
+            new("host.arch", GetHostArch(RuntimeInformation.OSArchitecture)),
+            new("process.runtime.name", ".NET"),
+            new("process.runtime.version", Environment.Version.ToString()),
+            new("xbox.cli.command", SanitizeCommandName(invocation.Command)),
+            new("xbox.cli.auth_mode", SanitizeCommandName(invocation.AuthMode)),
+            new("xbox.cli.outcome", outcome),
+            new("process.exit.code", invocation.ExitCode.ToString(CultureInfo.InvariantCulture)),
+        };
+
+        if (errorType is not null)
+        {
+            attributes.Add(new("error.type", errorType));
+        }
+
+        if (invocation.HttpStatusCode is >= 100 and <= 599 and var status)
+        {
+            attributes.Add(new("http.response.status_code", status.ToString(CultureInfo.InvariantCulture)));
+        }
+
+        attributes.Add(new(
+            "xbox.cli.duration_ms",
+            ((long)Math.Max(0, invocation.Duration.TotalMilliseconds)).ToString(CultureInfo.InvariantCulture)));
+        attributes.Add(new("xbox.cli.options", JoinNames(invocation.Options, IsSafeName)));
+        attributes.Add(new("xbox.cli.context_keys", JoinNames(invocation.ContextKeys, ContextKeyNames.Contains)));
+        attributes.Add(new("xbox.cli.ci", invocation.Ci ? "true" : "false"));
+        return attributes;
     }
 
+    /// <summary>What <paramref name="exception"/> says about why the invocation failed.</summary>
     internal static string ClassifyException(Exception exception) => exception switch
     {
-        PlayFabApiException { HttpStatusCode: null, InnerException: { } inner } => ClassifyException(inner),
-        OperationCanceledException => "cancelled",
-        HttpRequestException => "transport",
-        PlayFabApiException => "playfab_api",
-        InvalidOperationException => "invalid_operation",
-        ArgumentException => "invalid_argument",
-        _ => "unexpected",
+        OperationCanceledException { InnerException: TimeoutException } => TelemetryErrorTypes.Transport,
+        OperationCanceledException => TelemetryErrorTypes.Cancelled,
+        DestructiveOperationNotConfirmedException => TelemetryErrorTypes.NotConfirmed,
+        // A status reached before the body failed to arrive, such as a 200, isn't the failure's reason.
+        PlayFabApiException { HttpStatusCode: >= 400 and < 600 and var status } => ClassifyStatus(status),
+        PlayFabApiException { InnerException: IOException or HttpRequestException } => TelemetryErrorTypes.Transport,
+        PlayFabApiException { InnerException: { } inner } => ClassifyException(inner),
+        XboxPartnerApiException partner => ClassifyStatus((int)partner.StatusCode),
+        XboxPartnerResponseException { InnerException: OperationCanceledException or HttpRequestException or IOException } =>
+            TelemetryErrorTypes.Transport,
+        XboxPartnerResponseException => TelemetryErrorTypes.ServiceError,
+        AuthenticationConfigurationException or MsalException or MsalCachePersistenceException =>
+            TelemetryErrorTypes.Auth,
+        HttpRequestException { StatusCode: { } status } => ClassifyStatus((int)status),
+        HttpRequestException or TimeoutException => TelemetryErrorTypes.Transport,
+        IOException or UnauthorizedAccessException or InvalidDataException => TelemetryErrorTypes.Io,
+        _ => TelemetryErrorTypes.Other,
     };
 
-    private static TagList CreateCommonTags() => new()
+    /// <summary>Maps an HTTP failure status to <c>service_rejected</c> (4xx) or <c>service_error</c> (5xx).</summary>
+    internal static string ClassifyStatus(int statusCode) => statusCode switch
     {
-        { "telemetry.schema_version", SchemaVersion },
-        { "service.version", ServiceVersion },
-        { "os.type", GetOsType() },
-        { "process.runtime.name", RuntimeInformation.FrameworkDescription },
+        >= 400 and < 500 => TelemetryErrorTypes.ServiceRejected,
+        >= 500 and < 600 => TelemetryErrorTypes.ServiceError,
+        _ => TelemetryErrorTypes.Other,
     };
 
-    private static string SanitizeCommandName(string commandName)
+    /// <summary>
+    /// The canonical long names of the options the user supplied to <paramref name="parseResult"/>'s
+    /// command or its parents, without dashes. Read from the parsed options, never the arguments or
+    /// their values.
+    /// </summary>
+    internal static IReadOnlyList<string> GetSuppliedOptions(ParseResult parseResult)
+    {
+        var names = new SortedSet<string>(StringComparer.Ordinal);
+        for (SymbolResult? result = parseResult.CommandResult; result is not null; result = result.Parent)
+        {
+            if (result is not CommandResult command)
+            {
+                continue;
+            }
+
+            foreach (var child in command.Children)
+            {
+                if (child is OptionResult { Implicit: false } option)
+                {
+                    names.Add(option.Option.Name.TrimStart('-', '/'));
+                }
+            }
+        }
+
+        return [.. names];
+    }
+
+    /// <summary>Whether any CI variable is set, by presence only. Never reads more than whether it's empty.</summary>
+    internal static bool IsCi(Func<string, string?> getEnvironmentVariable) =>
+        CiVariables.Any(name => !string.IsNullOrEmpty(getEnvironmentVariable(name)));
+
+    internal static string SanitizeCommandName(string? commandName)
     {
         if (string.IsNullOrWhiteSpace(commandName) || commandName.Length > 64)
         {
-            return "unknown";
+            return Unknown;
         }
 
-        return commandName.All(character =>
-            char.IsAsciiLetterOrDigit(character) || character is '-' or '_')
-            ? commandName.ToLowerInvariant()
-            : "unknown";
+        return IsSafeName(commandName) ? commandName.ToLowerInvariant() : Unknown;
     }
 
-    private static string BucketExitCode(int exitCode) => exitCode switch
-    {
-        0 => "0",
-        1 => "1",
-        _ => "other",
-    };
+    internal static string SanitizeErrorType(string errorType) =>
+        TelemetryErrorTypes.All.Contains(errorType) ? errorType : TelemetryErrorTypes.Other;
 
-    private static string NormalizeApiPath(string apiPath) =>
-        "/" + apiPath.Trim().TrimStart('/');
-
-    private static string GetOsType()
+    internal static string GetOsType()
     {
         if (OperatingSystem.IsWindows())
         {
@@ -145,103 +224,27 @@ internal static class TelemetryInstrumentation
             return "linux";
         }
 
-        return "unknown";
+        return Unknown;
     }
 
-    internal sealed class PlayFabDependencyOperation : IDisposable
+    internal static string GetOsMajorVersion() =>
+        Environment.OSVersion.Version.Major.ToString(CultureInfo.InvariantCulture);
+
+    internal static string GetHostArch(Architecture architecture) => architecture switch
     {
-        private readonly Activity? _activity;
-        private readonly string _group;
-        private readonly string _operation;
-        private readonly bool _telemetryEnabled;
-        private readonly Stopwatch _stopwatch = Stopwatch.StartNew();
-        private bool _completed;
+        Architecture.X64 => "amd64",
+        Architecture.Arm64 => "arm64",
+        _ => Unknown,
+    };
 
-        internal PlayFabDependencyOperation(
-            Activity? activity,
-            string group,
-            string operation,
-            bool telemetryEnabled)
-        {
-            _activity = activity;
-            _group = group;
-            _operation = operation;
-            _telemetryEnabled = telemetryEnabled;
-        }
+    private static bool IsSafeName(string name) =>
+        name.Length is > 0 and <= 64
+        && name.All(character => char.IsAsciiLetterOrDigit(character) || character is '-' or '_');
 
-        internal void SetSuccess(int httpStatusCode)
-        {
-            Complete("success", BucketHttpStatus(httpStatusCode), errorType: null);
-            _activity?.SetStatus(ActivityStatusCode.Ok);
-        }
-
-        internal void SetFailure(Exception exception, int? httpStatusCode = null)
-        {
-            var errorType = ClassifyException(exception);
-            Complete("failure", BucketHttpStatus(httpStatusCode), errorType);
-            _activity?.SetTag("error.type", errorType);
-            _activity?.SetStatus(ActivityStatusCode.Error);
-        }
-
-        public void Dispose()
-        {
-            if (!_completed)
-            {
-                Complete("failure", "none", "unexpected");
-                _activity?.SetStatus(ActivityStatusCode.Error);
-            }
-
-            _activity?.Dispose();
-        }
-
-        private void Complete(string outcome, string httpStatus, string? errorType)
-        {
-            if (_completed)
-            {
-                return;
-            }
-
-            _completed = true;
-            _stopwatch.Stop();
-
-            // Enforce opt-out at the instrumentation layer: when telemetry is disabled we
-            // record no metrics, rather than relying on the absence of a MeterProvider
-            // listener elsewhere.
-            if (!_telemetryEnabled)
-            {
-                return;
-            }
-
-            var tags = CreateCommonTags();
-            tags.Add("rpc.service", _group);
-            tags.Add("rpc.method", _operation);
-            tags.Add("dependency.outcome", outcome);
-            tags.Add("http.response.status_code_class", httpStatus);
-            if (errorType != null)
-            {
-                tags.Add("error.type", errorType);
-            }
-
-            PlayFabRequests.Add(1, tags);
-            PlayFabRequestDuration.Record(_stopwatch.Elapsed.TotalMilliseconds, tags);
-            _activity?.SetTag("http.response.status_code_class", httpStatus);
-        }
-
-        private static string BucketHttpStatus(int? statusCode)
-        {
-            if (statusCode == null)
-            {
-                return "none";
-            }
-
-            return (statusCode.Value / 100) switch
-            {
-                2 => "2xx",
-                3 => "3xx",
-                4 => "4xx",
-                5 => "5xx",
-                _ => "other",
-            };
-        }
-    }
+    private static string JoinNames(IEnumerable<string> names, Func<string, bool> allowed) =>
+        string.Join(',', names
+            .Where(allowed)
+            .Select(name => name.ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal));
 }

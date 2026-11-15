@@ -8,17 +8,17 @@ This project has adopted the [Microsoft Open Source Code of Conduct](https://ope
 ## Issues
 
 Issues are how to contribute right now. Use
-[GitHub Issues](https://github.com/microsoft/XBOX-Developer-CLI/issues) to report bugs or
+[GitHub Issues](https://github.com/xbox/cli/issues) to report bugs or
 request features. If you know how you'd fix something, describe the change in the issue.
 
 ## Pull requests
 
-We don't accept pull requests yet. If you open one, we'll close it and ask you to open an
-issue instead. The CLA bot may still ask you to sign the CLA on it; you don't need to. We'll
-start accepting them once we can review them promptly, and this page will explain how they
-work.
+The project doesn't accept pull requests yet. If you open one, a maintainer closes it and asks
+you to open an issue instead. A bot might still ask you to sign the
+Contributor License Agreement on it; you don't need to. The project will start accepting pull requests once the
+maintainers can review them promptly, and this page will explain how they work.
 
-When we do, most contributions will require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+Once the project does, most contributions will require you to agree to a Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
 
 When you submit a pull request, a CLA bot will automatically determine whether you need to provide a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions provided by the bot. You will only need to do this once across all repos using our CLA.
 
@@ -49,7 +49,7 @@ namespaces, project paths, the configuration prefix, telemetry identity, and the
 token cache, so changing the command doesn't break existing user state.
 
 Use **XBOX** in all authored prose; never use "Xbox" as standalone brand copy.
-Do not change established identifiers or generated PlayFab source to enforce
+Don't change established identifiers or generated PlayFab source to enforce
 this copy convention.
 
 ### Testing
@@ -64,7 +64,7 @@ account; see
 
 ### Command architecture
 
-The command tree is split into small factory files, so adding a command does not mean editing one
+The command tree is split into small factory files, so adding a command doesn't mean editing one
 large entrypoint.
 
 - **Root composition** lives in [`src/XboxDevCLI/Program.cs`](src/XboxDevCLI/Program.cs): global
@@ -75,8 +75,8 @@ large entrypoint.
   `AuthCommandFactory` groups the neighboring `login`, `logout`, and `status` factories.
 - **The `playfab` group** is assembled in
   [`src/XboxDevCLI/PlayFab/Commands/PlayFabCommandFactory.cs`](src/XboxDevCLI/PlayFab/Commands/PlayFabCommandFactory.cs),
-  which composes one focused factory per command family (API and type metadata, MPS, file, group,
-  Cloud Script, and so on). `CloudScriptCommandFactory` in turn composes the `classic` and
+  which composes one focused factory per command family (API and type metadata, Multiplayer Servers (MPS), file, group,
+  CloudScript, and so on). `CloudScriptCommandFactory` in turn composes the `classic` and
   `function` sub-groups.
 
 The shape is deliberate: each family keeps its parsing, validation, and help text together;
@@ -93,8 +93,8 @@ When adding a command:
 3. Route PlayFab calls through `Program.InvokeApiAsync` or a shared helper rather than
    constructing a client directly, so output formatting and the destructive gate still apply.
 4. Verify the API path exists in
-   [`PlayFabApiMetadata.cs`](src/XboxDevCLI/PlayFab/Generated/PlayFabApiMetadata.cs). Do not
-   invent endpoints — a hallucinated path will fail only at runtime, against a real title.
+   [`PlayFabApiMetadata.cs`](src/XboxDevCLI/PlayFab/Generated/PlayFabApiMetadata.cs). Don't
+   invent endpoints — a hallucinated path fails only at runtime, against a real title.
 5. Add or update tests under [`tests/XboxDevCLI.UnitTest`](tests/XboxDevCLI.UnitTest).
 6. Update the docs, as described below.
 
@@ -112,15 +112,15 @@ page in the same pull request — otherwise the change ships undocumented.
 - New verb or option → extend that command's existing tables.
 - Keep the existing shape: subcommand → PlayFab API path → description, then
   subcommand → options, then runnable examples.
-- Explain non-obvious behavior (a required option, mutually exclusive flags, a
-  deliberately omitted verb), not just the syntax.
+- Explain non-obvious behavior, such as a required option or mutually exclusive flags,
+  and leave out what the reader doesn't need.
 - Say on the command's page whether it accepts `--output table`.
 - If the change affects destructive behavior or confirmation, update
   `docs/safety.md` as well.
 - Link between pages with relative file paths, such as `[Commands](commands.md)`.
   Front matter carries `title` and a one-sentence `description`, and nothing else, and
   the page's `#` heading matches its `title`. See
-  [Editing these docs](docs/README.md#editing-these-docs).
+  [Editing the docs](docs/contributing/documentation.md).
 
 ### Code coverage
 
@@ -169,7 +169,7 @@ dotnet run -- codegen-config.json
 This fetches specs from [PlayFab/API_Specs](https://github.com/PlayFab/API_Specs) and writes
 per-group model files (`{GroupName}Models.cs`) plus `PlayFabApiMetadata.cs`, the registry of every
 endpoint with its operation ID, path, description, and request/response type names. That registry
-is what command wiring validates against, and what telemetry uses to recognize a known endpoint.
+is what command wiring validates against.
 
 Regenerate when PlayFab changes its specs, when you change the include/exclude lists, or when you
 modify the generator itself.
@@ -182,7 +182,7 @@ modify the generator itself.
 |-----|-------------|
 | `specSource.type` | `"github"` (fetch from the GitHub API) or `"local"` (read from a directory) |
 | `specSource.repo` | Repository holding the specs (default: `PlayFab/API_Specs`) |
-| `specSource.branch` | Branch to fetch from (default: `master`) |
+| `specSource.branch` | Branch, tag, or commit to fetch from (default: `master`). Pinned to the commit the checked-in models came from; move it when you take newer specs |
 | `specSource.path` | Path within the repo to the Swagger files |
 | `output.directory` | Output directory, relative to the config file |
 | `output.namespace` | Root namespace for the generated code |
@@ -193,7 +193,7 @@ modify the generator itself.
 | `preferences.generateXmlDocs` | Emit XML doc comments from the spec descriptions |
 
 Note that `exclude.groups` currently omits `Client`, `Server`, and `Matchmaker`, so those paths
-are absent from the metadata and cannot be called without regenerating.
+are absent from the metadata and the generated models.
 
 To work against a local checkout of the specs:
 
@@ -236,7 +236,7 @@ dotnet run --project tools/UnicodeWidthCodeGen -- --input ./EastAsianWidth.txt
 Everything else about a character's width — whether it is a combining mark, a spacing mark, a
 joiner, or a grapheme cluster boundary — comes from .NET's own Unicode data at runtime, so this
 table is the only thing that has to be regenerated. That data tracks the runtime's Unicode
-version rather than this table's, and is normally a release or two behind it. The two are pinned
-separately on purpose: East Asian Width is the one property .NET does not expose, and a character
+version rather than this table's, and is usually a release or two behind it. The two are pinned
+separately on purpose: East Asian Width is the one property .NET doesn't expose, and a character
 assigned since the runtime's release is better measured from newer width data than left to
 default to narrow.

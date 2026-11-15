@@ -5,10 +5,9 @@ using System.CommandLine;
 using XboxDevCLI.Output;
 using XboxDevCLI.CommandLine;
 using System.Text;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using XboxDevCLI.PlayFab.Generated.CloudScript;
 using XboxDevCLI.Services;
+using static XboxDevCLI.PlayFab.Commands.PlayFabCommandHelper;
 
 namespace XboxDevCLI.PlayFab.Commands;
 
@@ -29,11 +28,6 @@ internal static class CloudScriptFunctionCommandFactory
     internal const string ListEventHubFunctionsPath = "/CloudScript/ListEventHubFunctions";
     internal const string RegisterHttpFunctionPath = "/CloudScript/RegisterHttpFunction";
     internal const string UnregisterFunctionPath = "/CloudScript/UnregisterFunction";
-
-    private static readonly JsonSerializerOptions RequestOptions = new()
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
 
     private static readonly string[] ListFunctionTypes = { "http", "queued", "eventhub" };
 
@@ -239,22 +233,9 @@ internal static class CloudScriptFunctionCommandFactory
             typeOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var type = parseResult.GetValue(typeOption);
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunListAsync(client, type, output, Console.Out, Console.Error, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunListAsync(client, parseResult.GetValue(typeOption), output, stdout, stderr, cancellationToken)));
 
         // --type selects one of four APIs, each returning a different model. FunctionName is the
         // only field all four share, so it is the only column a single view can honestly declare;
@@ -292,7 +273,7 @@ internal static class CloudScriptFunctionCommandFactory
         CancellationToken cancellationToken)
     {
         var apiPath = BuildListFunctionsApiPath(type);
-        return PlayFabCommandHelper.InvokeAsync(client, apiPath, "{}", output, stdout, stderr, cancellationToken: cancellationToken);
+        return InvokeAsync(client, apiPath, "{}", output, stdout, stderr, cancellationToken: cancellationToken);
     }
 
     private static Command CreateRegisterCommand()
@@ -350,7 +331,6 @@ internal static class CloudScriptFunctionCommandFactory
             var name = parseResult.GetValue(nameOption)!;
             var url = parseResult.GetValue(urlOption)!;
             var keyFile = parseResult.GetValue(keyFileOption);
-            var output = OutputOptions.From(parseResult);
 
             // Dispatch on --type rather than assuming HTTP. Adding a value to
             // RegisterFunctionTypes without a matching arm here would otherwise register the
@@ -383,18 +363,8 @@ internal static class CloudScriptFunctionCommandFactory
                 }
             }
 
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunRegisterHttpAsync(
-                    client, name, url, functionKey, output, Console.Out, Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
+            return await WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunRegisterHttpAsync(client, name, url, functionKey, output, stdout, stderr, cancellationToken));
         });
 
         return command.WithMetadata(new CommandMetadata(
@@ -431,9 +401,7 @@ internal static class CloudScriptFunctionCommandFactory
         CancellationToken cancellationToken)
     {
         var (apiPath, request) = BuildRegisterHttpFunctionCall(name, url, functionKey);
-        var body = JsonSerializer.Serialize(request, RequestOptions);
-
-        return PlayFabCommandHelper.InvokeAsync(client, apiPath, body, output, stdout, stderr, cancellationToken: cancellationToken);
+        return RunAsync(client, apiPath, request, output, stdout, stderr, cancellationToken: cancellationToken);
     }
 
     private static Command CreateUnregisterCommand()
@@ -452,22 +420,9 @@ internal static class CloudScriptFunctionCommandFactory
             nameOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var name = parseResult.GetValue(nameOption)!;
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunUnregisterAsync(client, name, output, Console.Out, Console.Error, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunUnregisterAsync(client, parseResult.GetValue(nameOption)!, output, stdout, stderr, cancellationToken)));
 
         // UnregisterFunction is not a Delete* path, so the runtime confirmation gate does not
         // apply; the detail says what is and is not removed so nobody reads this as deleting the
@@ -492,8 +447,6 @@ internal static class CloudScriptFunctionCommandFactory
         CancellationToken cancellationToken)
     {
         var (apiPath, request) = BuildUnregisterFunctionCall(name);
-        var body = JsonSerializer.Serialize(request, RequestOptions);
-
-        return PlayFabCommandHelper.InvokeAsync(client, apiPath, body, output, stdout, stderr, cancellationToken: cancellationToken);
+        return RunAsync(client, apiPath, request, output, stdout, stderr, cancellationToken: cancellationToken);
     }
 }

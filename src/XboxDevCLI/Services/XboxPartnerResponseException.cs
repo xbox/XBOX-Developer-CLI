@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using XboxDevCLI.Telemetry;
+
 namespace XboxDevCLI.Services;
 
 internal sealed class XboxPartnerResponseException : Exception
@@ -13,6 +15,10 @@ internal sealed class XboxPartnerResponseException : Exception
     {
         RawResponse = rawResponse;
         CorrelationId = correlationId;
+
+        // Thrown from many places and often handled by the command itself, so the reason is
+        // recorded once, here.
+        TelemetryRecorder.RecordError(this);
     }
 
     internal string RawResponse { get; }

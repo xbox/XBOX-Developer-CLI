@@ -173,7 +173,7 @@ public class Program
         // It is registered recursively so it parses anywhere. It gates PlayFab API
         // calls, so Help scopes it to the playfab subtree, and it also confirms the
         // Partner Center creates 'game create' and 'sandbox create', and
-        // 'xbl publish start', when it appears before the command; those declare
+        // 'xbl config publish', when it appears before the command; those declare
         // their own local --confirm for Help.
         return new Option<bool>("--confirm", "--yes", "-y")
         {
@@ -214,12 +214,27 @@ public class Program
         // Captures the authentication inputs once, for preparation, context, the command, and
         // telemetry. Nothing is validated yet.
         var invocation = GetInvocation(parseResult);
+        var verbose = parseResult.GetValue(VerboseOption);
+        // Read before context resolution adds values from the environment or saved context, which
+        // the user didn't supply as options.
+        var suppliedOptions = TelemetryInstrumentation.GetSuppliedOptions(parseResult);
+
+        // Started before anything can fail, so every outcome, including an unknown command,
+        // is counted.
+        var stopwatch = Stopwatch.StartNew();
+        var invocationTelemetry = TelemetryRecorder.Start();
+        var telemetry = TelemetryService.Create(
+            GetTelemetryConfiguration(parseResult),
+            message => WriteVerbose(verbose, () => message));
         if (CommandLineErrorWriter.TryWriteUnknownCommand(
                 parseResult,
                 rootCommand,
                 CliIdentity.CommandName,
                 Console.Error))
         {
+            invocationTelemetry.SetError(TelemetryErrorTypes.Usage);
+            ShowTelemetryDisclosure(telemetry);
+            EmitTelemetry(telemetry, invocationTelemetry, parseResult, command: null, invocation, suppliedOptions, 1, stopwatch);
             return 1;
         }
 
@@ -231,12 +246,6 @@ public class Program
         var terminalActionRequested =
             helpRequested || IsVersionRequested(parseResult, args);
 
-        var verbose = parseResult.GetValue(VerboseOption);
-
-        using var telemetry = TelemetryService.Create(
-            GetTelemetryConfiguration(parseResult),
-            message => WriteVerbose(verbose, () => message));
-
         var focusedFirstRun = WriteWelcomeIfFirstRun(
             parseResult,
             args,
@@ -245,15 +254,8 @@ public class Program
             Environment.UserInteractive,
             Console.IsErrorRedirected);
 
-        if (telemetry.IsCollecting)
-        {
-            TelemetryDisclosure.WriteIfFirstRun(
-                TelemetryDisclosure.GetDefaultStateDirectory(),
-                Console.Error,
-                WelcomeExperience.SupportsColor(Console.IsErrorRedirected));
-        }
+        ShowTelemetryDisclosure(telemetry);
 
-        var stopwatch = Stopwatch.StartNew();
         var exitCode = 1;
         try
         {
@@ -267,6 +269,7 @@ public class Program
             {
                 if (await ResolveContextAsync(parseResult, args) is not { } resolved)
                 {
+                    invocationTelemetry.RecordErrorIfUnset(TelemetryErrorTypes.Context);
                     return exitCode;
                 }
 
@@ -290,16 +293,26 @@ public class Program
                     // remedy deliberately does not name JSON as "the default" either: `auth status`
                     // and `info` default to human-readable text.
                     Console.Error.WriteLine(TableUnavailableMessage);
+                    invocationTelemetry.SetError(TelemetryErrorTypes.Usage);
                     return exitCode;
                 }
             }
 
             exitCode = await parseResult.InvokeAsync();
+            if (exitCode != 0 && parseResult.Errors.Count > 0)
+            {
+                invocationTelemetry.SetError(TelemetryErrorTypes.Usage);
+            }
+            else if (exitCode == CancelledExitCode)
+            {
+                invocationTelemetry.SetError(TelemetryErrorTypes.Cancelled);
+            }
+
             return exitCode;
         }
         catch (Exception exception)
         {
-            telemetry.RecordUnhandledFailure(exception);
+            TelemetryRecorder.RecordError(exception);
             throw;
         }
         finally
@@ -307,14 +320,64 @@ public class Program
             // After Ctrl-C, System.CommandLine stops waiting for the command before cleanup it
             // started, such as canceling a pending file upload, has finished.
             await ExitCleanup.Default.WaitAsync(ExitCleanup.MaxWait);
-            stopwatch.Stop();
-            telemetry.RecordCommand(
-                CommandPathResolver.ResolveTelemetryIdentity(
-                    rootCommand,
-                    parseResult.CommandResult.Command),
+            EmitTelemetry(
+                telemetry,
+                invocationTelemetry,
+                parseResult,
+                CommandPathResolver.ResolveTelemetryIdentity(rootCommand, parseResult.CommandResult.Command),
+                invocation,
+                suppliedOptions,
                 exitCode,
+                stopwatch);
+        }
+    }
+
+    /// <summary>The exit code System.CommandLine returns when Ctrl-C ends a command.</summary>
+    private const int CancelledExitCode = 130;
+
+    private static void ShowTelemetryDisclosure(TelemetryService telemetry) =>
+        telemetry.ShowDisclosure(
+            TelemetryDisclosure.GetDefaultStateDirectory(),
+            Console.Error,
+            WelcomeExperience.SupportsColor(Console.IsErrorRedirected));
+
+    private static void EmitTelemetry(
+        TelemetryService telemetry,
+        InvocationTelemetry invocationTelemetry,
+        ParseResult parseResult,
+        string? command,
+        CommandInvocation invocation,
+        IReadOnlyCollection<string> suppliedOptions,
+        int exitCode,
+        Stopwatch stopwatch)
+    {
+        stopwatch.Stop();
+        TelemetryRecorder.Stop();
+        if (!telemetry.Options.Enabled)
+        {
+            return;
+        }
+
+        try
+        {
+            var invocationEvent = new CommandInvocationEvent(
+                command ?? TelemetryInstrumentation.Unknown,
+                invocation.AuthenticationModeName,
+                exitCode,
+                invocationTelemetry.ErrorType,
+                invocationTelemetry.HttpStatusCode,
                 stopwatch.Elapsed,
-                invocation.AuthenticationModeName);
+                suppliedOptions,
+                invocationTelemetry.ContextKeys,
+                telemetry.IsCi);
+            TelemetryEventObserver?.Invoke(invocationEvent);
+            telemetry.Emit(invocationEvent);
+        }
+        catch (Exception exception)
+        {
+            WriteVerbose(
+                parseResult.GetValue(VerboseOption),
+                () => $"Telemetry could not be sent ({TelemetryInstrumentation.ClassifyException(exception)}).");
         }
     }
 
@@ -406,7 +469,10 @@ public class Program
         Func<Command>? gameCommandFactory = null,
         Func<Command>? contextCommandFactory = null,
         Func<Command>? sandboxCommandFactory = null,
-        Func<Command>? pcCommandFactory = null)
+        Func<Command>? pcCommandFactory = null,
+        Func<Command>? audienceCommandFactory = null,
+        Func<Command>? packageCommandFactory = null,
+        Func<Command>? playtestCommandFactory = null)
     {
         var rootCommand = new RootCommand(
             $"{CliIdentity.DisplayName}: {CliIdentity.Tagline}");
@@ -444,6 +510,17 @@ public class Program
             .WithMetadata(new CommandMetadata(Category: HelpCategory.Core)));
         rootCommand.Subcommands.Add((sandboxCommandFactory ?? SandboxCommandFactory.Create).Invoke()
             .WithMetadata(new CommandMetadata(Category: HelpCategory.Core)));
+        rootCommand.Subcommands.Add((audienceCommandFactory ?? AudienceCommandFactory.Create).Invoke()
+            .WithMetadata(new CommandMetadata(
+                Category: HelpCategory.Core,
+                Stage: CommandStage.Experimental)));
+        rootCommand.Subcommands.Add((packageCommandFactory ?? PackageCommandFactory.Create).Invoke()
+            .WithMetadata(new CommandMetadata(
+                Category: HelpCategory.Core,
+                Stage: CommandStage.Experimental,
+                LearnMore: [PackageCommandFactory.UploadLearnMore])));
+        rootCommand.Subcommands.Add((playtestCommandFactory ?? PlaytestCommandFactory.Create).Invoke()
+            .WithMetadata(new CommandMetadata(Category: HelpCategory.Core)));
         rootCommand.Subcommands.Add((pcCommandFactory ?? PcCommandFactory.Create).Invoke()
             .WithMetadata(new CommandMetadata(
                 Category: HelpCategory.Core,
@@ -472,12 +549,20 @@ public class Program
     /// <summary>
     /// Prepares what <paramref name="parseResult"/>'s command declares it needs
     /// (<see cref="CommandRequirements"/>), and writes the warnings for the endpoints it declares
-    /// it calls (<see cref="CommandEndpoints"/>). Running it again does nothing more.
+    /// it calls (<see cref="CommandEndpoints"/>). A command that takes its PlayFab path at run time,
+    /// such as <c>playfab api</c>, warns only about the endpoint that path goes to. Running it again
+    /// does nothing more.
     /// </summary>
     internal static void Prepare(ParseResult parseResult)
     {
         var command = parseResult.CommandResult.Command;
-        GetInvocation(parseResult).Prepare(CommandRequirements.For(command), CommandEndpoints.For(command));
+        var endpoints = CommandEndpoints.For(command);
+        if (ContextResolver.GetApiPath(parseResult) is { } apiPath)
+        {
+            endpoints &= PlayFabApiClient.IsStudioPath(apiPath) ? ServiceEndpoints.PlayFabStudio : ServiceEndpoints.PlayFab;
+        }
+
+        GetInvocation(parseResult).Prepare(CommandRequirements.For(command), endpoints);
     }
 
     /// <summary>
@@ -643,12 +728,10 @@ public class Program
     /// Test seam: when set, supplies the API client instead of constructing a real one.
     /// </summary>
     /// <remarks>
-    /// <see cref="InvokeApiAsync"/> is the invocation path for every metadata-backed command,
-    /// including all the MPS ones, and it builds its own client and writes straight to the
-    /// console — so there was no way to assert that it honours a declared table view. Without
-    /// that coverage, a regression in its formatter branch would return JSON for all of those
-    /// commands while the suite stayed green, which is exactly how this feature shipped broken
-    /// once already.
+    /// <see cref="PlayFabCommandHelper.CreateClient"/> reads it, for the curated PlayFab commands and
+    /// for <see cref="InvokeApiAsync"/>, which runs <c>playfab api</c> and most MPS commands. Tests use
+    /// it to run those commands end to end over a fake transport, which is how they show that a
+    /// command declaring a table view renders one rather than JSON.
     /// <para>
     /// Kept as a nullable static rather than plumbed through the signature so the production path
     /// is byte-for-byte unchanged when it is null. Tests must reset it.
@@ -664,6 +747,12 @@ public class Program
     internal static Func<IConfiguration, XboxPartnerClient>? XboxPartnerClientFactory;
     internal static Func<HttpClient>? AchievementImageDownloadClientFactory;
     internal static Func<HttpClient>? AchievementImageUploadClientFactory;
+
+    /// <summary>
+    /// Test seam that sees the event <see cref="Main"/> builds whenever telemetry is enabled, even
+    /// without a destination to send it to. Tests must reset it.
+    /// </summary>
+    internal static Action<CommandInvocationEvent>? TelemetryEventObserver;
 
     /// <summary>
     /// Resolves the JSON request body from inline (<paramref name="body"/>), file, or stdin
@@ -698,6 +787,7 @@ public class Program
             {
                 Console.Error.WriteLine(
                     $"Error: '{apiPath}' is destructive and requires --confirm when --body-file - reads stdin.");
+                TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
                 return 1;
             }
 
@@ -736,29 +826,10 @@ public class Program
                 }
             }
 
-            var authService = GetAuthentication(parseResult);
-            using var client = ApiClientFactory is null
-                ? new PlayFabApiClient(config, authService)
-                : ApiClientFactory(config);
+            using var client = PlayFabCommandHelper.CreateClient(parseResult);
             var response = await client.CallApiAsync(apiPath, jsonBody, cancellationToken, confirmedDestructive);
             WriteVerbose(verbose, () => "Request succeeded.");
-
-            // One object answers "what shape was asked for, and can this command produce it",
-            // rather than re-deriving the format and the declared view separately here.
-            var output = OutputOptions.From(parseResult);
-
-            if (output.TableView is null)
-            {
-                Console.WriteLine(FormatOutput(response, output.IsCompact, output.DataOnly));
-                return 0;
-            }
-
-            Console.WriteLine(FormatTableOutput(response, output.TableView));
-            if (FormatNextPageNotice(response, output.Paging) is { } notice)
-            {
-                Console.Error.WriteLine(notice);
-            }
-
+            PlayFabCommandHelper.WriteResponse(response, OutputOptions.From(parseResult), Console.Out, Console.Error);
             return 0;
         }
         catch (PlayFabApiException ex)
@@ -766,9 +837,12 @@ public class Program
             Console.Error.WriteLine(FormatErrorOutput(ex, compact));
             return 1;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (CommandErrorBoundary.IsExpected(ex)
+            || ex is ArgumentException { ParamName: "apiPath" } or DecoderFallbackException)
         {
-            Console.Error.WriteLine($"Request failed: {ex.Message}");
+            // Besides the failures the error boundary expects, the client refuses a path from the
+            // command line that could send the token elsewhere, and a body read from stdin must be UTF-8.
+            Console.Error.WriteLine($"Request failed: {TerminalText.Message(ex.Message)}");
             return 1;
         }
     }
@@ -909,10 +983,11 @@ public class Program
         {
             Console.Error.WriteLine(
                 "This operation requires explicit confirmation. Re-run the command with the --confirm flag to proceed.");
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
             return false;
         }
 
-        Console.Error.Write("Type 'yes' to confirm: ");
+        ConfirmationPrompt.Write(Console.Error, "Type 'yes' to confirm: ");
         var answer = Console.ReadLine();
         if (string.Equals(answer?.Trim(), "yes", StringComparison.OrdinalIgnoreCase))
         {
@@ -920,6 +995,7 @@ public class Program
         }
 
         Console.Error.WriteLine("Operation cancelled.");
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
         return false;
     }
 
@@ -973,6 +1049,19 @@ public class Program
             || string.IsNullOrEmpty(token.GetString()))
         {
             return null;
+        }
+
+        if (paging.TokenOption is { } tokenOption)
+        {
+            var value = token.GetString()!;
+            var next = value.All(character => character is >= ' ' and <= '~')
+                ? $"run the command again with the same options and {tokenOption} {ShellQuoting.Quote(value)}."
+                : $"run the command again with the same options and {tokenOption} set to the response's " +
+                  $"{paging.Token}, which --output json shows.";
+            var pageSize = paging.PageSizeOption is { } pageSizeOption
+                ? $" {pageSizeOption} sets how many results a page holds."
+                : string.Empty;
+            return $"More results exist; this table shows one page. To get the next page, {next}{pageSize}";
         }
 
         return $"More results exist; this table shows one page. To get the next page, add " +

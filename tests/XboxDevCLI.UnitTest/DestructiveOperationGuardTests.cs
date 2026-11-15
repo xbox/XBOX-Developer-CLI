@@ -226,6 +226,42 @@ public class DestructiveOperationGuardTests
         Assert.Null(handler.LastRequest);
     }
 
+    /// <summary>With <c>--confirm</c>, a destructive command sends its request.</summary>
+    [Theory]
+    [MemberData(nameof(DestructiveCommands))]
+    public async Task Confirmed_SendsTheRequest(string[] command, string apiPath)
+    {
+        var handler = SuccessHandler();
+
+        var result = await InvokeWithClientSeamAsync(
+            handler, ["--playfab-title-id", "ABC12", .. command, "--confirm"]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.DoesNotContain("WARNING:", result.Stderr, StringComparison.Ordinal);
+        Assert.Equal(apiPath, handler.LastRequest!.RequestUri!.AbsolutePath);
+    }
+
+    /// <summary>
+    /// Without <c>--confirm</c>, and with nobody to answer the prompt, a destructive command warns
+    /// and sends nothing.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(DestructiveCommands))]
+    public async Task Unconfirmed_WarnsAndSendsNothing(string[] command, string apiPath)
+    {
+        var handler = SuccessHandler();
+
+        var result = await InvokeWithClientSeamAsync(handler, ["--playfab-title-id", "ABC12", .. command]);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains(
+            $"WARNING: '{apiPath}' is a destructive, irreversible operation.",
+            result.Stderr,
+            StringComparison.Ordinal);
+        Assert.Empty(result.Stdout);
+        Assert.Null(handler.LastRequest);
+    }
+
     /// <summary>
     /// <c>/Admin/DeleteTitle</c> deletes the title it's sent to, so that title has to be on the
     /// command line: one from saved context can change without anyone seeing it. The refusal comes
@@ -521,6 +557,29 @@ public class DestructiveOperationGuardTests
         Assert.Equal(0, result.ExitCode);
         Assert.Empty(result.Stdout);
         Assert.Equal("Deleted file: 'save.json'" + Environment.NewLine, result.Stderr);
+    }
+
+    /// <summary>
+    /// A command can leave confirmation to the client's guard, passing <c>--confirm</c> through.
+    /// Without it, the refusal is reported, and nothing is sent.
+    /// </summary>
+    [Fact]
+    public async Task UnconfirmedCallThroughTheHelper_IsReportedAndNotSent()
+    {
+        var handler = SuccessHandler();
+        using var client = PlayFabTestClient.Create(handler);
+        var (apiPath, request) = PlayFab.Commands.FileCommandFactory.BuildDeleteCall("E1", "title", ["save.json"]);
+        var stderr = new StringWriter();
+
+        var exitCode = await PlayFab.Commands.PlayFabCommandHelper.RunAsync(
+            client, apiPath, request, Output.OutputOptions.Json, new StringWriter(), stderr, CancellationToken.None);
+
+        Assert.Equal(1, exitCode);
+        Assert.Equal(
+            "Request failed: '/File/DeleteFiles' is a destructive, irreversible operation that was not confirmed " +
+                "by the caller." + Environment.NewLine,
+            stderr.ToString());
+        Assert.Null(handler.LastRequest);
     }
 
     private static MockHttpMessageHandler SuccessHandler() =>

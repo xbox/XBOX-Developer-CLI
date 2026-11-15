@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
+using XboxDevCLI.Safety;
 using XboxDevCLI.Services;
 
 namespace XboxDevCLI.PlayFab.Commands;
@@ -35,17 +36,27 @@ internal static class PlayFabCommandHelper
     {
         var config = Program.GetConfiguration(parseResult);
 
-        // Honours the same test seam as Program.InvokeApiAsync. Commands reaching the API through
-        // this helper — file list among them — never touch that method, so without a shared seam
-        // their actions could not be driven end to end, and `file list` declaring a view its
-        // action ignored is exactly the regression this feature shipped once already.
+        // The test seam: tests drive real command actions end to end over a fake transport through
+        // it, which is how a command that declares a table view is shown to actually render it.
         if (Program.ApiClientFactory is { } factory)
         {
             return factory(config);
         }
 
         var authService = Program.GetAuthentication(parseResult);
-        return new PlayFabApiClient(config, authService);
+        try
+        {
+            return new PlayFabApiClient(config, authService);
+        }
+        catch (FormatException ex)
+        {
+            // The base URL template fails to format or parse, such as one with no scheme, or a
+            // placeholder other than {0}. Reported as the settings error it is, not as a bug.
+            throw new InvalidOperationException(
+                $"{EndpointOverrideWarning.ConfigurationKey} isn't a valid URL template: {ex.Message} " +
+                "Check XBOX_PLAYFAB__BASEURLTEMPLATE.",
+                ex);
+        }
     }
 
     /// <summary>
@@ -83,19 +94,7 @@ internal static class PlayFabCommandHelper
         try
         {
             var response = await client.CallApiAsync(apiPath, jsonBody, cancellationToken, confirmedDestructive);
-
-            if (output.TableView is null)
-            {
-                stdout.WriteLine(Program.FormatOutput(response, output.IsCompact, output.DataOnly));
-                return 0;
-            }
-
-            stdout.WriteLine(Program.FormatTableOutput(response, output.TableView));
-            if (Program.FormatNextPageNotice(response, output.Paging) is { } notice)
-            {
-                stderr.WriteLine(notice);
-            }
-
+            WriteResponse(response, output, stdout, stderr);
             return 0;
         }
         catch (PlayFabApiException ex)
@@ -103,10 +102,32 @@ internal static class PlayFabCommandHelper
             stderr.WriteLine(Program.FormatErrorOutput(ex, output.IsCompact));
             return 1;
         }
-        catch (Exception ex)
+        catch (DestructiveOperationNotConfirmedException ex)
         {
+            // The client refuses, before signing in, a destructive call the caller didn't confirm.
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
+        }
+    }
+
+    /// <summary>
+    /// Writes a successful response to <paramref name="stdout"/> in the shape
+    /// <paramref name="output"/> asks for: JSON, or the command's declared table. A table has no
+    /// place for a next-page token, so when the response carries one, the notice that more results
+    /// exist goes to <paramref name="stderr"/>.
+    /// </summary>
+    internal static void WriteResponse(string response, OutputOptions output, TextWriter stdout, TextWriter stderr)
+    {
+        if (output.TableView is null)
+        {
+            stdout.WriteLine(Program.FormatOutput(response, output.IsCompact, output.DataOnly));
+            return;
+        }
+
+        stdout.WriteLine(Program.FormatTableOutput(response, output.TableView));
+        if (Program.FormatNextPageNotice(response, output.Paging) is { } notice)
+        {
+            stderr.WriteLine(notice);
         }
     }
 
@@ -136,7 +157,9 @@ internal static class PlayFabCommandHelper
     /// SetAction-side boilerplate: resolves the global <c>--output</c>/<c>--data-only</c> options,
     /// constructs the shared <see cref="PlayFabApiClient"/>, and invokes <paramref name="run"/>
     /// with the client, resolved output options, and the process-global <see cref="Console"/>
-    /// streams. Client-construction/transport exceptions are surfaced to stderr as exit code 1.
+    /// streams. A failure the error boundary expects, such as a settings error, is written to
+    /// stderr as <c>Request failed: &lt;message&gt;</c> with exit code 1. Anything else is a bug,
+    /// and escapes with its stack trace.
     /// The per-command logic lives in <paramref name="run"/> (a <c>Run*Async</c> method) so it can
     /// be unit-tested with an injected client and captured writers. <paramref name="cancellationToken"/>
     /// is handed to <paramref name="run"/> so Ctrl-C and SIGTERM reach the PlayFab request.
@@ -153,9 +176,9 @@ internal static class PlayFabCommandHelper
             using var client = CreateClient(parseResult);
             return await run(client, output, Console.Out, Console.Error, cancellationToken);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (CommandErrorBoundary.IsExpected(ex))
         {
-            Console.Error.WriteLine($"Request failed: {ex.Message}");
+            Console.Error.WriteLine($"Request failed: {TerminalText.Message(ex.Message)}");
             return 1;
         }
     }

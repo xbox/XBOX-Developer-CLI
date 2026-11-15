@@ -91,6 +91,7 @@ public class PublishCommandTests
                     "Files with the same path are overwritten, files only XDKS.1 holds are added, and files only RETAIL " +
                     "holds are deleted. Deleted files can't be recovered.",
                 "Re-run with --confirm (--yes, -y) to publish without an interactive prompt.",
+                "Run with --validate-only first to see which achievements this publish adds to RETAIL.",
             ],
             Lines(stderr));
     }
@@ -112,8 +113,22 @@ public class PublishCommandTests
         Assert.Equal(1, prompt.Reads);
         string text = stderr.ToString();
         Assert.Contains($"This publishes CERT's latest working configuration to CERT for SCID {Scid}.", text, StringComparison.Ordinal);
-        Assert.Contains("Publish to CERT? [y/N]: ", text, StringComparison.Ordinal);
+        Assert.Contains(Environment.NewLine + Environment.NewLine + "Publish to CERT? [y/N]: ", text, StringComparison.Ordinal);
         Assert.Equal(!expected, text.Contains("Publish canceled.", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Confirm_WithTitleId_NamesTheTitleInsteadOfAnEmptyScid()
+    {
+        var prompt = new Prompt(interactive: false);
+        using var stderr = new StringWriter();
+        var request = new XboxLivePublishRequest(null, "RETAIL", "RETAIL", false, null, TitleId: "0000002A");
+
+        Assert.False(await PublishCommandFactory.ConfirmAsync(request, false, prompt.Dependencies, stderr, CancellationToken.None));
+
+        string text = stderr.ToString();
+        Assert.Contains("This publishes RETAIL's latest working configuration to RETAIL for title 0000002A.", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("for SCID", text, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -187,7 +202,7 @@ public class PublishCommandTests
     public void Parse_RejectsASourceOrVersionOnATitleWidePublish(string sandbox, string options, string remove)
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            $"xbl publish start --scid {Scid} --sandbox-id {sandbox} {options}",
+            $"xbl config publish --scid {Scid} --sandbox-id {sandbox} {options}",
             Program.NoResponseFileConfig);
 
         Assert.Contains(
@@ -198,13 +213,36 @@ public class PublishCommandTests
     }
 
     [Theory]
+    [InlineData("x")]
+    [InlineData("-1")]
+    [InlineData("99999999999999999999")]
+    public void Parse_ReportsAConfigsetThatIsNotANumberAsAParseError(string configSet)
+    {
+        ParseResult result = Program.BuildRootCommand().Parse(
+            ["xbl", "config", "publish", "--scid", Scid, "--sandbox-id", "XDKS.1", "--configset", configSet],
+            Program.NoResponseFileConfig);
+
+        Assert.Contains(result.Errors, error => error.Message.Contains($"'{configSet}'", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Parse_RejectsAConfigsetOfZero()
+    {
+        ParseResult result = Program.BuildRootCommand().Parse(
+            $"xbl config publish --scid {Scid} --sandbox-id XDKS.1 --configset 0",
+            Program.NoResponseFileConfig);
+
+        Assert.Contains(result.Errors, error => error.Message == "--configset must be positive when provided.");
+    }
+
+    [Theory]
     [InlineData("--sandbox-id HIDDEN")]
     [InlineData("--sandbox-id HIDDEN --validate-only")]
     [InlineData("--sandbox-id XDKS.1 --source-sandbox-id STAGE.0 --configset 14")]
     public void Parse_AllowsTitleWideWithoutASourceOrVersion(string options)
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            $"xbl publish start --scid {Scid} {options}",
+            $"xbl config publish --scid {Scid} {options}",
             Program.NoResponseFileConfig);
 
         Assert.Empty(result.Errors);
@@ -233,14 +271,178 @@ public class PublishCommandTests
             TaskContinuationOptions.ExecuteSynchronously,
             TaskScheduler.Default);
 
-        var run = await RunAsync(prompt, [], cancellation.Token, "--sandbox-id", "RETAIL")
+        var run = await RunAsync(
+                prompt,
+                new CapturingHandler(HttpStatusCode.OK, RetailValidation),
+                [],
+                cancellation.Token,
+                ["--sandbox-id", "RETAIL"])
             .WaitAsync(TimeSpan.FromSeconds(30));
 
         Assert.Equal(1, run.ExitCode);
         Assert.Equal(1, prompt.Reads);
-        Assert.Null(run.Handler.RequestBody);
+        using JsonDocument validation = JsonDocument.Parse(Assert.Single(run.Handler.Bodies));
+        Assert.True(validation.RootElement.GetProperty("validateOnly").GetBoolean());
         Assert.Empty(run.Stdout);
         Assert.EndsWith("Publish canceled." + Environment.NewLine, run.Stderr, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false, """{"Status":"Running"}""", "The service didn't report which achievements this publish adds to RETAIL.")]
+    [InlineData(true, """{"achievementChanges":{"added":[]}}""", "This publish would add no achievements to RETAIL.")]
+    [InlineData(false, """{"achievementChanges":{"added":[]}}""", "This publish adds no achievements to RETAIL.")]
+    [InlineData(false, """{"achievementChanges":{"added":["1"]}}""", "This publish adds 1 achievement to RETAIL: 1. Once they're live in RETAIL, achievements can't be removed, and their unlock rules and gamerscore can't change.")]
+    [InlineData(true, """{"achievementChanges":{"added":["1",null,"2\u001b"]}}""", "This publish would add 2 achievements to RETAIL: 1, 2. Once they're live in RETAIL, achievements can't be removed, and their unlock rules and gamerscore can't change.")]
+    public void FormatAchievementChanges_SaysWhatThePublishAdds(
+        bool validateOnly,
+        string response,
+        string expected)
+    {
+        XboxLivePublishResponse result = JsonSerializer.Deserialize<XboxLivePublishResponse>(response)!;
+
+        Assert.Equal(expected, PublishCommandFactory.FormatAchievementChanges(result, validateOnly));
+    }
+
+    [Theory]
+    [InlineData("RETAIL", true, true)]
+    [InlineData("retail", true, true)]
+    [InlineData("CERT", true, false)]
+    [InlineData("RETAIL", false, false)]
+    public async Task RunAsync_ValidatingRetail_ListsTheAchievementsItWouldAdd(string sandbox, bool validateOnly, bool listed)
+    {
+        (int exitCode, string stdout, string stderr) = await RunDirectAsync(
+            """{"Status":"Succeeded","SourceVersion":"52","achievementChanges":{"added":["1","2"]}}""",
+            sandbox: sandbox,
+            validateOnly: validateOnly);
+
+        Assert.Equal(0, exitCode);
+        Assert.Contains("achievementChanges", stdout, StringComparison.Ordinal);
+        Assert.Equal(listed, stderr.Contains("This publish would add 2 achievements to RETAIL: 1, 2.", StringComparison.Ordinal));
+    }
+
+    private const string RetailValidation =
+        """{"Status":"Succeeded","SourceVersion":"52","achievementChanges":{"added":["1","2"]}}""";
+
+    [Fact]
+    public async Task Command_ToRetailAnsweredYes_ListsTheAchievementsThenPublishesTheValidatedVersion()
+    {
+        var handler = new CapturingHandler(
+            (HttpStatusCode.OK, RetailValidation),
+            (HttpStatusCode.OK, """{"Status":"Running"}"""));
+        var run = await RunAsync(
+            new Prompt(interactive: true, "y"), handler,
+            "--sandbox-id", "RETAIL", "--source-sandbox-id", "XDKS.1", "--republish");
+
+        Assert.Equal(0, run.ExitCode);
+        Assert.Equal(2, handler.Bodies.Count);
+        using JsonDocument validation = JsonDocument.Parse(handler.Bodies[0]);
+        Assert.True(validation.RootElement.GetProperty("validateOnly").GetBoolean());
+        Assert.False(validation.RootElement.GetProperty("republish").GetBoolean());
+        Assert.Equal(JsonValueKind.Null, validation.RootElement.GetProperty("configSetVersion").ValueKind);
+        using JsonDocument publish = JsonDocument.Parse(handler.Bodies[1]);
+        Assert.False(publish.RootElement.GetProperty("validateOnly").GetBoolean());
+        Assert.True(publish.RootElement.GetProperty("republish").GetBoolean());
+        Assert.Equal(52UL, publish.RootElement.GetProperty("configSetVersion").GetUInt64());
+
+        int achievements = run.Stderr.IndexOf(
+            "This publish adds 2 achievements to RETAIL: 1, 2.", StringComparison.Ordinal);
+        Assert.InRange(achievements, 0, run.Stderr.IndexOf("Publish to RETAIL? [y/N]: ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Command_ToRetailWithUnpublishedSourceChanges_WarnsBeforeAsking()
+    {
+        var handler = new CapturingHandler(
+            (HttpStatusCode.OK,
+                """{"Status":"Succeeded","SourceVersion":"53","sourceHasUnpublishedChanges":true,"sourceLiveVersion":52,"achievementChanges":{"added":[]}}"""),
+            (HttpStatusCode.OK, """{"Status":"Running"}"""));
+        var run = await RunAsync(
+            new Prompt(interactive: true, "y"), handler,
+            "--sandbox-id", "RETAIL", "--source-sandbox-id", "XDKS.1");
+
+        Assert.Equal(0, run.ExitCode);
+        const string warning =
+            "Warning: XDKS.1 has unpublished changes. This publish uses its latest working version, 53; " +
+            "what's live in XDKS.1 is working version 52. To publish that instead, add --configset 52.";
+        Assert.InRange(
+            run.Stderr.IndexOf(warning, StringComparison.Ordinal),
+            0,
+            run.Stderr.IndexOf("Publish to RETAIL? [y/N]: ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Command_ToRetailWithAVersion_KeepsTheVersionGiven()
+    {
+        var handler = new CapturingHandler(
+            (HttpStatusCode.OK, RetailValidation),
+            (HttpStatusCode.OK, """{"Status":"Running"}"""));
+        var run = await RunAsync(
+            new Prompt(interactive: true, "y"), handler,
+            "--sandbox-id", "RETAIL", "--source-sandbox-id", "XDKS.1", "--configset", "7");
+
+        Assert.Equal(0, run.ExitCode);
+        Assert.Equal(2, handler.Bodies.Count);
+        Assert.All(handler.Bodies, body =>
+        {
+            using JsonDocument document = JsonDocument.Parse(body);
+            Assert.Equal(7UL, document.RootElement.GetProperty("configSetVersion").GetUInt64());
+        });
+    }
+
+    [Fact]
+    public async Task Command_ToRetailAnsweredNo_OnlyValidates()
+    {
+        var handler = new CapturingHandler(HttpStatusCode.OK, RetailValidation);
+        var run = await RunAsync(new Prompt(interactive: true, "n"), handler, "--sandbox-id", "RETAIL");
+
+        Assert.Equal(1, run.ExitCode);
+        using JsonDocument validation = JsonDocument.Parse(Assert.Single(handler.Bodies));
+        Assert.True(validation.RootElement.GetProperty("validateOnly").GetBoolean());
+        Assert.Contains("Publish canceled.", run.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Command_ToRetailWhenTheValidationFails_DoesNotAsk()
+    {
+        var prompt = new Prompt(interactive: true, "y");
+        var handler = new CapturingHandler(
+            HttpStatusCode.BadRequest,
+            """{"status":400,"code":"invalid_configuration","title":"Invalid","detail":"The configuration isn't valid."}""");
+        var run = await RunAsync(prompt, handler, "--sandbox-id", "RETAIL");
+
+        Assert.Equal(1, run.ExitCode);
+        Assert.Equal(0, prompt.Reads);
+        Assert.Single(handler.Bodies);
+        Assert.Contains("The configuration isn't valid.", run.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("Publish to RETAIL?", run.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Command_ToRetailOfSharedConfiguration_SaysToAllowItWithoutAsking()
+    {
+        var prompt = new Prompt(interactive: true, "y");
+        var handler = new CapturingHandler(
+            HttpStatusCode.Conflict,
+            """{"status":409,"code":"shared_configuration_requires_confirmation","title":"Shared configuration","detail":"Shared.","scid":"aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee","titleId":"00000043","boundTitleIds":["00000042","00000044"]}""");
+        var run = await RunAsync(prompt, handler, "--sandbox-id", "RETAIL");
+
+        Assert.Equal(1, run.ExitCode);
+        Assert.Equal(0, prompt.Reads);
+        Assert.Single(handler.Bodies);
+        Assert.Contains(XboxLiveConfigurationTarget.AllowSharedConfigurationHint, run.Stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Command_ToRetailWithoutASourceVersion_RefusesWithoutPublishing()
+    {
+        var handler = new CapturingHandler(
+            (HttpStatusCode.OK, """{"Status":"Succeeded","achievementChanges":{"added":[]}}"""));
+        var prompt = new Prompt(interactive: true, "y");
+        var run = await RunAsync(prompt, handler, "--sandbox-id", "RETAIL");
+
+        Assert.Equal(1, run.ExitCode);
+        Assert.Single(handler.Bodies);
+        Assert.Contains("Nothing was published", run.Stderr, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -254,8 +456,9 @@ public class PublishCommandTests
 
         Assert.Equal(0, run.ExitCode);
         Assert.Equal(0, prompt.Reads);
-        using JsonDocument body = JsonDocument.Parse(run.Handler.RequestBody!);
+        using JsonDocument body = JsonDocument.Parse(Assert.Single(run.Handler.Bodies));
         Assert.Equal("RETAIL", body.RootElement.GetProperty("sandbox").GetString());
+        Assert.False(body.RootElement.GetProperty("validateOnly").GetBoolean());
         Assert.False(body.RootElement.GetProperty("republish").GetBoolean());
         Assert.DoesNotContain("This publishes", run.Stderr, StringComparison.Ordinal);
     }
@@ -296,7 +499,7 @@ public class PublishCommandTests
     public void Parse_RejectsRepublishWithValidateOnly()
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            $"xbl publish start --scid {Scid} --sandbox-id XDKS.1 --republish --validate-only",
+            $"xbl config publish --scid {Scid} --sandbox-id XDKS.1 --republish --validate-only",
             Program.NoResponseFileConfig);
 
         Assert.Contains(
@@ -362,7 +565,7 @@ public class PublishCommandTests
     public async Task RunAsync_RetailLocked_ReportsTheGatewayError()
     {
         const string problem = """
-            {"status":409,"code":"retail_locked","title":"RETAIL is locked for this product.","detail":"XBOX Live locks RETAIL for a product after a migration, so it didn't publish. Republish to force the selected RETAIL configuration, by default its latest working one, onto RETAIL. Publishing to RETAIL from another sandbox, such as CERT, also clears the lock, but replaces RETAIL's working documents with that sandbox's. XBOX Live: Product is locked. Use force flag to force publish of retail"}
+            {"status":409,"code":"retail_locked","title":"RETAIL is locked for this product.","detail":"XBOX services lock RETAIL for a product after a migration, so they didn't publish. Republish to force the selected RETAIL configuration, by default its latest working one, onto RETAIL. Publishing to RETAIL from another sandbox, such as CERT, also clears the lock, but replaces RETAIL's working documents with that sandbox's. XBOX services: Product is locked. Use force flag to force publish of retail"}
             """;
         (int exitCode, string stdout, string stderr) = await RunDirectAsync(problem, HttpStatusCode.Conflict);
 
@@ -370,6 +573,93 @@ public class PublishCommandTests
         Assert.Empty(stdout);
         Assert.Contains("retail_locked", stderr, StringComparison.Ordinal);
         Assert.Contains("Republish to force the selected RETAIL configuration", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_CanceledAfterSending_SaysTheOutcomeIsUnknown()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var handler = new RespondingHandler(() =>
+        {
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellation.Token);
+        });
+
+        (int exitCode, string stdout, string stderr) = await RunDirectAsync(handler, cancellationToken: cancellation.Token);
+
+        Assert.Equal(PublishCommandFactory.OutcomeUnknownExitCode, exitCode);
+        Assert.Empty(stdout);
+        Assert.Collection(
+            Lines(stderr),
+            line => Assert.Matches("^x-ms-correlation-id: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", line),
+            line => Assert.Equal("It is unknown whether the publish to XDKS.1 started. Don't resubmit it.", line),
+            line => Assert.Equal($"Check with: xbox xbl config status --scid {Scid} --seller-id 12345 --sandbox-id XDKS.1", line));
+    }
+
+    [Fact]
+    public async Task RunAsync_TimedOutAfterSending_SaysTheOutcomeIsUnknown()
+    {
+        var handler = new RespondingHandler(() => throw new TaskCanceledException("timed out"));
+
+        (int exitCode, _, string stderr) = await RunDirectAsync(handler);
+
+        Assert.Equal(PublishCommandFactory.OutcomeUnknownExitCode, exitCode);
+        Assert.Contains("Request timed out." + Environment.NewLine, stderr, StringComparison.Ordinal);
+        Assert.Contains("It is unknown whether the publish to XDKS.1 started.", stderr, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunAsync_ValidateOnlyCanceled_StopsWithoutAnUnknownOutcome()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var handler = new RespondingHandler(() =>
+        {
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellation.Token);
+        });
+        using var client = CreateClient(handler);
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => PublishCommandFactory.RunAsync(
+            client, 12345, Request("XDKS.1", validateOnly: true), OutputOptions.Json, stdout, stderr, cancellation.Token));
+
+        Assert.Empty(stdout.ToString());
+        Assert.Empty(stderr.ToString());
+    }
+
+    [Fact]
+    public async Task Command_CanceledAfterSending_ExitsWithTheUnknownOutcome()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var handler = new RespondingHandler(() =>
+        {
+            cancellation.Cancel();
+            throw new OperationCanceledException(cancellation.Token);
+        });
+        TextWriter originalOut = Console.Out;
+        TextWriter originalError = Console.Error;
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        Console.SetOut(stdout);
+        Console.SetError(stderr);
+        Program.XboxPartnerClientFactory = _ => CreateClient(handler);
+        try
+        {
+            int exitCode = await Program.BuildRootCommand()
+                .Parse(["xbl", "config", "publish", "--scid", Scid, "--seller-id", "1234567", "--sandbox-id", "XDKS.1"],
+                    Program.NoResponseFileConfig)
+                .InvokeAsync(cancellationToken: cancellation.Token);
+
+            Assert.Equal(PublishCommandFactory.OutcomeUnknownExitCode, exitCode);
+            Assert.Contains("It is unknown whether the publish to XDKS.1 started.", stderr.ToString(), StringComparison.Ordinal);
+        }
+        finally
+        {
+            Program.XboxPartnerClientFactory = null;
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+        }
     }
 
     private static XboxLivePublishRequest Request(
@@ -390,7 +680,9 @@ public class PublishCommandTests
 
     private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDirectAsync(
         string response,
-        HttpStatusCode status = HttpStatusCode.OK)
+        HttpStatusCode status = HttpStatusCode.OK,
+        string sandbox = "XDKS.1",
+        bool validateOnly = false)
     {
         using var client = CreateClient(new CapturingHandler(status, response));
         using var stdout = new StringWriter();
@@ -398,11 +690,23 @@ public class PublishCommandTests
         int exitCode = await PublishCommandFactory.RunAsync(
             client,
             12345,
-            Request("XDKS.1"),
+            Request(sandbox, "XDKS.1", validateOnly: validateOnly),
             OutputOptions.Json,
             stdout,
             stderr,
             CancellationToken.None);
+        return (exitCode, stdout.ToString(), stderr.ToString());
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunDirectAsync(
+        HttpMessageHandler handler,
+        CancellationToken cancellationToken = default)
+    {
+        using var client = CreateClient(handler);
+        using var stdout = new StringWriter();
+        using var stderr = new StringWriter();
+        int exitCode = await PublishCommandFactory.RunAsync(
+            client, 12345, Request("XDKS.1"), OutputOptions.Json, stdout, stderr, cancellationToken);
         return (exitCode, stdout.ToString(), stderr.ToString());
     }
 
@@ -412,20 +716,30 @@ public class PublishCommandTests
     private static Task<CommandRun> RunAsync(Prompt prompt, string[] globalOptions, params string[] options) =>
         RunAsync(prompt, globalOptions, CancellationToken.None, options);
 
-    private static async Task<CommandRun> RunAsync(
+    private static Task<CommandRun> RunAsync(
         Prompt prompt,
         string[] globalOptions,
         CancellationToken cancellationToken,
-        params string[] options)
+        params string[] options) =>
+        RunAsync(prompt, new CapturingHandler(HttpStatusCode.OK, """{"Status":"Running"}"""), globalOptions, cancellationToken, options);
+
+    private static Task<CommandRun> RunAsync(Prompt prompt, CapturingHandler handler, params string[] options) =>
+        RunAsync(prompt, handler, [], CancellationToken.None, options);
+
+    private static async Task<CommandRun> RunAsync(
+        Prompt prompt,
+        CapturingHandler handler,
+        string[] globalOptions,
+        CancellationToken cancellationToken,
+        string[] options)
     {
         RootCommand root = Program.BuildRootCommand();
-        Command publish = root.Subcommands.Single(command => command.Name == "xbl")
-            .Subcommands.Single(command => command.Name == "publish");
-        publish.Subcommands.Remove(publish.Subcommands.Single(command => command.Name == "start"));
-        publish.Subcommands.Add(PublishCommandFactory.Create(prompt.Dependencies));
+        Command config = root.Subcommands.Single(command => command.Name == "xbl")
+            .Subcommands.Single(command => command.Name == "config");
+        config.Subcommands.Remove(config.Subcommands.Single(command => command.Name == "publish"));
+        config.Subcommands.Add(PublishCommandFactory.Create(prompt.Dependencies));
         CommandErrorBoundary.Install(root);
 
-        var handler = new CapturingHandler(HttpStatusCode.OK, """{"Status":"Running"}""");
         TextWriter originalOut = Console.Out;
         TextWriter originalError = Console.Error;
         using var stdout = new StringWriter();
@@ -438,7 +752,7 @@ public class PublishCommandTests
             string[] args =
             [
                 .. globalOptions,
-                "xbl", "publish", "start", "--scid", Scid, "--seller-id", "1234567",
+                "xbl", "config", "publish", "--scid", Scid, "--seller-id", "1234567",
                 .. options,
             ];
             int exitCode = await root.Parse(args, Program.NoResponseFileConfig)
@@ -485,17 +799,34 @@ public class PublishCommandTests
             });
     }
 
-    private sealed class CapturingHandler(HttpStatusCode status, string response) : HttpMessageHandler
+    private sealed class RespondingHandler(Func<HttpResponseMessage> respond) : HttpMessageHandler
     {
-        public string? RequestBody { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) => Task.FromResult(respond());
+    }
+
+    /// <summary>Answers each request with the next response, repeating the last one.</summary>
+    private sealed class CapturingHandler(params (HttpStatusCode Status, string Response)[] responses)
+        : HttpMessageHandler
+    {
+        public CapturingHandler(HttpStatusCode status, string response)
+            : this((status, response))
+        {
+        }
+
+        public List<string> Bodies { get; } = [];
+
+        public string? RequestBody => Bodies.Count == 0 ? null : Bodies[^1];
 
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken)
         {
-            RequestBody = request.Content is null
+            Bodies.Add(request.Content is null
                 ? string.Empty
-                : await request.Content.ReadAsStringAsync(cancellationToken);
+                : await request.Content.ReadAsStringAsync(cancellationToken));
+            (HttpStatusCode status, string response) = responses[Math.Min(Bodies.Count, responses.Length) - 1];
             return new HttpResponseMessage(status)
             {
                 Content = new StringContent(response, Encoding.UTF8, "application/json"),

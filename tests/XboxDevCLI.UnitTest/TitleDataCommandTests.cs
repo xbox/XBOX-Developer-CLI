@@ -4,8 +4,6 @@
 using System.CommandLine;
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
 using Moq;
 using XboxDevCLI.PlayFab.Commands;
 using XboxDevCLI.PlayFab.Generated;
@@ -18,53 +16,6 @@ namespace XboxDevCLI.UnitTest;
 [Collection("ConsoleRedirect")]
 public class TitleDataCommandTests
 {
-    private static IConfiguration CreateTestConfiguration(
-        string titleId = "TEST123",
-        string baseUrlTemplate = "https://{0}.playfabapi.com",
-        long? maxResponseBytes = null)
-    {
-        return new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = titleId,
-                ["PlayFab:BaseUrlTemplate"] = baseUrlTemplate,
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-                ["PlayFab:MaxResponseBytes"] = maxResponseBytes?.ToString(),
-            })
-            .Build();
-    }
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken) =>
-        new(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-
-    private static PlayFabApiClient CreateClientWithHandler(
-        HttpMessageHandler handler,
-        Mock<AuthenticationService>? mockAuth = null,
-        long? maxResponseBytes = null)
-    {
-        var config = CreateTestConfiguration(maxResponseBytes: maxResponseBytes);
-        if (mockAuth is null)
-        {
-            mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-            mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        }
-
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     private static HttpResponseMessage Ok(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
@@ -90,7 +41,6 @@ public class TitleDataCommandTests
         Assert.Contains(get.Options, o => o.Name == "--internal");
         Assert.Contains(get.Options, o => o.Name == "--key");
         Assert.Contains(get.Options, o => o.Name == "--keys");
-        Assert.Contains(get.Options, o => o.Name == "--value-only");
 
         var set = command.Subcommands.Single(c => c.Name == "set");
         Assert.Contains(set.Options, o => o.Name == "--internal");
@@ -152,7 +102,7 @@ public class TitleDataCommandTests
     public async Task AllFourEndpoints_AreReachableThroughClient()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{"Data":{}}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         foreach (var (apiPath, request) in new[]
                  {
@@ -181,14 +131,14 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_SingleKey_PrintsBareValueByDefault()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"motd":"hello players"}}}""")));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
         // --key with no explicit structured-output request prints just the value.
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, null, "motd", null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, stdout, stderr, cancellationToken: CancellationToken.None);
+            client, false, null, "motd", null, explicitStructuredOutput: false, OutputOptions.Json, stdout, stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         Assert.Equal("hello players", stdout.ToString().Trim());
@@ -198,49 +148,15 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_PositionalKey_PrintsBareValueByDefault()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"motd":"hello players"}}}""")));
         var stdout = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "motd", null, null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, stdout, new StringWriter(), cancellationToken: CancellationToken.None);
+            client, false, "motd", null, null, explicitStructuredOutput: false, OutputOptions.Json, stdout, new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         Assert.Equal("hello players", stdout.ToString().Trim());
-    }
-
-    [Fact]
-    public async Task RunGetAsync_ValueOnlyFlag_WarnsAndStillPrintsBareValue()
-    {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
-            Ok("""{"code":200,"status":"OK","data":{"Data":{"motd":"hello players"}}}""")));
-        var stdout = new StringWriter();
-        var stderr = new StringWriter();
-
-        // --value-only is a deprecated alias; combining it with a single positional key is not an error.
-        var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "motd", null, null, valueOnly: true, explicitStructuredOutput: false, OutputOptions.Json, stdout, stderr, cancellationToken: CancellationToken.None);
-
-        Assert.Equal(0, exit);
-        Assert.Equal("hello players", stdout.ToString().Trim());
-        Assert.Contains("Warning: --value-only is deprecated", stderr.ToString());
-    }
-
-    [Fact]
-    public async Task RunGetAsync_ValueOnlyFlag_DoesNotOverrideExplicitStructuredOutput()
-    {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
-            Ok("""{"code":200,"status":"OK","data":{"Data":{"motd":"hello players"}}}""")));
-        var stdout = new StringWriter();
-
-        // The flag is not an output switch: an explicit structured-output request still wins.
-        var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "motd", null, null, valueOnly: true, explicitStructuredOutput: true, OutputOptions.Json, stdout, new StringWriter(), cancellationToken: CancellationToken.None);
-
-        Assert.Equal(0, exit);
-        Assert.Contains("\"code\"", stdout.ToString());
-        Assert.Contains("\"Data\"", stdout.ToString());
-        Assert.NotEqual("hello players", stdout.ToString().Trim());
     }
 
     [Theory]
@@ -272,13 +188,13 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_SingleKey_ExplicitOutput_PrintsEnvelope()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"motd":"hello players"}}}""")));
         var stdout = new StringWriter();
 
-        // An explicit -o json request wins over the value-only default: the full envelope is printed.
+        // An explicit -o json request wins over the bare-value default: the full envelope is printed.
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "motd", null, null, valueOnly: false, explicitStructuredOutput: true, OutputOptions.Json, stdout, new StringWriter(), cancellationToken: CancellationToken.None);
+            client, false, "motd", null, null, explicitStructuredOutput: true, OutputOptions.Json, stdout, new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         Assert.Contains("\"code\"", stdout.ToString());
@@ -288,13 +204,13 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_SingleKey_DataOnly_PrintsStructuredPayload()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"motd":"hello players"}}}""")));
         var stdout = new StringWriter();
 
         // --data-only is an explicit structured-output request; it strips the envelope but keeps JSON.
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "motd", null, null, valueOnly: false, explicitStructuredOutput: true, new OutputOptions("json-compact", true), stdout, new StringWriter(), cancellationToken: CancellationToken.None);
+            client, false, "motd", null, null, explicitStructuredOutput: true, new OutputOptions("json-compact", true), stdout, new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         Assert.DoesNotContain("\"code\"", stdout.ToString());
@@ -304,12 +220,12 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_SingleKey_MissingKey_ReturnsOne()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"other":"x"}}}""")));
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "motd", null, null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
+            client, false, "motd", null, null, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
         Assert.Contains("not found", stderr.ToString());
@@ -320,13 +236,13 @@ public class TitleDataCommandTests
     [InlineData(true)]
     public async Task RunGetAsync_SingleKey_MissingKeyWithStructuredOutput_ReturnsOne(bool dataOnly)
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) =>
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"other":"x"}}}""")));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "motd", null, null, valueOnly: false, explicitStructuredOutput: true,
+            client, false, "motd", null, null, explicitStructuredOutput: true,
             new OutputOptions("json", dataOnly), stdout, stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
@@ -337,11 +253,11 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_PositionalAndKeyOption_Rejected()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "a", "b", null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
+            client, false, "a", "b", null, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
         Assert.Contains("positional key or --key", stderr.ToString());
@@ -350,11 +266,11 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_PositionalKeyAndKeys_Rejected()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "a", null, "b,c", valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
+            client, false, "a", null, "b,c", explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
         Assert.Contains("single key or --keys", stderr.ToString());
@@ -366,11 +282,11 @@ public class TitleDataCommandTests
     public async Task RunGetAsync_PositionalKeyAndBlankKeys_Rejected(string blankKeys)
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, "a", null, blankKeys, valueOnly: false, explicitStructuredOutput: false,
+            client, false, "a", null, blankKeys, explicitStructuredOutput: false,
             OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
@@ -381,11 +297,11 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunGetAsync_KeyOptionAndKeys_Rejected()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, null, "a", "b,c", valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
+            client, false, null, "a", "b,c", explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
         Assert.Contains("single key or --keys", stderr.ToString());
@@ -397,12 +313,12 @@ public class TitleDataCommandTests
     public async Task RunGetAsync_BlankPositionalKey_Rejected(string blankKey)
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         // A present-but-blank positional key must be rejected, not silently treated as an all-keys read.
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, blankKey, null, null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
+            client, false, blankKey, null, null, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
         Assert.Contains("Key must not be blank", stderr.ToString());
@@ -415,28 +331,34 @@ public class TitleDataCommandTests
     public async Task RunGetAsync_BlankKeyOption_Rejected(string blankKey)
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, null, blankKey, null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
+            client, false, null, blankKey, null, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
         Assert.Contains("Key must not be blank", stderr.ToString());
         Assert.Empty(handler.Requests);
     }
 
-    [Fact]
-    public async Task RunGetAsync_ValueOnlyWithoutKey_Rejected()
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(" , ")]
+    public async Task RunGetAsync_BlankKeys_Rejected(string blankKeys)
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
+        var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, null, null, "a,b", valueOnly: true, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
+            client, false, null, null, blankKeys, explicitStructuredOutput: false,
+            OutputOptions.Json, new StringWriter(), stderr, cancellationToken: CancellationToken.None);
 
         Assert.Equal(1, exit);
-        Assert.Contains("requires a single key", stderr.ToString());
+        Assert.Equal("--keys must contain at least one key." + Environment.NewLine, stderr.ToString());
+        Assert.Empty(handler.Requests);
     }
 
     [Fact]
@@ -444,10 +366,10 @@ public class TitleDataCommandTests
     {
         var handler = new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"a":"1","b":"2"}}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, null, null, "a, b", valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
+            client, false, null, null, "a, b", explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         using var body = JsonDocument.Parse(handler.Requests.Single().Body!);
@@ -460,10 +382,10 @@ public class TitleDataCommandTests
     {
         var handler = new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"a":"1"}}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, null, null, null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
+            client, false, null, null, null, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         using var body = JsonDocument.Parse(handler.Requests.Single().Body!);
@@ -475,10 +397,10 @@ public class TitleDataCommandTests
     {
         var handler = new TitleDataMockHandler((_, _, _) =>
             Ok("""{"code":200,"status":"OK","data":{"Data":{"secret":"s"}}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, true, "secret", null, null, valueOnly: false, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
+            client, true, "secret", null, null, explicitStructuredOutput: false, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         Assert.Contains("/Admin/GetTitleInternalData", handler.Requests.Single().Uri);
@@ -488,17 +410,17 @@ public class TitleDataCommandTests
     public async Task RunGetAsync_OutputRendering_HonorsJsonCompactAndDataOnly()
     {
         const string responseJson = """{"code":200,"status":"OK","data":{"Data":{"a":"1"}}}""";
-        using var prettyClient = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok(responseJson)));
+        using var prettyClient = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok(responseJson)));
         var pretty = new StringWriter();
-        await TitleDataCommandFactory.RunGetAsync(prettyClient, false, null, null, null, false, false, OutputOptions.Json, pretty, new StringWriter(), CancellationToken.None);
+        await TitleDataCommandFactory.RunGetAsync(prettyClient, false, null, null, null, false, OutputOptions.Json, pretty, new StringWriter(), CancellationToken.None);
 
-        using var compactClient = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok(responseJson)));
+        using var compactClient = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok(responseJson)));
         var compact = new StringWriter();
-        await TitleDataCommandFactory.RunGetAsync(compactClient, false, null, null, null, false, false, OutputOptions.JsonCompact, compact, new StringWriter(), CancellationToken.None);
+        await TitleDataCommandFactory.RunGetAsync(compactClient, false, null, null, null, false, OutputOptions.JsonCompact, compact, new StringWriter(), CancellationToken.None);
 
-        using var dataOnlyClient = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok(responseJson)));
+        using var dataOnlyClient = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok(responseJson)));
         var dataOnly = new StringWriter();
-        await TitleDataCommandFactory.RunGetAsync(dataOnlyClient, false, null, null, null, false, true, new OutputOptions("json-compact", true), dataOnly, new StringWriter(), CancellationToken.None);
+        await TitleDataCommandFactory.RunGetAsync(dataOnlyClient, false, null, null, null, true, new OutputOptions("json-compact", true), dataOnly, new StringWriter(), CancellationToken.None);
 
         Assert.Contains("\n", pretty.ToString().TrimEnd());
         Assert.DoesNotContain("\n", compact.ToString().TrimEnd());
@@ -511,11 +433,11 @@ public class TitleDataCommandTests
     public async Task RunGetAsync_ApiError_ReturnsOneAndWritesError()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Error(HttpStatusCode.BadRequest, "bad keys"));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunGetAsync(
-            client, false, null, null, null, false, false, OutputOptions.Json, new StringWriter(), stderr,
+            client, false, null, null, null, false, OutputOptions.Json, new StringWriter(), stderr,
             CancellationToken.None);
 
         Assert.Equal(1, exit);
@@ -526,7 +448,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_KeyValue_SetsSingleKey()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         // The value is stored verbatim, including '=' characters.
@@ -545,7 +467,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_Internal_UsesInternalEndpoint()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
             client, true, "secret", "1", null, OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -559,7 +481,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_DataObject_StringifiesValues()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         const string dataJson = """{"s":"text","n":5,"b":true,"o":{"x":1},"a":[1,2]}""";
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -579,7 +501,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_DataObject_NullRejects()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -599,7 +521,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_DataNonObject_ReturnsFriendlyError(string dataJson)
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -615,7 +537,7 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunSetAsync_KeyValueAndData_Rejected()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -629,7 +551,7 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunSetAsync_NothingToSet_ReturnsOne()
     {
-        using var client = CreateClientWithHandler(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
+        using var client = PlayFabTestClient.Create(new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}""")));
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -645,7 +567,7 @@ public class TitleDataCommandTests
     {
         var handler = new TitleDataMockHandler((_, _, index) =>
             index == 1 ? Ok("""{"code":200,"status":"OK","data":{}}""") : Error(HttpStatusCode.BadRequest, "bad b"));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -678,7 +600,7 @@ public class TitleDataCommandTests
             cts.Cancel();
             throw new OperationCanceledException(cts.Token);
         });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -705,7 +627,7 @@ public class TitleDataCommandTests
     {
         var handler = new TitleDataMockHandler((_, _, index) =>
             index == 1 ? Ok("""{"code":200,"status":"OK","data":{}}""") : Error(HttpStatusCode.GatewayTimeout, "timeout"));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -739,7 +661,7 @@ public class TitleDataCommandTests
                 {
                     Content = new StreamContent(new PlayFabApiClientTests.FailingStream(new IOException("response lost"))),
                 });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -770,7 +692,7 @@ public class TitleDataCommandTests
                 {
                     Content = new StringContent(new string('x', 64)),
                 });
-        using var client = CreateClientWithHandler(handler, maxResponseBytes: 32);
+        using var client = PlayFabTestClient.Create(handler, maxResponseBytes: 32);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -803,7 +725,7 @@ public class TitleDataCommandTests
             index == 2
                 ? Ok("""{"data":{"padding":"PADDING"}}""".Replace("PADDING", new string('x', 64)))
                 : Ok("""{"data":{}}"""));
-        using var client = CreateClientWithHandler(handler, maxResponseBytes: 32);
+        using var client = PlayFabTestClient.Create(handler, maxResponseBytes: 32);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -826,14 +748,13 @@ public class TitleDataCommandTests
     [Fact]
     public async Task RunSetAsync_SignInFailsOnALaterKey_ReportsItAsNotSent()
     {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
+        var mockAuth = new Mock<AuthenticationService>(PlayFabTestClient.CreateConfiguration()) { CallBase = false };
         mockAuth
             .SetupSequence(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMockAuthResult("token"))
+            .ReturnsAsync(FakeAuthenticationService.CreateToken())
             .ThrowsAsync(new InvalidOperationException("sign-in expired"));
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"data":{}}"""));
-        using var client = CreateClientWithHandler(handler, mockAuth);
+        using var client = PlayFabTestClient.Create(handler, mockAuth.Object);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -858,17 +779,17 @@ public class TitleDataCommandTests
     public async Task RunDeleteAsync_CanceledWhileSigningInForALaterKey_ReportsItAsNotSent()
     {
         using var cts = new CancellationTokenSource();
-        var mockAuth = new Mock<AuthenticationService>(CreateTestConfiguration()) { CallBase = false };
+        var mockAuth = new Mock<AuthenticationService>(PlayFabTestClient.CreateConfiguration()) { CallBase = false };
         mockAuth
             .SetupSequence(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMockAuthResult("token"))
+            .ReturnsAsync(FakeAuthenticationService.CreateToken())
             .Returns(() =>
             {
                 cts.Cancel();
                 return Task.FromCanceled<Microsoft.Identity.Client.AuthenticationResult?>(cts.Token);
             });
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler, mockAuth);
+        using var client = PlayFabTestClient.Create(handler, mockAuth.Object);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunDeleteAsync(
@@ -888,7 +809,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_BlankKey_Rejected(string blankKey)
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -904,7 +825,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_KeyWithoutValue_Rejected()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -920,7 +841,7 @@ public class TitleDataCommandTests
     public async Task RunSetAsync_ValueWithoutKey_Rejected()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunSetAsync(
@@ -945,7 +866,7 @@ public class TitleDataCommandTests
     public async Task RunDeleteAsync_LoopsSetTitleDataWithNullValues()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await TitleDataCommandFactory.RunDeleteAsync(
             client, false, "a,b", OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -963,7 +884,7 @@ public class TitleDataCommandTests
     {
         var handler = new TitleDataMockHandler((_, _, index) =>
             index == 1 ? Ok("""{"code":200,"status":"OK","data":{}}""") : Error(HttpStatusCode.BadRequest, "bad b"));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunDeleteAsync(
@@ -978,15 +899,18 @@ public class TitleDataCommandTests
         Assert.Contains("bad b", summary.RootElement.GetProperty("failed").GetProperty("error").GetRawText());
     }
 
-    [Fact]
-    public async Task RunDeleteAsync_EmptyKeys_ReturnsOne()
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(" , ")]
+    public async Task RunDeleteAsync_EmptyKeys_ReturnsOne(string blankKeys)
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunDeleteAsync(
-            client, false, " , ", OutputOptions.Json, new StringWriter(), stderr,
+            client, false, blankKeys, OutputOptions.Json, new StringWriter(), stderr,
             CancellationToken.None);
 
         Assert.Equal(1, exit);
@@ -998,7 +922,7 @@ public class TitleDataCommandTests
     public async Task RunDeleteAsync_SucceedsWithoutConfirm()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await TitleDataCommandFactory.RunDeleteAsync(
             client, false, "a", OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -1013,7 +937,7 @@ public class TitleDataCommandTests
     public async Task RunDeleteAsync_ApiError_ReturnsOne()
     {
         var handler = new TitleDataMockHandler((_, _, _) => Error(HttpStatusCode.BadRequest, "delete failed"));
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await TitleDataCommandFactory.RunDeleteAsync(

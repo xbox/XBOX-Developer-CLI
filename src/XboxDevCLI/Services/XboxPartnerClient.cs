@@ -7,7 +7,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Services;
 
@@ -155,10 +155,8 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         ArgumentException.ThrowIfNullOrWhiteSpace(sellerId);
         sellerId = sellerId.Trim();
         var uri = BuildRequestUri(baseUrl, path);
-        cancellationToken.ThrowIfCancellationRequested();
-        var token = await AcquireRequiredTokenAsync(cancellationToken);
         var response = await SendAuthorizedAsync(
-            uri, token, sellerId, cancellationToken, method, jsonBody, Guid.NewGuid().ToString(), onSending);
+            uri, sellerId, cancellationToken, method, jsonBody, Guid.NewGuid().ToString(), onSending);
         try
         {
             XboxPartnerCreationJob? job = JsonSerializer.Deserialize<TJob>(response.Body);
@@ -189,10 +187,9 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         string baseUrl,
         CancellationToken cancellationToken = default)
     {
-        var token = await AcquireRequiredTokenAsync(cancellationToken);
         var requestUri = BuildRequestUri(baseUrl, "xboxpartner/v1/sellers");
-        var body = await GetAuthorizedAsync(requestUri, token, null, cancellationToken);
-        return new XboxPartnerSellersResult(body);
+        var response = await SendAuthorizedAsync(requestUri, null, cancellationToken, HttpMethod.Get);
+        return new XboxPartnerSellersResult(response.Body);
     }
 
     /// <summary>
@@ -216,90 +213,70 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         AddQueryValue(filters, "titleId", titleId);
         AddQueryValue(filters, "storeId", storeId);
         AddQueryValue(filters, "keyword", keyword);
-
-        // One correlation ID lets the gateway logs trace the listing as a whole.
-        var correlationId = Guid.NewGuid().ToString();
-        var games = new List<string>();
-        var seenTokens = new HashSet<string>(StringComparer.Ordinal);
-        string? continuationToken = null;
-        do
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            var token = await AcquireRequiredTokenAsync(cancellationToken);
-            var paging = continuationToken == null
-                ? $"pageSize={GamesPageSize}"
-                : $"continuationToken={Uri.EscapeDataString(continuationToken)}";
-            var requestUri = BuildRequestUri(
-                baseUrl,
-                $"xboxpartner/v1/games?{string.Join('&', filters.Append(paging))}");
-            var response = await SendAuthorizedAsync(
-                requestUri,
-                token,
-                sellerId,
-                cancellationToken,
-                HttpMethod.Get,
-                correlationId: correlationId);
-            try
+        IReadOnlyList<string> games = await ReadEveryPageAsync(
+            "games",
+            "game",
+            token =>
             {
-                var page = ReadPage(response.Body, "games", "game");
-                games.AddRange(page.Items);
-                pageRead?.Invoke(page.Items.Count);
-
-                // A Store ID identifies at most one game.
-                if (storeId != null && page.Items.Count > 0)
-                {
-                    break;
-                }
-
-                continuationToken = page.ContinuationToken;
-                if (continuationToken != null && !seenTokens.Add(continuationToken))
-                {
-                    throw new InvalidDataException(
-                        "The game response repeated a continuation token.");
-                }
-            }
-            catch (InvalidDataException exception)
-            {
-                // Carries the listing's correlation ID to the error output.
-                throw new XboxPartnerResponseException(
-                    response.Body, response.CorrelationId, exception);
-            }
-        }
-        while (continuationToken != null);
-
+                var paging = token == null
+                    ? $"pageSize={GamesPageSize}"
+                    : $"continuationToken={Uri.EscapeDataString(token)}";
+                return (HttpMethod.Get, $"xboxpartner/v1/games?{string.Join('&', filters.Append(paging))}", null);
+            },
+            cancellationToken,
+            pageRead: pageRead,
+            baseUrl: baseUrl,
+            sellerId: sellerId,
+            // A Store ID identifies at most one game.
+            stopAtFirstMatch: storeId != null);
         return "{\"games\":[" + string.Join(',', games) + "]}";
     }
 
     /// <summary>
     /// Reads every page of a list with one correlation ID and returns its items in order, as raw
     /// JSON. <paramref name="request"/> builds a page's request from its continuation token, which
-    /// is null for the first page. <paramref name="readItem"/> sees each item as its page
-    /// arrives; an <see cref="InvalidDataException"/> from it fails the listing with the
-    /// correlation ID. <paramref name="pageRead"/> is called with each page's item count.
+    /// is null for the first page, with a path relative to <paramref name="baseUrl"/>, or to the
+    /// configured base URL when that's null. <paramref name="sellerId"/>, when given, is sent in the
+    /// seller header. <paramref name="readItem"/> sees each item as its page arrives; an
+    /// <see cref="InvalidDataException"/> from it fails the listing with the correlation ID.
+    /// <paramref name="pageRead"/> is called with each page's item count.
     /// </summary>
+    /// <remarks>
+    /// A repeated token would loop forever, so it fails the listing, and so does a listing that
+    /// doesn't end within <paramref name="maxPages"/> pages. With <paramref name="stopAtFirstMatch"/>,
+    /// the first page that has items ends the listing.
+    /// </remarks>
     private async Task<IReadOnlyList<string>> ReadEveryPageAsync(
         string collection,
         string description,
         Func<string?, (HttpMethod Method, string Path, HttpContent? Content)> request,
         CancellationToken cancellationToken,
         Action<string>? readItem = null,
-        string? serviceName = null,
-        Action<int>? pageRead = null)
+        Action<int>? pageRead = null,
+        Action<HttpResponseMessage, string>? responseReceived = null,
+        string? baseUrl = null,
+        string? sellerId = null,
+        bool stopAtFirstMatch = false,
+        int maxPages = int.MaxValue)
     {
-        string responseName = serviceName is null ? description : $"{serviceName} {description}";
         var correlationId = Guid.NewGuid().ToString();
         var items = new List<string>();
         var seenTokens = new HashSet<string>(StringComparer.Ordinal);
         string? continuationToken = null;
+        var pages = 0;
         do
         {
+            pages++;
             var (method, path, content) = request(continuationToken);
-            var body = await SendAsync(
-                method, path, content, cancellationToken, correlationId: correlationId,
-                serviceName: serviceName ?? "The");
+            using HttpResponseMessage response = await SendResponseAsync(
+                method, BuildRequestUri(baseUrl ?? GetConfiguredBaseUrl(), path), content, "application/json",
+                cancellationToken, correlationId, sellerId: sellerId);
+            responseReceived?.Invoke(response, correlationId);
+            using var bodyTimeout = CreateResponseBodyTimeout(cancellationToken);
+            string body = await ReadResponseBodyWithLimitAsync(response.Content, bodyTimeout.Token);
             try
             {
-                var page = ReadPage(body, collection, description, serviceName);
+                var page = ReadPage(body, collection, description);
                 if (readItem != null)
                 {
                     foreach (var item in page.Items)
@@ -310,16 +287,28 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
 
                 items.AddRange(page.Items);
                 pageRead?.Invoke(page.Items.Count);
+                if (stopAtFirstMatch && page.Items.Count > 0)
+                {
+                    break;
+                }
+
                 continuationToken = page.ContinuationToken;
                 if (continuationToken != null && !seenTokens.Add(continuationToken))
                 {
                     throw new InvalidDataException(
-                        $"The {responseName} response repeated a continuation token.");
+                        $"The {description} response repeated a continuation token.");
+                }
+
+                if (continuationToken != null && pages >= maxPages)
+                {
+                    throw new InvalidDataException(
+                        $"The {description} did not end after {maxPages} pages, so it was stopped.");
                 }
             }
             catch (InvalidDataException exception)
             {
-                throw new XboxPartnerResponseException(body, correlationId, exception);
+                throw new XboxPartnerResponseException(
+                    body, ReadCorrelationId(response) ?? correlationId, exception);
             }
         }
         while (continuationToken != null);
@@ -327,9 +316,8 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         return items;
     }
 
-    private static ListPage ReadPage(string body, string collection, string description, string? serviceName = null)
+    private static ListPage ReadPage(string body, string collection, string description)
     {
-        string responseName = serviceName is null ? description : $"{serviceName} {description}";
         try
         {
             using var document = JsonDocument.Parse(body);
@@ -339,7 +327,7 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
                 || items.ValueKind != JsonValueKind.Array)
             {
                 throw new InvalidDataException(
-                    $"The {responseName} response must contain the {collection} array.");
+                    $"The {description} response must contain the {collection} array.");
             }
 
             string? continuationToken = null;
@@ -349,7 +337,7 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
                 continuationToken = value.ValueKind == JsonValueKind.String
                     ? value.GetString()
                     : throw new InvalidDataException(
-                        $"The {responseName} response contained a continuationToken that was "
+                        $"The {description} response contained a continuationToken that was "
                         + "not a string.");
             }
 
@@ -361,7 +349,7 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         catch (Exception exception) when (exception is JsonException or ArgumentException)
         {
             throw new InvalidDataException(
-                $"The {responseName} response was not valid JSON.",
+                $"The {description} response was not valid JSON.",
                 exception);
         }
     }
@@ -419,129 +407,52 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         return new Uri($"{baseUrl.TrimEnd('/')}/{relativePath}", UriKind.Absolute);
     }
 
-    private async Task<string> GetAuthorizedAsync(
-        Uri requestUri,
-        AuthenticationResult token,
-        string? sellerId,
-        CancellationToken cancellationToken) =>
-        (await SendAuthorizedAsync(
-            requestUri, token, sellerId, cancellationToken, HttpMethod.Get)).Body;
-
+    /// <summary>
+    /// Sends a JSON request and reads the success response's body, <c>Retry-After</c>, and correlation ID.
+    /// </summary>
     private async Task<GatewayResponse> SendAuthorizedAsync(
         Uri requestUri,
-        AuthenticationResult token,
         string? sellerId,
         CancellationToken cancellationToken,
         HttpMethod method,
         string? jsonBody = null,
         string? correlationId = null,
-        Action? onSending = null)
+        Action? onSending = null,
+        IReadOnlyList<KeyValuePair<string, string>>? headers = null)
     {
-        using var request = new HttpRequestMessage(method, requestUri);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.AccessToken);
-        request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
-        request.Headers.UserAgent.ParseAdd(CliIdentity.UserAgent);
-        if (correlationId != null)
-        {
-            request.Headers.Add(CorrelationIdHeader, correlationId);
-        }
-
-        if (jsonBody != null)
-        {
-            request.Content = new StringContent(jsonBody, Encoding.UTF8, "application/json");
-        }
-        if (sellerId != null)
-        {
-            if (sellerId.Contains('\r', StringComparison.Ordinal)
-                || sellerId.Contains('\n', StringComparison.Ordinal))
-            {
-                throw new InvalidOperationException(
-                    "The Partner Center seller ID must not contain line breaks.");
-            }
-
-            // The HTTP stack rejects other header values only after the request has started.
-            if (!sellerId.All(character => character is >= ' ' and <= '~'))
-            {
-                throw new InvalidOperationException(
-                    "The Partner Center seller ID must contain only printable ASCII characters.");
-            }
-
-            request.Headers.Add(SellerIdHeader, sellerId);
-        }
-
-        // Everything above fails locally; from here the gateway may receive the request.
-        onSending?.Invoke();
-        using var response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
-        correlationId = ReadCorrelationId(response) ?? correlationId;
-
-        // ResponseHeadersRead keeps the size bound, but HttpClient's timeout ends at the
-        // headers. Apply the same bound while consuming the body.
+        using HttpResponseMessage response = await SendResponseAsync(
+            method,
+            requestUri,
+            jsonBody is null ? null : new StringContent(jsonBody, Encoding.UTF8, "application/json"),
+            "application/json",
+            cancellationToken,
+            correlationId,
+            onSending,
+            sellerId: sellerId,
+            headers: headers);
         using var bodyTimeout = CreateResponseBodyTimeout(cancellationToken);
-        if (!response.IsSuccessStatusCode)
-        {
-            // An error body that can't be read must not hide the status or the Retry-After wait.
-            TimeSpan? retryAfter = ReadRetryAfter(response);
-            string errorBody;
-            try
-            {
-                errorBody = await ReadResponseBodyWithLimitAsync(
-                    response.Content,
-                    bodyTimeout.Token);
-            }
-            catch (Exception ex) when (ex is OperationCanceledException or IOException
-                or HttpRequestException or InvalidOperationException)
-            {
-                throw new XboxPartnerApiException(
-                    response.StatusCode, response.ReasonPhrase, string.Empty, requestUri, correlationId, retryAfter, ex);
-            }
-
-            throw new XboxPartnerApiException(
-                response.StatusCode,
-                response.ReasonPhrase,
-                errorBody,
-                requestUri,
-                correlationId,
-                retryAfter);
-        }
-
-        var responseBody = await ReadResponseBodyWithLimitAsync(
-            response.Content,
-            bodyTimeout.Token);
-
-        return new GatewayResponse(responseBody, ReadRetryAfter(response), correlationId);
+        string body = await ReadResponseBodyWithLimitAsync(response.Content, bodyTimeout.Token);
+        return new GatewayResponse(body, ReadRetryAfter(response), ReadCorrelationId(response) ?? correlationId);
     }
 
     private sealed record GatewayResponse(string Body, TimeSpan? RetryAfter, string? CorrelationId);
 
-    private async Task<AuthenticationResult> AcquireRequiredTokenAsync(CancellationToken cancellationToken)
-    {
-        AuthenticationService authenticationService = _authenticationService
-            ?? throw new InvalidOperationException(
-                "This client was constructed without an authentication service.");
-        var token = await authenticationService.AcquireTokenSilentAsync(cancellationToken);
-        if (token == null)
-        {
-            throw new InvalidOperationException(
-                $"No cached authentication token. Run '{CliIdentity.CommandName} auth login' first.");
-        }
-
-        return token;
-    }
-
     private async Task<string> AcquireRequiredAccessTokenAsync(CancellationToken cancellationToken)
     {
-        if (_accessTokenFactory is null)
+        string? accessToken = null;
+        if (_authenticationService is not null)
         {
-            return (await AcquireRequiredTokenAsync(cancellationToken)).AccessToken;
+            accessToken = (await _authenticationService.AcquireTokenSilentAsync(cancellationToken))?.AccessToken;
+        }
+        else if (_accessTokenFactory is not null)
+        {
+            // The injected factory takes no token, so a stalled call must not outlast the caller.
+            accessToken = await _accessTokenFactory().WaitAsync(cancellationToken);
         }
 
-        // The injected factory takes no token, so a stalled call must not outlast the caller.
-        string? accessToken = await _accessTokenFactory().WaitAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(accessToken))
         {
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.Auth);
             throw new InvalidOperationException(
                 $"No cached authentication token. Run '{CliIdentity.CommandName} auth login' first.");
         }
@@ -585,7 +496,7 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
             serviceName);
     }
 
-    private async Task<HttpResponseMessage> SendResponseAsync(
+    private Task<HttpResponseMessage> SendResponseAsync(
         HttpMethod method,
         string relativePath,
         HttpContent? content,
@@ -593,15 +504,38 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         CancellationToken cancellationToken,
         string? correlationId = null,
         Action? sending = null,
-        string serviceName = "The")
+        string serviceName = "The") =>
+        SendResponseAsync(
+            method,
+            BuildRequestUri(GetConfiguredBaseUrl(), relativePath),
+            content,
+            accept,
+            cancellationToken,
+            correlationId,
+            sending,
+            serviceName);
+
+    /// <summary>
+    /// Sends one request and returns its success response, for the caller to read and dispose. A failure
+    /// response is thrown as an <see cref="XboxPartnerApiException"/>.
+    /// </summary>
+    private async Task<HttpResponseMessage> SendResponseAsync(
+        HttpMethod method,
+        Uri requestUri,
+        HttpContent? content,
+        string accept,
+        CancellationToken cancellationToken,
+        string? correlationId = null,
+        Action? sending = null,
+        string serviceName = "The",
+        string? sellerId = null,
+        IReadOnlyList<KeyValuePair<string, string>>? headers = null)
     {
-        string accessToken = await AcquireRequiredAccessTokenAsync(cancellationToken);
-        Uri requestUri = BuildRequestUri(GetConfiguredBaseUrl(), relativePath);
+        cancellationToken.ThrowIfCancellationRequested();
         using var request = new HttpRequestMessage(method, requestUri)
         {
             Content = content,
         };
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue(accept));
         request.Headers.UserAgent.ParseAdd(CliIdentity.UserAgent);
         if (correlationId != null)
@@ -609,14 +543,55 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
             request.Headers.Add(CorrelationIdHeader, correlationId);
         }
 
+        foreach (var (name, value) in headers ?? [])
+        {
+            // Added without validation, so a header such as If-Match reaches the service exactly as given.
+            request.Headers.TryAddWithoutValidation(name, value);
+        }
+
+        if (sellerId != null)
+        {
+            if (sellerId.Contains('\r', StringComparison.Ordinal)
+                || sellerId.Contains('\n', StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    "The Partner Center seller ID must not contain line breaks.");
+            }
+
+            // The HTTP stack rejects other header values only after the request has started.
+            if (!sellerId.All(character => character is >= ' ' and <= '~'))
+            {
+                throw new InvalidOperationException(
+                    "The Partner Center seller ID must contain only printable ASCII characters.");
+            }
+
+            request.Headers.Add(SellerIdHeader, sellerId);
+        }
+
+        // Acquired for every request, so MSAL can refresh the token during a long listing.
+        string accessToken = await AcquireRequiredAccessTokenAsync(cancellationToken);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
         // Everything above can fail without the request leaving the process; a caller that must
         // tell those failures apart from ones after sending learns the boundary here.
         cancellationToken.ThrowIfCancellationRequested();
         sending?.Invoke();
-        HttpResponseMessage response = await _httpClient.SendAsync(
-            request,
-            HttpCompletionOption.ResponseHeadersRead,
-            cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.SendAsync(
+                request,
+                HttpCompletionOption.ResponseHeadersRead,
+                cancellationToken);
+        }
+        catch (Exception ex) when (ex is HttpRequestException
+            || (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested))
+        {
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
+            throw;
+        }
+        // Many commands catch and format the gateway's failure themselves, so its reason is recorded here.
+        TelemetryRecorder.RecordResponseStatus((int)response.StatusCode);
         if (response.IsSuccessStatusCode)
         {
             return response;
@@ -628,16 +603,21 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         string? reasonPhrase = response.ReasonPhrase;
         TimeSpan? retryAfter = ReadRetryAfter(response);
         string responseBody;
+
+        // An error body that can't be read must not hide the status or the Retry-After wait.
         try
         {
             using var bodyTimeout = CreateResponseBodyTimeout(cancellationToken);
             responseBody = await ReadResponseBodyWithLimitAsync(
                 response.Content,
                 bodyTimeout.Token,
-                serviceName);
+                serviceName,
+                recordFailure: false);
         }
-        catch (Exception ex) when (ex is OperationCanceledException or IOException
+        // The caller's own cancellation isn't a failure of the request, so it propagates as is.
+        catch (Exception ex) when ((ex is OperationCanceledException or IOException
             or HttpRequestException or InvalidOperationException)
+            && !cancellationToken.IsCancellationRequested)
         {
             throw new XboxPartnerApiException(
                 statusCode, reasonPhrase, string.Empty, requestUri, correlationId, retryAfter, ex);
@@ -695,6 +675,8 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
             bodyTimeout.Token);
     }
 
+    // ResponseHeadersRead keeps the size bound, but HttpClient's timeout ends at the
+    // headers. Apply the same bound while consuming the body.
     private CancellationTokenSource CreateResponseBodyTimeout(
         CancellationToken cancellationToken)
     {
@@ -703,40 +685,16 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         return timeout;
     }
 
-    private static async Task<byte[]> ReadResponseBytesWithLimitAsync(
+    private static Task<byte[]> ReadResponseBytesWithLimitAsync(
         HttpContent responseContent,
         long maxResponseBytes,
         string configurationKey,
-        CancellationToken cancellationToken)
-    {
-        if (responseContent.Headers.ContentLength is long contentLength
-            && contentLength > maxResponseBytes)
-        {
-            throw ResponseTooLarge(maxResponseBytes, configurationKey);
-        }
-
-        await using Stream responseStream =
-            await responseContent.ReadAsStreamAsync(cancellationToken);
-        await using var buffer = new MemoryStream();
-        var chunk = new byte[8192];
-        long totalBytesRead = 0;
-        while (true)
-        {
-            int bytesRead = await responseStream.ReadAsync(chunk, cancellationToken);
-            if (bytesRead == 0)
-            {
-                return buffer.ToArray();
-            }
-
-            totalBytesRead += bytesRead;
-            if (totalBytesRead > maxResponseBytes)
-            {
-                throw ResponseTooLarge(maxResponseBytes, configurationKey);
-            }
-
-            await buffer.WriteAsync(chunk.AsMemory(0, bytesRead), cancellationToken);
-        }
-    }
+        CancellationToken cancellationToken) =>
+        ResponseBodyReader.ReadBytesAsync(
+            responseContent,
+            maxResponseBytes,
+            () => ResponseTooLarge(maxResponseBytes, configurationKey),
+            cancellationToken);
 
     private static long ResolveMaxResponseBytes(IConfiguration configuration)
     {
@@ -783,50 +741,30 @@ internal sealed partial class XboxPartnerClient : IXboxPartnerClient
         return timeoutSeconds;
     }
 
+    // A body that doesn't arrive is recorded as a transport failure, unless recordFailure is false,
+    // as for an error response, whose status already gave the reason.
     private async Task<string> ReadResponseBodyWithLimitAsync(
         HttpContent responseContent,
         CancellationToken cancellationToken,
-        string serviceName = "The")
+        string serviceName = "The",
+        bool recordFailure = true)
     {
-        if (responseContent.Headers.ContentLength is long contentLength
-            && contentLength > _maxResponseBytes)
+        try
         {
-            throw ResponseTooLarge(serviceName);
+            return await ResponseBodyReader.ReadTextAsync(
+                responseContent,
+                _maxResponseBytes,
+                () => ResponseTooLarge(_maxResponseBytes, "XboxPartner:MaxResponseBytes", serviceName),
+                cancellationToken);
         }
-
-        await using var responseStream = await responseContent.ReadAsStreamAsync(cancellationToken);
-        await using var buffer = new MemoryStream();
-        var chunk = new byte[8192];
-        long totalBytesRead = 0;
-
-        while (true)
+        // Ctrl+C is recorded as cancelled where the command ends, which takes precedence.
+        catch (Exception ex) when (recordFailure
+            && ex is OperationCanceledException or IOException or HttpRequestException)
         {
-            var bytesRead = await responseStream.ReadAsync(chunk, cancellationToken);
-            if (bytesRead == 0)
-            {
-                break;
-            }
-
-            totalBytesRead += bytesRead;
-            if (totalBytesRead > _maxResponseBytes)
-            {
-                throw ResponseTooLarge(serviceName);
-            }
-
-            await buffer.WriteAsync(chunk.AsMemory(0, bytesRead), cancellationToken);
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
+            throw;
         }
-
-        buffer.Position = 0;
-        using var reader = new StreamReader(
-            buffer,
-            Encoding.UTF8,
-            detectEncodingFromByteOrderMarks: true,
-            leaveOpen: false);
-        return await reader.ReadToEndAsync(cancellationToken);
     }
-
-    private InvalidOperationException ResponseTooLarge(string serviceName) =>
-        ResponseTooLarge(_maxResponseBytes, "XboxPartner:MaxResponseBytes", serviceName);
 
     private static InvalidOperationException ResponseTooLarge(
         long maxResponseBytes,

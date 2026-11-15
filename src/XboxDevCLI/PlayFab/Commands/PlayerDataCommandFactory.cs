@@ -214,11 +214,6 @@ internal static class PlayerDataCommandFactory
             stderr.WriteLine(Program.FormatErrorOutput(ex, compact));
             return 1;
         }
-        catch (Exception ex)
-        {
-            stderr.WriteLine($"Request failed: {ex.Message}");
-            return 1;
-        }
     }
 
     #endregion

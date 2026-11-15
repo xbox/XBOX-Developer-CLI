@@ -18,6 +18,9 @@ internal enum ServiceEndpoints
 
     /// <summary>XBOX services, at <c>XboxPartner:BaseUrl</c> or the command's <c>--base-url</c>.</summary>
     XboxPartner = 2,
+
+    /// <summary>The PlayFab studio API, at <c>PlayFab:StudioBaseUrl</c>, for <c>/Studio/*</c> paths.</summary>
+    PlayFabStudio = 4,
 }
 
 /// <summary>

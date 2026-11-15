@@ -1,9 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.CommandLine;
 using System.Net;
 using XboxDevCLI.CommandLine;
@@ -159,6 +156,60 @@ public class TableOutputWiringTests
         Assert.Contains("abc123", result.Stdout, StringComparison.Ordinal);
     }
 
+    /// <summary>Members nest inside their roles, so the real command renders a row per member.</summary>
+    [Fact]
+    public async Task RegisteredGroupMemberList_RendersARowPerMemberWithItsRole()
+    {
+        const string Response =
+            """{"code":200,"status":"OK","data":{"Members":[{"RoleId":"admins","RoleName":"Administrators","Members":[{"Key":{"Id":"TITLEPLAYER123","Type":"title_player_account"}}]},{"RoleId":"members","RoleName":"Members","Members":[]}]}}""";
+
+        var result = await InvokeRegisteredActionAsync(
+            Response,
+            ["playfab", "group", "member", "list", "--group-id", "GROUP123", "--output", "table"]);
+
+        Assert.Equal(0, result.ExitCode);
+        AssertLooksLikeATable(result.Stdout, "MEMBER ID", "MEMBER TYPE", "ROLE ID");
+        var lines = result.Stdout.Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        Assert.Contains(lines, line => line.StartsWith("TITLEPLAYER123", StringComparison.Ordinal) && line.EndsWith("admins", StringComparison.Ordinal));
+        Assert.Contains(lines, line => line.StartsWith('-') && line.EndsWith("members", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A member list that isn't a list fails the command, rather than succeeding with a row that
+    /// shows the role as having no members.
+    /// </summary>
+    [Fact]
+    public async Task RegisteredGroupMemberList_FailsWhenAMemberListIsNotAnArray()
+    {
+        const string Response =
+            """{"code":200,"status":"OK","data":{"Members":[{"RoleId":"admins","Members":{"Key":{"Id":"TITLEPLAYER123","Type":"title_player_account"}}}]}}""";
+
+        var result = await InvokeRegisteredActionAsync(
+            Response,
+            ["playfab", "group", "member", "list", "--group-id", "GROUP123", "--output", "table"]);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Equal(string.Empty, result.Stdout);
+        Assert.Contains("'Members' is an object rather than an array", result.Stderr, StringComparison.Ordinal);
+    }
+
+    /// <summary>Invitations and applications are separate lists, so the real command merges them.</summary>
+    [Fact]
+    public async Task RegisteredGroupMembershipOpportunityList_RendersBothListsInOneTable()
+    {
+        const string Response =
+            """{"code":200,"status":"OK","data":{"Invitations":[{"Group":{"Id":"GROUP123","Type":"group"},"RoleId":"members","Expires":"2026-11-10T00:00:00Z"}],"Applications":[{"Group":{"Id":"GROUP456","Type":"group"},"Expires":"2026-11-12T00:00:00Z"}]}}""";
+
+        var result = await InvokeRegisteredActionAsync(
+            Response,
+            ["playfab", "group", "membership", "opportunity", "list", "--output", "table"]);
+
+        Assert.Equal(0, result.ExitCode);
+        AssertLooksLikeATable(result.Stdout, "TYPE", "GROUP ID", "ROLE ID", "EXPIRES");
+        Assert.Contains("invitation   GROUP123", result.Stdout, StringComparison.Ordinal);
+        Assert.Contains("application  GROUP456", result.Stdout, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task HelperPath_StillEmitsJsonWhenTableIsNotRequested()
     {
@@ -234,7 +285,8 @@ public class TableOutputWiringTests
     }
 
     /// <summary>
-    /// A 2xx body that will not parse is a failed request, whichever format was asked for.
+    /// A 2xx body that will not parse is a failed request, whichever format was asked for. The
+    /// error boundary reports the failure.
     /// </summary>
     /// <remarks>
     /// <c>file list</c> formats the response itself instead of routing through the shared invoke
@@ -255,16 +307,13 @@ public class TableOutputWiringTests
             : OutputOptions.Json;
         using var client = CreateClient(Response);
         var stdout = new StringWriter();
-        var stderr = new StringWriter();
 
-        var exit = await FileCommandFactory.RunListAsync(
-            client, "E1", "title_player_account", output, stdout, stderr,
-            CancellationToken.None);
+        var exception = await Assert.ThrowsAsync<InvalidDataException>(() => FileCommandFactory.RunListAsync(
+            client, "E1", "title_player_account", output, stdout, new StringWriter(),
+            CancellationToken.None));
 
-        Assert.Equal(1, exit);
+        Assert.Contains("was not valid JSON", exception.Message, StringComparison.Ordinal);
         Assert.Equal(string.Empty, stdout.ToString());
-        Assert.Contains("was not valid JSON", stderr.ToString(), StringComparison.Ordinal);
-        Assert.DoesNotContain("502 Bad Gateway", stdout.ToString(), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -285,6 +334,8 @@ public class TableOutputWiringTests
     [InlineData("context", "key", "list")]
     [InlineData("sandbox", "list")]
     [InlineData("sandbox", "get")]
+    [InlineData("audience", "list")]
+    [InlineData("audience", "get")]
     public void ResolvingOptionsFromAParseResultCarriesTheDeclaredView(params string[] path)
     {
         // One tree, so reference equality is meaningful: it proves the resolved view is the very
@@ -374,52 +425,11 @@ public class TableOutputWiringTests
         }
     }
 
-    private static PlayFabApiClient CreateClient(string responseJson)
-    {
-        var config = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(auth => auth.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(AuthResult());
-
-        var httpClient = new HttpClient(new StubHandler(responseJson))
+    private static PlayFabApiClient CreateClient(string responseJson) =>
+        PlayFabTestClient.Create(new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
         {
-            BaseAddress = new Uri("https://TEST123.playfabapi.com/"),
-        };
-
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
-    private static AuthenticationResult AuthResult() =>
-        new(
-            accessToken: "token",
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: ["api://test/.default"],
-            correlationId: Guid.NewGuid());
-
-    private sealed class StubHandler(string responseJson) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(responseJson),
-            });
-    }
+            Content = new StringContent(responseJson),
+        }));
 
     #endregion
 }

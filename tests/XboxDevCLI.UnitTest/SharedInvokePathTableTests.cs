@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 
 using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.CommandLine;
 using System.Net;
 using XboxDevCLI.CommandLine;
@@ -365,6 +363,32 @@ public class SharedInvokePathTableTests
         Assert.Contains("\"PageSize\"", stderr, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// With <c>--verbose</c>, stderr follows the request: it's sent, it succeeds, and then the
+    /// table says what it left out.
+    /// </summary>
+    [Fact]
+    public async Task VerboseTableOutputWritesThePagingNoticeAfterTheDiagnostics()
+    {
+        const string Response =
+            """
+            {"code":200,"status":"OK","data":{"BuildSummaries":[
+              {"BuildId":"b1","BuildName":"combat-sandbox"}
+            ],"SkipToken":"page2"}}
+            """;
+
+        var (exit, stdout, stderr) = await RunAsync(
+            Response,
+            ["--playfab-title-id", "ABC123", "playfab", "mps", "build", "list", "--output", "table", "--verbose"]);
+
+        Assert.Equal(0, exit);
+        Assert.Contains("combat-sandbox", stdout, StringComparison.Ordinal);
+        var sent = stderr.IndexOf("[verbose] POST /MultiplayerServer/ListBuildSummariesV2", StringComparison.Ordinal);
+        var succeeded = stderr.IndexOf("[verbose] Request succeeded.", StringComparison.Ordinal);
+        var notice = stderr.IndexOf(MorePagesNotice, StringComparison.Ordinal);
+        Assert.True(sent >= 0 && sent < succeeded && succeeded < notice, stderr);
+    }
+
     /// <summary>The last page has no token, and gets no notice.</summary>
     [Theory]
     [InlineData(",\"SkipToken\":null")]
@@ -428,38 +452,18 @@ public class SharedInvokePathTableTests
 
     private static PlayFabApiClient CreateClient(IConfiguration config, string responseJson)
     {
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(auth => auth.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(AuthResult());
-
-        var httpClient = new HttpClient(new StubHandler(responseJson))
+        var handler = new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson),
+        });
+        var httpClient = new HttpClient(handler)
         {
             BaseAddress = new Uri("https://ABC123.playfabapi.com/"),
         };
 
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
-    private static AuthenticationResult AuthResult() =>
-        new(
-            accessToken: "token",
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant",
-            account: null,
-            idToken: null,
-            scopes: ["api://test/.default"],
-            correlationId: Guid.NewGuid());
-
-    private sealed class StubHandler(string responseJson) : HttpMessageHandler
-    {
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken) =>
-            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
-            {
-                Content = new StringContent(responseJson),
-            });
+        return new PlayFabApiClient(
+            config,
+            new FakeAuthenticationService(FakeAuthenticationService.CreateToken()),
+            httpClient);
     }
 }

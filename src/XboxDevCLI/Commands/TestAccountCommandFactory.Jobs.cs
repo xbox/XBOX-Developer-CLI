@@ -330,7 +330,6 @@ internal static partial class TestAccountCommandFactory
         switch (exception)
         {
             case XboxPartnerApiException api:
-                XboxPartnerCommandSupport.WriteCorrelationId(api.CorrelationId, stderr);
                 stderr.WriteLine(FormatError(
                     api,
                     output.IsCompact,
@@ -396,15 +395,19 @@ internal static partial class TestAccountCommandFactory
             "test_account_keyword_invalid" => "Check the --tag values.",
             "test_account_locale_invalid" => "Check --locale, for example en-US.",
             "test_account_subscription_unavailable" =>
-                "That subscription is not available in this environment. Try another --subscription; some " +
-                "environments offer only Silver.",
+                "That subscription isn't available. Try another --subscription, such as Silver.",
             "test_account_limit_exceeded" =>
                 "The request would exceed the seller's test account limit.",
             AccessDeniedCode when isCreate =>
                 "Your account lacks the Partner Center role to create test accounts for this seller, or the " +
                 "seller is wrong; pass --seller-id.",
             AccessDeniedCode =>
-                "Another developer or another seller owns this job; pass --seller-id, or ask its creator.",
+                "Another developer or another seller owns this job or batch. Check --batch-id and --seller-id, " +
+                "or ask the job's creator.",
+            // The service's detail already says the job isn't in the batch.
+            "test_account_job_not_in_batch" => "Check the job ID and --batch-id.",
+            TestAccountBatchWaiter.BatchNotFoundCode =>
+                "No such batch for this seller. Check --batch-id and --seller-id.",
             "downstream_request_rejected" when isCreate =>
                 "The test account service rejected the request. Check that the --email-prefix group is one of " +
                 "your sandbox groups (the part of a sandbox ID before the dot), and the length of the security " +

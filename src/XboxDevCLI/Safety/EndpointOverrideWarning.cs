@@ -7,7 +7,8 @@ using Microsoft.Extensions.Configuration;
 namespace XboxDevCLI.Safety;
 
 /// <summary>
-/// Detects when the PlayFab API endpoint (<c>PlayFab:BaseUrlTemplate</c>) or the XBOX services
+/// Detects when the PlayFab API endpoint (<c>PlayFab:BaseUrlTemplate</c>), the PlayFab studio API
+/// endpoint (<c>PlayFab:StudioBaseUrl</c>), or the XBOX services
 /// endpoint (<c>XboxPartner:BaseUrl</c>) has been repointed away from the endpoint shipped with
 /// the CLI, and builds the warning a command that sends a token there writes on standard error.
 /// </summary>
@@ -30,6 +31,15 @@ internal static class EndpointOverrideWarning
     /// the same.
     /// </summary>
     internal const string DefaultBaseUrlTemplate = "https://xboxdevcli.playfabapi.com";
+
+    /// <summary>Configuration key holding the PlayFab studio API endpoint, used for <c>/Studio/*</c> paths.</summary>
+    internal const string StudioConfigurationKey = "PlayFab:StudioBaseUrl";
+
+    /// <summary>
+    /// The PlayFab studio API endpoint in the built-in settings, a constant for the same reason as
+    /// <see cref="DefaultBaseUrlTemplate"/>.
+    /// </summary>
+    internal const string DefaultStudioBaseUrl = "https://xboxdevcli.playfabapi.com";
 
     /// <summary>Configuration key holding the service base URL.</summary>
     internal const string XboxPartnerConfigurationKey = "XboxPartner:BaseUrl";
@@ -55,6 +65,36 @@ internal static class EndpointOverrideWarning
     /// </summary>
     internal static string GetEffectiveBaseUrlTemplate(string? baseUrlTemplate) =>
         baseUrlTemplate ?? DefaultBaseUrlTemplate;
+
+    /// <summary>
+    /// Returns the studio endpoint that the client will use, with the same missing and blank
+    /// handling as <see cref="GetEffectiveBaseUrlTemplate"/>.
+    /// </summary>
+    internal static string GetEffectiveStudioBaseUrl(string? studioBaseUrl) =>
+        studioBaseUrl ?? DefaultStudioBaseUrl;
+
+    /// <summary>
+    /// Builds the warning text for an overridden studio endpoint, or returns <c>null</c> when the
+    /// effective endpoint is the shipped default.
+    /// </summary>
+    internal static string? GetStudioWarning(string? studioBaseUrl)
+    {
+        if (string.Equals(
+                GetEffectiveStudioBaseUrl(studioBaseUrl).Trim().TrimEnd('/'),
+                DefaultStudioBaseUrl,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        return string.Join(
+            Environment.NewLine,
+            $"Warning: the PlayFab studio API endpoint is overridden to '{DescribeTarget(studioBaseUrl)}' " +
+            $"(configuration key '{StudioConfigurationKey}').",
+            "         Requests and your access token will be sent to that host instead of the default endpoint " +
+            $"'{DefaultStudioBaseUrl}'.",
+            "         If you did not intend this, check the XBOX_PLAYFAB__STUDIOBASEURL environment variable.");
+    }
 
     /// <summary>
     /// Returns <c>true</c> when the effective value of <paramref name="baseUrlTemplate"/>

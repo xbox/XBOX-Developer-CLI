@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.Buffers.Binary;
 using System.Net;
@@ -852,10 +853,7 @@ public sealed class AchievementImageCommandTests
         Assert.Equal(2, handler.Requests.Count);
         string correlationId = Assert.IsType<string>(handler.CorrelationIds[1]);
         Assert.Equal(handler.CorrelationIds[0], correlationId);
-        Assert.StartsWith(
-            $"x-ms-correlation-id: {correlationId}{Environment.NewLine}",
-            result.Error,
-            StringComparison.Ordinal);
+        TestAccountCommandTests.AssertCorrelationIdWrittenOnce(result.Error, correlationId);
         Assert.Contains(expected, result.Error, StringComparison.Ordinal);
     }
 
@@ -2267,7 +2265,7 @@ public sealed class AchievementImageCommandTests
     private static bool HasRecoveryInstructions(string error) =>
         error.Contains("Upload outcome unknown.", StringComparison.Ordinal);
 
-    private static byte[] CreatePngHeader(int width, int height)
+    internal static byte[] CreatePngHeader(int width, int height)
     {
         byte[] header = new byte[33];
         new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }.CopyTo(header, 0);

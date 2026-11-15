@@ -17,6 +17,8 @@ internal class MockHttpMessageHandler : HttpMessageHandler
 
     public HttpRequestMessage? LastRequest { get; private set; }
 
+    public string? LastRequestUri => LastRequest?.RequestUri?.ToString();
+
     public string? LastRequestBody { get; private set; }
 
     public CancellationToken LastCancellationToken { get; private set; }

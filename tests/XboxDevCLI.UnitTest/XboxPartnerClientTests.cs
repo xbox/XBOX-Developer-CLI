@@ -10,6 +10,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
 using Moq;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 using Xunit;
 
 namespace XboxDevCLI.UnitTest;
@@ -38,6 +39,112 @@ public class XboxPartnerClientTests
         Assert.InRange(job.RetryAfter!.Value.TotalSeconds, 15, 17);
         Assert.Equal("server-correlation", job.CorrelationId);
         Assert.EndsWith("/xboxpartner/v1/jobs/job%2Fid", handler.LastRequest!.RequestUri!.AbsoluteUri);
+    }
+
+    /// <summary>
+    /// Many commands catch and format the gateway's failure themselves, so the client records its
+    /// status and reason for telemetry.
+    /// </summary>
+    [Theory]
+    [InlineData(HttpStatusCode.NotFound, "service_rejected")]
+    [InlineData(HttpStatusCode.ServiceUnavailable, "service_error")]
+    public async Task FailedRequest_RecordsTheStatusAndReasonForTelemetry(HttpStatusCode status, string errorType)
+    {
+        var handler = new XboxPartnerHttpMessageHandler(new HttpResponseMessage(status)
+        {
+            Content = new StringContent("""{"error":{"code":"failed"}}"""),
+        });
+        using var http = new HttpClient(handler);
+        using var client = CreateClient(http);
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            await Assert.ThrowsAsync<XboxPartnerApiException>(
+                () => client.GetGameCreationJobAsync("https://gateway.example", "seller", "job"));
+
+            Assert.Equal((int)status, recorded.HttpStatusCode);
+            Assert.Equal(errorType, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
+    }
+
+    [Fact]
+    public async Task ConnectionFailure_IsRecordedAsTransport()
+    {
+        using var http = new HttpClient(new RoutingHttpHandler(_ => throw new HttpRequestException("name not resolved")));
+        using var client = CreateClient(http);
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(
+                () => client.GetGameCreationJobAsync("https://gateway.example", "seller", "job"));
+
+            Assert.Equal(TelemetryErrorTypes.Transport, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
+    }
+
+    /// <summary>A successful response whose body doesn't arrive is a transport failure.</summary>
+    [Fact]
+    public async Task SuccessBodyThatDoesNotArrive_IsRecordedAsTransport()
+    {
+        using var http = new HttpClient(new RoutingHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new BrokenContent(),
+        }));
+        using var client = CreateClient(http);
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(
+                () => client.GetGameCreationJobAsync("https://gateway.example", "seller", "job"));
+
+            Assert.Equal(200, recorded.HttpStatusCode);
+            Assert.Equal(TelemetryErrorTypes.Transport, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
+    }
+
+    private sealed class BrokenContent : HttpContent
+    {
+        protected override Task SerializeToStreamAsync(Stream stream, System.Net.TransportContext? context) =>
+            throw new IOException("connection reset");
+
+        protected override bool TryComputeLength(out long length)
+        {
+            length = 0;
+            return false;
+        }
+    }
+
+    /// <summary>A response that can't be read is recorded wherever it's thrown, and whoever handles it.</summary>
+    [Fact]
+    public void UnreadableResponse_IsRecordedAsAServiceError()
+    {
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            _ = new XboxPartnerResponseException("{", "correlation", new System.Text.Json.JsonException());
+
+            Assert.Equal(TelemetryErrorTypes.ServiceError, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
     }
 
     [Fact]
@@ -510,14 +617,13 @@ public class XboxPartnerClientTests
     {
         var handler = new XboxPartnerHttpMessageHandler(OkResponse("""{"games":[]}"""));
         using var http = new HttpClient(handler);
-        var configuration = CreateConfiguration();
-        var authentication = new Mock<AuthenticationService>(configuration) { CallBase = false };
-        using var client = new XboxPartnerClient(configuration, http, authentication.Object);
+        var authentication = new FakeAuthenticationService(FakeAuthenticationService.CreateToken());
+        using var client = new XboxPartnerClient(CreateConfiguration(), http, authentication);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             client.GetGamesAsync("https://gateway.example", "seller", cancellationToken: cancellation.Token));
-        authentication.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never());
+        Assert.Equal(0, authentication.TokenRequests);
         Assert.Empty(handler.Requests);
     }
 
@@ -537,7 +643,7 @@ public class XboxPartnerClientTests
             {
                 if (++tokenRequests == 1)
                 {
-                    return Task.FromResult<AuthenticationResult?>(CreateMockAuthResult());
+                    return Task.FromResult<AuthenticationResult?>(FakeAuthenticationService.CreateToken());
                 }
 
                 // The second page's token never arrives, as when a refresh hangs, and the user
@@ -646,22 +752,75 @@ public class XboxPartnerClientTests
             StringComparison.Ordinal);
     }
 
-    [Fact]
-    public async Task ResponseLargerThanConfiguredLimit_IsRejected()
+    /// <summary>A body without a <c>Content-Length</c> is measured as it arrives.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ResponseLargerThanConfiguredLimit_IsRejected(bool declaresLength)
     {
         var configuration = CreateConfiguration(
             ("XboxPartner:MaxResponseBytes", "3"));
-        var handler = new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        var content = new StringContent("four");
+        if (!declaresLength)
         {
-            Content = new StringContent("four"),
-        });
+            content.Headers.ContentLength = null;
+        }
+
+        var handler = new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
         using var httpClient = new HttpClient(handler);
         using var client = CreateClient(httpClient, configuration);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => client.GetSellersAsync("http://localhost:54848"));
 
-        Assert.Contains("exceeded the configured maximum size", exception.Message, StringComparison.Ordinal);
+        Assert.Equal(
+            "The response exceeded the configured maximum size of 3 bytes. "
+            + "Increase 'XboxPartner:MaxResponseBytes' to allow larger responses.",
+            exception.Message);
+    }
+
+    [Fact]
+    public async Task DocumentArchiveLargerThanItsLimit_IsRejectedAsItArrives()
+    {
+        var configuration = CreateConfiguration(
+            ("XboxPartner:BaseUrl", "http://localhost:54848"),
+            ("XboxPartner:MaxDocumentArchiveBytes", "3"));
+        var content = new ByteArrayContent([1, 2, 3, 4]);
+        content.Headers.ContentLength = null;
+        var handler = new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK) { Content = content });
+        using var httpClient = new HttpClient(handler);
+        using var client = CreateClient(httpClient, configuration);
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.GetXboxLiveDocumentsAsync(
+                12345,
+                new XboxLiveGetDocumentsRequest(
+                    "sandbox", Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"), "XDKS.1", "working", null, []),
+                CancellationToken.None));
+
+        Assert.Equal(
+            "The response exceeded the configured maximum size of 3 bytes. "
+            + "Increase 'XboxPartner:MaxDocumentArchiveBytes' to allow larger responses.",
+            exception.Message);
+    }
+
+    [Theory]
+    [InlineData("utf-8")]
+    [InlineData("utf-16")]
+    public async Task Response_IsDecodedByItsByteOrderMark(string encodingName)
+    {
+        const string body = """{"sellers":[]}""";
+        var encoding = Encoding.GetEncoding(encodingName);
+        var handler = new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent([.. encoding.GetPreamble(), .. encoding.GetBytes(body)]),
+        });
+        using var httpClient = new HttpClient(handler);
+        using var client = CreateClient(httpClient);
+
+        var result = await client.GetSellersAsync("http://localhost:54848");
+
+        Assert.Equal(body, result.ResponseBody);
     }
 
     [Theory]
@@ -712,18 +871,10 @@ public class XboxPartnerClientTests
     [Fact]
     public async Task MissingCachedToken_DirectsUserToLogin()
     {
-        var configuration = CreateConfiguration();
-        var authenticationService = new Mock<AuthenticationService>(configuration)
-        {
-            CallBase = false,
-        };
-        authenticationService
-            .Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync((AuthenticationResult?)null);
         using var client = new XboxPartnerClient(
-            configuration,
+            CreateConfiguration(),
             new HttpClient(new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.OK))),
-            authenticationService.Object);
+            new FakeAuthenticationService(token: null));
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(
             () => client.GetSellersAsync("http://localhost:54848"));
@@ -736,37 +887,11 @@ public class XboxPartnerClientTests
 
     internal static XboxPartnerClient CreateClient(
         HttpClient? httpClient,
-        IConfiguration? configuration = null)
-    {
-        configuration ??= CreateConfiguration();
-        var authenticationService = new Mock<AuthenticationService>(configuration)
-        {
-            CallBase = false,
-        };
-        authenticationService
-            .Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(CreateMockAuthResult());
-        return new XboxPartnerClient(configuration, httpClient, authenticationService.Object);
-    }
-
-    private static AuthenticationResult CreateMockAuthResult()
-    {
-        var account = new Mock<IAccount>();
-        account
-            .SetupGet(value => value.HomeAccountId)
-            .Returns(new AccountId("identifier", "object-id", "tenant-id"));
-        return new AuthenticationResult(
-            accessToken: "access-token",
-            isExtendedLifeTimeToken: false,
-            uniqueId: "object-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "tenant-id",
-            account: account.Object,
-            idToken: "id-token",
-            scopes: ["scope"],
-            correlationId: Guid.NewGuid());
-    }
+        IConfiguration? configuration = null) =>
+        new(
+            configuration ?? CreateConfiguration(),
+            httpClient,
+            new FakeAuthenticationService(FakeAuthenticationService.CreateToken()));
 
     private static IConfiguration CreateConfiguration(
         params (string Key, string Value)[] values)

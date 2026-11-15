@@ -132,14 +132,15 @@ public class TestAccountCommandTests
         Assert.Equal(2, handler.Requests.Count);
         string correlationId = Assert.Single(handler.Requests[0].Headers["x-ms-correlation-id"]);
         Assert.Equal(correlationId, Assert.Single(handler.Requests[1].Headers["x-ms-correlation-id"]));
-        string[] stderr = result.Stderr.Split(Environment.NewLine, 2);
-        Assert.Equal($"x-ms-correlation-id: {correlationId}", stderr[0]);
-        using JsonDocument error = JsonDocument.Parse(stderr[1]);
+        AssertCorrelationIdWrittenOnce(result.Stderr, correlationId);
+        using JsonDocument error = JsonDocument.Parse(result.Stderr);
         Assert.Equal("downstream_timeout", error.RootElement.GetProperty("code").GetString());
+        Assert.Equal(correlationId, error.RootElement.GetProperty("correlationId").GetString());
     }
 
     [Theory]
     [InlineData(new[] { "--mine", "--created-by-id", "5" }, "--mine and --created-by-id cannot be combined.")]
+    [InlineData(new[] { "--mine", "--created-by-id", "x" }, "--mine and --created-by-id cannot be combined.")]
     [InlineData(new[] { "--created-by-id", "0" }, "--created-by-id must be a positive numeric user ID.")]
     [InlineData(new[] { "--limit", "0" }, "--limit must be a positive number.")]
     [InlineData(new[] { "--email-prefix", " " }, "--email-prefix must not be empty.")]
@@ -223,11 +224,10 @@ public class TestAccountCommandTests
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        string[] stderr = result.Stderr.Split(Environment.NewLine, 2);
-        Assert.Equal(
-            $"x-ms-correlation-id: {Assert.Single(Assert.Single(handler.Requests).Headers["x-ms-correlation-id"])}",
-            stderr[0]);
-        using JsonDocument error = JsonDocument.Parse(stderr[1]);
+        AssertCorrelationIdWrittenOnce(
+            result.Stderr,
+            Assert.Single(Assert.Single(handler.Requests).Headers["x-ms-correlation-id"]));
+        using JsonDocument error = JsonDocument.Parse(result.Stderr);
         Assert.Equal(502, error.RootElement.GetProperty("status").GetInt32());
         Assert.Equal("Test account request failed", error.RootElement.GetProperty("title").GetString());
         Assert.Contains(
@@ -250,7 +250,7 @@ public class TestAccountCommandTests
             handler);
 
         Assert.Equal(1, result.ExitCode);
-        using JsonDocument error = JsonDocument.Parse(result.Stderr.Split(Environment.NewLine, 2)[1]);
+        using JsonDocument error = JsonDocument.Parse(result.Stderr);
         Assert.Equal("Forbidden", error.RootElement.GetProperty("title").GetString());
         string detail = error.RootElement.GetProperty("detail").GetString()!;
         Assert.StartsWith("Seller access denied.", detail, StringComparison.Ordinal);
@@ -271,9 +271,10 @@ public class TestAccountCommandTests
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        string[] stderr = result.Stderr.Split(Environment.NewLine, 2);
-        Assert.StartsWith("x-ms-correlation-id: ", stderr[0], StringComparison.Ordinal);
-        Assert.StartsWith("The test account request failed with HTTP 502", stderr[1], StringComparison.Ordinal);
+        AssertCorrelationIdWrittenOnce(
+            result.Stderr,
+            Assert.Single(Assert.Single(handler.Requests).Headers["x-ms-correlation-id"]));
+        Assert.StartsWith("The test account request failed with HTTP 502", result.Stderr, StringComparison.Ordinal);
         Assert.Contains("Retry first.", result.Stderr, StringComparison.Ordinal);
         Assert.DoesNotContain("<html>", result.Stderr, StringComparison.Ordinal);
     }
@@ -316,9 +317,7 @@ public class TestAccountCommandTests
             handler);
 
         Assert.Equal(1, result.ExitCode);
-        string[] stderr = result.Stderr.Split(Environment.NewLine, 2);
-        Assert.StartsWith("x-ms-correlation-id: ", stderr[0], StringComparison.Ordinal);
-        using JsonDocument error = JsonDocument.Parse(stderr[1]);
+        using JsonDocument error = JsonDocument.Parse(result.Stderr);
         string detail = error.RootElement.GetProperty("detail").GetString()!;
         Assert.Contains("Test accounts may be unavailable.", detail, StringComparison.Ordinal);
         Assert.DoesNotContain("batch ID", detail, StringComparison.Ordinal);
@@ -430,13 +429,14 @@ public class TestAccountCommandTests
     [InlineData("test-account", "job", "get", "job-1", "--batch-id", "42")]
     [InlineData("test-account", "batch", "update", "42", "--tag", "nightly", "--confirm", "--no-wait")]
     [InlineData("test-account", "batch", "delete", "42", "--confirm", "--no-wait")]
-    [InlineData("xbl", "configuration", "get", "--scid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--sandbox-id", "ABCDEF.1")]
+    [InlineData("xbl", "config", "status", "--scid", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", "--sandbox-id", "ABCDEF.1")]
     public async Task Throttled_ReportsTheWaitWithoutRetrying(params string[] args)
     {
         foreach (string body in new[] { """{"code":"rate_limited"}""", """{"code":"downstream_throttled"}""", """{"code":"another_code"}""", "" })
         {
             HttpResponseMessage response = Response(HttpStatusCode.TooManyRequests, body);
             response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(45));
+            response.Headers.Add("x-ms-correlation-id", "throttle-correlation");
             var handler = new XboxPartnerHttpMessageHandler(response);
 
             Invocation result = await InvokeAsync([.. args, "--seller-id", "1234567"], handler);
@@ -448,6 +448,11 @@ public class TestAccountCommandTests
             JsonElement error = document.RootElement;
             Assert.Equal(429, error.GetProperty("status").GetInt32());
             Assert.Equal(45, error.GetProperty("retryAfterSeconds").GetInt64());
+            Assert.DoesNotContain("x-ms-correlation-id", error.GetProperty("detail").GetString(), StringComparison.Ordinal);
+            if (body.Length == 0)
+            {
+                Assert.Equal("throttle-correlation", error.GetProperty("correlationId").GetString());
+            }
             Assert.EndsWith("Try again in 45 seconds.", error.GetProperty("detail").GetString(), StringComparison.Ordinal);
             Assert.DoesNotContain("XboxPartner", error.GetProperty("detail").GetString(), StringComparison.OrdinalIgnoreCase);
             if (body.Contains("rate_limited", StringComparison.Ordinal))
@@ -462,6 +467,13 @@ public class TestAccountCommandTests
 
     private static XboxPartnerHttpMessageHandler Respond(HttpStatusCode statusCode, string body) =>
         new(Response(statusCode, body));
+
+    internal static void AssertCorrelationIdWrittenOnce(string stderr, string correlationId)
+    {
+        int first = stderr.IndexOf(correlationId, StringComparison.Ordinal);
+        Assert.True(first >= 0, $"The correlation ID {correlationId} was not written.");
+        Assert.Equal(-1, stderr.IndexOf(correlationId, first + correlationId.Length, StringComparison.Ordinal));
+    }
 
     [Theory]
     [InlineData("batch list")]
@@ -488,7 +500,9 @@ public class TestAccountCommandTests
             Assert.Empty(result.Stdout);
             Assert.Single(handler.Requests);
             Assert.Contains("HTTP 502", result.Stderr, StringComparison.Ordinal);
-            Assert.Contains("x-ms-correlation-id:", result.Stderr, StringComparison.Ordinal);
+            AssertCorrelationIdWrittenOnce(
+                result.Stderr,
+                Assert.Single(Assert.Single(handler.Requests).Headers["x-ms-correlation-id"]));
             Assert.DoesNotContain("XboxPartner", result.Stderr, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("XTAS", result.Stderr, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("deployment", result.Stderr, StringComparison.OrdinalIgnoreCase);
@@ -595,7 +609,7 @@ public class TestAccountCommandTests
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        using JsonDocument error = JsonDocument.Parse(result.Stderr.Split(Environment.NewLine, 2)[1]);
+        using JsonDocument error = JsonDocument.Parse(result.Stderr);
         Assert.Equal("XboxPartner title", error.RootElement.GetProperty("title").GetString());
         Assert.Equal("XboxPartner detail", error.RootElement.GetProperty("detail").GetString());
         Assert.Equal("invalid_request", error.RootElement.GetProperty("code").GetString());

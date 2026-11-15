@@ -1,8 +1,10 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.Net;
 using System.Net.Http.Headers;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 using Xunit;
 
 namespace XboxDevCLI.UnitTest;
@@ -153,5 +155,32 @@ public sealed class AchievementImageBlobUploaderTests
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken) =>
             callback(request, cancellationToken);
+    }
+
+    /// <summary>The command reports upload failures itself, so the uploader records the reason.</summary>
+    [Theory]
+    [InlineData(403, 403, "service_rejected")]
+    [InlineData(null, null, "transport")]
+    public async Task UploadFailure_IsRecordedForTelemetry(int? status, int? recordedStatus, string errorType)
+    {
+        using var handler = new CallbackHandler((_, _) => status is { } code
+            ? Task.FromResult(new HttpResponseMessage((HttpStatusCode)code))
+            : throw new HttpRequestException("connection refused"));
+        using var client = new HttpClient(handler);
+        await using var source = new MemoryStream([1, 2, 3]);
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            await Assert.ThrowsAnyAsync<Exception>(() =>
+                AchievementImageBlobUploader.UploadAsync(client, SasUri, source, null, CancellationToken.None));
+
+            Assert.Equal(recordedStatus, recorded.HttpStatusCode);
+            Assert.Equal(errorType, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
     }
 }

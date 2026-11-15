@@ -4,10 +4,9 @@
 using System.CommandLine;
 using XboxDevCLI.Output;
 using XboxDevCLI.CommandLine;
-using System.Text.Json;
-using System.Text.Json.Serialization;
 using XboxDevCLI.PlayFab.Generated.Admin;
 using XboxDevCLI.Services;
+using static XboxDevCLI.PlayFab.Commands.PlayFabCommandHelper;
 
 namespace XboxDevCLI.PlayFab.Commands;
 
@@ -21,11 +20,6 @@ internal static class CloudScriptClassicCommandFactory
     internal const string GetCloudScriptVersionsPath = "/Admin/GetCloudScriptVersions";
     internal const string SetPublishedRevisionPath = "/Admin/SetPublishedRevision";
     internal const string UpdateCloudScriptPath = "/Admin/UpdateCloudScript";
-
-    private static readonly JsonSerializerOptions RequestOptions = new()
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
 
     public static Command Create()
     {
@@ -105,25 +99,14 @@ internal static class CloudScriptClassicCommandFactory
             revisionOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var version = parseResult.GetValue(versionOption);
-            var revision = parseResult.GetValue(revisionOption);
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunGetRevisionAsync(
-                    client, version, revision, output, Console.Out, Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunGetRevisionAsync(
+                    client,
+                    parseResult.GetValue(versionOption),
+                    parseResult.GetValue(revisionOption),
+                    output, stdout, stderr,
+                    cancellationToken)));
 
         return command.WithMetadata(new CommandMetadata(
             ApiPaths: [GetCloudScriptRevisionPath]));
@@ -144,30 +127,16 @@ internal static class CloudScriptClassicCommandFactory
         CancellationToken cancellationToken)
     {
         var (apiPath, request) = BuildGetRevisionCall(version, revision);
-        var body = JsonSerializer.Serialize(request, RequestOptions);
-
-        return PlayFabCommandHelper.InvokeAsync(client, apiPath, body, output, stdout, stderr, cancellationToken: cancellationToken);
+        return RunAsync(client, apiPath, request, output, stdout, stderr, cancellationToken: cancellationToken);
     }
 
     private static Command CreateListVersionsCommand()
     {
         var command = new Command("list", "List all Cloud Script versions and their revision info");
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunListVersionsAsync(client, output, Console.Out, Console.Error, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunListVersionsAsync(client, output, stdout, stderr, cancellationToken)));
 
         return command.WithMetadata(new CommandMetadata(
             ApiPaths: [GetCloudScriptVersionsPath],
@@ -192,7 +161,7 @@ internal static class CloudScriptClassicCommandFactory
         TextWriter stderr,
         CancellationToken cancellationToken)
     {
-        return PlayFabCommandHelper.InvokeAsync(
+        return InvokeAsync(
             client, GetCloudScriptVersionsPath, "{}", output, stdout, stderr,
             cancellationToken: cancellationToken);
     }
@@ -216,25 +185,14 @@ internal static class CloudScriptClassicCommandFactory
             publishOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var filePath = parseResult.GetValue(fileOption)!;
-            var publish = parseResult.GetValue(publishOption);
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunUpdateAsync(
-                    client, filePath, publish, output,
-                    Console.Out, Console.Error, cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunUpdateAsync(
+                    client,
+                    parseResult.GetValue(fileOption)!,
+                    parseResult.GetValue(publishOption),
+                    output, stdout, stderr,
+                    cancellationToken)));
 
         return command.WithMetadata(new CommandMetadata(
             ApiPaths: [UpdateCloudScriptPath],
@@ -267,11 +225,7 @@ internal static class CloudScriptClassicCommandFactory
         var fileName = Path.GetFileName(filePath);
 
         var (apiPath, request) = BuildUpdateCall(fileName, fileContents, publish);
-        var body = JsonSerializer.Serialize(request, RequestOptions);
-
-        return await PlayFabCommandHelper.InvokeAsync(
-            client, apiPath, body, output, stdout, stderr,
-            cancellationToken: cancellationToken);
+        return await RunAsync(client, apiPath, request, output, stdout, stderr, cancellationToken: cancellationToken);
     }
 
     private static Command CreatePublishCommand()
@@ -294,25 +248,14 @@ internal static class CloudScriptClassicCommandFactory
             revisionOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var version = parseResult.GetValue(versionOption);
-            var revision = parseResult.GetValue(revisionOption);
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunPublishAsync(
-                    client, version, revision, output, Console.Out, Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunPublishAsync(
+                    client,
+                    parseResult.GetValue(versionOption),
+                    parseResult.GetValue(revisionOption),
+                    output, stdout, stderr,
+                    cancellationToken)));
 
         return command.WithMetadata(new CommandMetadata(
             ApiPaths: [SetPublishedRevisionPath],
@@ -335,8 +278,6 @@ internal static class CloudScriptClassicCommandFactory
         CancellationToken cancellationToken)
     {
         var (apiPath, request) = BuildPublishCall(version, revision);
-        var body = JsonSerializer.Serialize(request, RequestOptions);
-
-        return PlayFabCommandHelper.InvokeAsync(client, apiPath, body, output, stdout, stderr, cancellationToken: cancellationToken);
+        return RunAsync(client, apiPath, request, output, stdout, stderr, cancellationToken: cancellationToken);
     }
 }

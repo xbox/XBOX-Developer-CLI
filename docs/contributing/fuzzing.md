@@ -5,49 +5,36 @@ description: Run and tune the property-based fuzz tests that feed randomized inp
 
 # Fuzz testing
 
-The XBOX Developer CLI runs **property-based fuzz tests** to harden how it handles untrusted
-input. The suite feeds large volumes of randomized, adversarial input into
-the CLI's parsing and data-transformation code and asserts invariants that must
-hold for *every* input (for example, "this function never throws" or "malformed
-JSON is echoed back unchanged"). This complements the example-based unit tests in
-`tests/XboxDevCLI.UnitTest/`, which check specific known cases.
+The XBOX CLI's fuzz tests feed large volumes of randomized, adversarial input to the
+code that parses and transforms untrusted input, and check rules that must hold for every
+input, such as "this function never throws". They use
+[FsCheck](https://fscheck.github.io/FsCheck/) with `FsCheck.Xunit`, and run with `dotnet test`
+like the unit tests in `tests/XboxDevCLI.UnitTest/`.
 
-## Framework
+## Where the tests live
 
-- **[FsCheck](https://fscheck.github.io/FsCheck/)** with **`FsCheck.Xunit`** —
-  property-based testing integrated with the existing xUnit runner. It is
-  cross-platform, has no native dependencies, and runs in-process, so it fits the
-  project's .NET 10 and xUnit tests without extra tooling.
+The project is `tests/XboxDevCLI.FuzzTest/`:
 
-Coverage-guided fuzzers (e.g. SharpFuzz/libFuzzer) were evaluated, but FsCheck was chosen:
-the CLI's attack surface is mostly pure string/JSON transformation, which
-property-based testing exercises effectively while staying fast, deterministic to
-reproduce, and portable across Windows/Linux/macOS.
+| File | Holds |
+| --- | --- |
+| `FuzzArbitraries.cs` | Generators of adversarial input, and their wrapper types |
+| `FuzzConfig.cs`, `FuzzPropertyAttribute.cs` | The number of cases per property, and the `[FuzzProperty]` attribute |
+| `DestructiveOperationsFuzzTests.cs`, `ParsingFuzzTests.cs`, `FormattingFuzzTests.cs`, `ConfigurationFuzzTests.cs` | The properties, one file per target |
 
-## Where it lives
-
-- Project: `tests/XboxDevCLI.FuzzTest/`
-- Adversarial generators and input wrapper types: `FuzzArbitraries.cs`
-- Iteration budget + `[FuzzProperty]` attribute: `FuzzConfig.cs`,
-  `FuzzPropertyAttribute.cs`
-- Properties (one file per target): `DestructiveOperationsFuzzTests.cs`,
-  `ParsingFuzzTests.cs`, `FormattingFuzzTests.cs`, `ConfigurationFuzzTests.cs`
-
-The fuzz project is intentionally **separate** from `XboxDevCLI.UnitTest` and is
-**excluded from coverage measurement** so its randomized runs never affect
-coverage numbers.
+The [coverage bar](testing.md#coverage-bar) is measured from the unit tests only, so fuzz tests
+don't count toward it.
 
 ## Fuzz targets
 
 | Target | Code under test | Key invariant |
 | --- | --- | --- |
-| Destructive-op gate | `Safety/DestructiveOperations.cs` | Never throws; `Delete*`/`Shutdown*` stay classified destructive under path-normalization tricks (backslashes, percent-encoding, unicode, query/fragment); `Get`/`List`/`Search` are never gated. **Highest priority — this guards `--confirm`.** |
-| Command parsing | `Program.BuildRootCommand().Parse(argv)` | Parsing arbitrary argv never throws; errors surface via `ParseResult`. |
-| Option-value parsing | `PlayFabCommandHelper.ParseCsv` / `TryParseEnum` | Never throw; produced entries are non-empty and trimmed; enum results round-trip. |
-| Output formatting | `PlayFabApiClient.FormatJson`, `Program.FormatOutput` / `FormatErrorOutput` | Never throw on arbitrary/malformed JSON; invalid input is returned unchanged; formatting is idempotent. |
-| Configuration layering | `Program.LoadConfiguration` | Never throws; accepted CLI overrides round-trip into the resolved configuration. |
+| Destructive-operation check | `Safety/DestructiveOperations.cs` | Never throws. `Delete*` and `Shutdown*` stay destructive despite path tricks such as backslashes, percent-encoding, Unicode, and query strings or fragments; `Get`, `List`, and `Search` never are. This is the check behind `--confirm`. |
+| Command parsing | `Program.BuildRootCommand().Parse(argv)` | Parsing any arguments never throws; errors come back in the `ParseResult`. |
+| Option-value parsing | `PlayFabCommandHelper.ParseCsv` and `TryParseEnum` | Never throw; entries are trimmed and non-empty; enum values round-trip. |
+| Output formatting | `PlayFabApiClient.FormatJson`, `Program.FormatOutput`, and `FormatErrorOutput` | Never throw on any input; invalid JSON comes back unchanged; formatting twice gives the same result. |
+| Configuration layering | `Program.LoadConfiguration` | Never throws; accepted command-line overrides reach the resolved configuration. |
 
-## Running locally
+## Run the fuzz tests
 
 Run the whole suite:
 
@@ -55,28 +42,29 @@ Run the whole suite:
 dotnet test tests/XboxDevCLI.FuzzTest/XboxDevCLI.FuzzTest.csproj
 ```
 
-Run a single target while iterating:
+Run one target while you work on it:
 
 ```bash
 dotnet test tests/XboxDevCLI.FuzzTest/XboxDevCLI.FuzzTest.csproj \
   --filter "FullyQualifiedName~DestructiveOperationsFuzzTests"
 ```
 
-### Tuning the fuzzing budget
-
-Each property runs `FUZZ_ITERATIONS` generated cases (default **500**). Raise it to fuzz harder before a release:
+Each property runs `FUZZ_ITERATIONS` generated cases, 500 by default. Raise it to fuzz harder,
+such as before a release. In bash or zsh:
 
 ```bash
-# PowerShell
-$env:FUZZ_ITERATIONS = "50000"; dotnet test tests/XboxDevCLI.FuzzTest/XboxDevCLI.FuzzTest.csproj
-
-# bash / zsh
 FUZZ_ITERATIONS=50000 dotnet test tests/XboxDevCLI.FuzzTest/XboxDevCLI.FuzzTest.csproj
 ```
 
-## Reproducing a failure
+In PowerShell:
 
-On failure FsCheck prints the shrunk counterexample **and** a replay seed, e.g.:
+```powershell
+$env:FUZZ_ITERATIONS = "50000"; dotnet test tests/XboxDevCLI.FuzzTest/XboxDevCLI.FuzzTest.csproj
+```
+
+## Reproduce a failure
+
+When a property fails, FsCheck prints the smallest failing input it found and a replay seed:
 
 ```text
 Falsifiable, after 31 tests (0 shrinks) (17350845101867737935,11032698459973388473).
@@ -85,22 +73,16 @@ Original:
 JsonFragment { Value = ... }
 ```
 
-To re-run a specific property against that exact seed, set the seed on the
-`[FuzzProperty]` (or a temporary `[Property]`) attribute via its `Replay`
-property, for example `[FuzzProperty(Replay = "5357314801272863454,5597035677237889357")]`,
-then run just that test.
+To rerun the property with that seed, set `Replay` on its attribute, such as
+`[FuzzProperty(Replay = "5357314801272863454,5597035677237889357")]`, and run only that test.
 
-When a property surfaces a genuine defect, **fix the product code** rather than
-weakening the property. (The initial suite already caught and fixed three real
-robustness bugs where `JsonDocument.Parse` throws `ArgumentException` — not the
-expected `JsonException` — on strings containing an unpaired UTF-16 surrogate.)
+When a property finds a real defect, fix the product code rather than weakening the property.
 
-## Adding a new target
+## Add a fuzz target
 
-1. Pick a pure or near-pure function that processes untrusted/external input.
-2. If it needs a specialized input shape, add a generator + wrapper type in
+1. Pick a function, ideally without side effects, that processes untrusted or external input.
+2. If it needs input of a particular shape, add a generator and wrapper type in
    `FuzzArbitraries.cs`.
-3. Add a `[FuzzProperty]` method that returns `bool` (or throws on failure) and
-   asserts an invariant that must hold for every input.
-4. Run locally with a high `FUZZ_ITERATIONS`, fix any real defects found, and
-   commit.
+3. Add a `[FuzzProperty]` method that returns `bool`, or throws on failure, and checks a rule
+   that must hold for every input.
+4. Run it with a high `FUZZ_ITERATIONS`, and fix any real defects it finds.

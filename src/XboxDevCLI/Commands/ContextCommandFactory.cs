@@ -9,6 +9,7 @@ using Microsoft.Identity.Client;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -51,7 +52,7 @@ internal static class ContextCommandFactory
         "keys",
         [
             new TableColumn("KEY", "name", 24),
-            new TableColumn("USED BY", "usedBy", 60),
+            new TableColumn("USED BY", "usedBy", 72),
         ]);
 
     /// <summary>The table <c>context profile list</c> and <c>delete</c> render: one row per profile.</summary>
@@ -548,10 +549,17 @@ internal static class ContextCommandFactory
     }
 
     private static async Task<SignedInIdentity> GetRequiredIdentityAsync(
-        AuthenticationService auth, CancellationToken cancellationToken) =>
-        await SignedInIdentity.FromCacheAsync(auth, cancellationToken)
-        ?? throw new InvalidOperationException(
+        AuthenticationService auth, CancellationToken cancellationToken)
+    {
+        if (await SignedInIdentity.FromCacheAsync(auth, cancellationToken) is { } identity)
+        {
+            return identity;
+        }
+
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.Auth);
+        throw new InvalidOperationException(
             $"Not signed in. Run '{CliIdentity.CommandName} auth login' first.");
+    }
 
     /// <summary>
     /// The signed-in account for <c>context get</c>, which is how a script or agent checks its

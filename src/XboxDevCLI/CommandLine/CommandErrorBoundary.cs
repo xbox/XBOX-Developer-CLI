@@ -9,6 +9,7 @@ using System.Runtime.CompilerServices;
 using Microsoft.Identity.Client;
 using Microsoft.Identity.Client.Extensions.Msal;
 using XboxDevCLI.Output;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.CommandLine;
 
@@ -21,7 +22,9 @@ namespace XboxDevCLI.CommandLine;
 /// <remarks>
 /// Only the failures a correct CLI can meet are reported here: missing or invalid files and
 /// settings, sign-in and token failures, and network errors. Anything else is a bug and
-/// surfaces as one. Cancellation is never caught, so Ctrl-C keeps its meaning. Messages come from
+/// surfaces as one. The caller's cancellation that reaches the boundary exits with
+/// <see cref="CanceledExitCode"/> and writes nothing; a command that reports a cancellation
+/// itself, such as a write whose outcome is unknown, returns its own exit code instead. Messages come from
 /// the components that raised them, which name settings and files but never their contents, and
 /// inner exceptions are never written.
 /// </remarks>
@@ -40,6 +43,9 @@ internal static class CommandErrorBoundary
         return command;
     }
 
+    /// <summary>The exit code of a command the caller canceled, 128 plus SIGINT's 2, as shells use.</summary>
+    internal const int CanceledExitCode = 130;
+
     /// <summary>Whether <paramref name="exception"/> is an expected failure the boundary reports.</summary>
     internal static bool IsExpected(Exception exception) =>
         exception is (InvalidOperationException and not ObjectDisposedException)
@@ -53,8 +59,10 @@ internal static class CommandErrorBoundary
     /// <summary>Writes <paramref name="exception"/> in the command's format, and returns exit code 1.</summary>
     internal static int Report(ParseResult parseResult, Exception exception)
     {
+        TelemetryRecorder.RecordError(exception);
+
         // Line breaks are kept, written as the platform's, and any other control character removed.
-        var message = TerminalText.MultiLine(exception.Message.ReplaceLineEndings("\n")).ReplaceLineEndings();
+        var message = TerminalText.Message(exception.Message);
         Console.Error.WriteLine(Formats.TryGetValue(parseResult.CommandResult.Command, out var format)
             ? format(parseResult, message)
             : message);
@@ -90,13 +98,26 @@ internal static class CommandErrorBoundary
             try
             {
                 Program.Prepare(parseResult);
-                return inner switch
+                var exitCode = inner switch
                 {
                     AsynchronousCommandLineAction asynchronous =>
                         await asynchronous.InvokeAsync(parseResult, cancellationToken),
                     SynchronousCommandLineAction synchronous => synchronous.Invoke(parseResult),
                     _ => throw new UnreachableException($"Unsupported action type {inner.GetType()}."),
                 };
+
+                // Commands that report their own cancellation return 1 or 3 rather than 130, so the
+                // token, not the exit code, says the user stopped the command.
+                if (exitCode != 0 && cancellationToken.IsCancellationRequested)
+                {
+                    TelemetryRecorder.SetError(TelemetryErrorTypes.Cancelled);
+                }
+
+                return exitCode;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return CanceledExitCode;
             }
             catch (Exception exception) when (IsExpected(exception))
             {

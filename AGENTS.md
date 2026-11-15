@@ -7,35 +7,37 @@ informational commands write text for people.
 
 ## Names and brand
 
-- Call the product the **XBOX CLI**, or the **XBOX Developer CLI** when it needs to be more
-  specific. Don't call it "XBOX Dev CLI" or "XboxDevCLI" in prose.
+- Call the product the **XBOX CLI**. Don't call it "XBOX Developer CLI", "XBOX Dev CLI", or
+  "XboxDevCLI" in prose. The WinGet package ID, `Microsoft.Gaming.XBOXDeveloperCLI`, is an
+  identifier and keeps its name.
 - Write the brand as **XBOX** in prose, never "Xbox".
 - Call XBOX's online services **XBOX services**, as in "XBOX services configuration," not
   "XBOX Live", except in a literal name such as Partner Center's **Xbox Live configuration** page.
 - Keep identifiers exactly as they are: the `xbox` command, `XboxDevCLI` in namespaces
-  and paths, repository names, `aka.ms/xbox-cli` links, configuration keys, and generated
+  and paths, repository names, `go.xbox/cli` links, configuration keys, and generated
   PlayFab source. New URLs and repository names use lowercase kebab case.
 
 ## Public-facing language
 
-- Describe supported behavior, not internal implementation. Do not name internal
+- Describe supported behavior, not internal implementation. Don't name internal
   services such as `XboxPartner` or expose internal routes in public documentation,
   CLI Help, errors, warnings, or progress messages.
 - A replacement service name is usually unnecessary. Prefer wording such as
   "The request was rejected" or "The request timed out." Use "the service" when
-  a noun is needed. Do not substitute "Partner Center" unless that attribution
+  a noun is needed. Don't substitute "Partner Center" unless that attribution
   is verified.
 - Preserve what failed, relevant status codes, and actionable troubleshooting
   guidance. Removing internal terminology must not make a message less useful.
 - Preserve exact configuration keys and environment variables that users need
-  to set, such as `XboxPartner:BaseUrl`. This is not a request to rename code
+  to set, such as `XboxPartner:BaseUrl`. This isn't a request to rename code
   identifiers, configuration settings, or actual request routes.
 - Help documentation links must point to relevant public documentation, not
   internal API routes. Omit the link when no suitable documentation exists.
 - Write for a reader who has only this repository. Leave out how a decision was reached,
   who asked for it, "as discussed", and private issue or pull request numbers; say what
-  is, and why. Explain or replace jargon and abbreviations an outside developer wouldn't
-  know, and don't link to anything they can't open.
+  is, and why when the reason changes what the reader does. Explain or replace jargon and
+  abbreviations an outside developer wouldn't know, and don't link to anything they can't
+  open.
 - A code comment explains the code in terms of the code, the product, or a public spec,
   not an internal incident, conversation, or system.
 
@@ -55,6 +57,22 @@ admin rights, and nothing on the server side stops a mistake. Before you run `xb
 - `--confirm` is a backstop for scripts and accidents, not approval. Passing it yourself
   doesn't stand in for asking.
 
+## Keep changes simple
+
+Make the smallest change that does the job. Every line has to be read, tested, and
+maintained.
+
+- Handle a case only when something realistic triggers it. Don't add code for a service
+  breaking its own response contract, a limit no game reaches, or a file layout this
+  repository doesn't use. Unexpected input can fail with a plain error.
+- Don't add validation, retries, fallbacks, options, settings, or abstractions before
+  something needs them.
+- Test the behavior the change adds, not libraries or behavior it didn't touch. Two or
+  three cases usually show a behavior.
+- Before acting on a review finding, check that it names a realistic trigger and what goes
+  wrong for the user. If it doesn't, reply with why instead of adding code.
+- Never simplify away a safety check, such as confirmation for destructive operations.
+
 ## Layout
 
 | Path | Holds |
@@ -72,13 +90,13 @@ admin rights, and nothing on the server side stops a mistake. Before you run `xb
   in `tests/XboxDevCLI.UnitTest/`.
 - Tests that redirect `Console.Out` or `Console.Error` join
   `[Collection("ConsoleRedirect")]`, because console streams are process-global.
-- The E2E harness in `tests/XboxDevCLI.EndToEndTests/` runs offline checks during normal
-  tests; live tests skip unless `E2E_GITHUB_ENVIRONMENT` is set. See
+- The end-to-end (E2E) harness in `tests/XboxDevCLI.EndToEndTests/` runs offline checks during ordinary
+  test runs; live tests skip unless `E2E_GITHUB_ENVIRONMENT` is set. See
   [Testing and coverage](docs/contributing/testing.md#live-end-to-end-tests)
   before opting in to real services.
 - The end-to-end tests in `tests/XboxDevCLI.E2ETest/` run the CLI against production as the
-  signed-in account, so they run only commands that read, and `xbl document commit` and
-  `xbl publish start` with `--validate-only`, which XBOX services validate without storing anything.
+  signed-in account, so they run only commands that read, and `xbl config save` and
+  `xbl config publish` with `--validate-only`, which XBOX services validate without storing anything.
   A new test must do the same. The test files are the record of what runs, so `Cli.cs` has no
   allowlist of commands: don't add one or any other guard, and don't ask for one in a review. See
   [Testing and coverage](docs/contributing/testing.md#end-to-end-tests-with-your-own-account).
@@ -135,7 +153,9 @@ single record, decide whether it deserves a view, and if so:
 - Pick a handful of columns a reader wants at a glance, not every scalar on the model — a
   row has to fit a terminal, and inferring columns is what makes `az ... --output table`
   lossy. Columns must name scalar fields; use a dotted path to reach inside a nested
-  object.
+  object. When each record holds a list of the records worth showing, such as roles
+  holding members, set the view's `Expand`; when they're split across several lists, use
+  `TableView.Merged`, and set `OnlyIn` on a column that only some of those lists have.
 - Set `Redact: true` on any column holding a credential. Tables end up in screenshots and
   scrollback; JSON still returns the real value.
 - If the command formats its own response rather than using the shared invoke path, it
@@ -144,7 +164,7 @@ single record, decide whether it deserves a view, and if so:
   declaration separately.
 
 A validating test walks every declared view against its generated response model and
-fails the build on a field that does not exist, a non-scalar column, or an unredacted
+fails the build on a field that doesn't exist, a non-scalar column, or an unredacted
 credential. The command's page under `docs/commands/` says whether it accepts `--output
 table`, and must be updated in the same change.
 
@@ -154,6 +174,11 @@ The `docs/` directory is plain Markdown that ships with the source; there is no 
 generator. A unit test checks that every `xbox` command and option the docs name exists,
 but nothing checks that every command is documented, or that the docs describe it
 correctly. Every command, verb, or option change must update them in the same pull request.
+
+`docs/known-issues.md` lists the known problems and unfinished features in the latest
+release. A change that ships one adds an entry, and a change that fixes one marks its entry
+**Fixed** rather than deleting it; see
+[Editing the docs](docs/contributing/documentation.md#known-issues).
 
 The command reference follows the command tree. `docs/commands.md` covers `xbox` itself;
 `xbox <command>` is documented in `docs/commands/<command>.md` (for example
@@ -168,12 +193,37 @@ pages with relative file paths (`[Commands](commands.md)`), never absolute URLs 
 site-generator template syntax. Front matter carries `title` and a one-sentence
 `description`, and nothing else, and the page's `#` heading matches its `title`.
 
-Follow the existing command table, option table, and runnable-example shape; explain
-non-obvious requirements, conflicts, and deliberate omissions. Include an API path column
-only for public APIs that readers can call, such as PlayFab, never for internal service
-routes. Extend an option table (and add a subsection when needed) for a new option. Say on
-the command's page whether it accepts `--output table`. Changes to destructive behavior or
-confirmation must also update `docs/safety.md`.
+Follow the existing command table, option table, and runnable-example shape, and explain
+non-obvious requirements and conflicts. Include an API path column only for public APIs that
+readers can call, such as PlayFab, never for internal service routes. Extend an option table
+(and add a subsection when needed) for a new option. Say on the command's page whether it
+accepts `--output table`. Changes to destructive behavior or confirmation must also update
+`docs/safety.md`.
+
+Say only what the reader needs to understand, decide, act, avoid a risk, or verify the
+result. Accurate isn't the same as needed.
+
+- Describe what the reader sees and does, not how the CLI does it.
+- Document a case only when a realistic reader will meet it.
+- Say what a command doesn't do only when a reader would expect it to.
+- Explain why only when the reason changes what the reader does.
+- Keep tutorials on the common path, and put exceptions on the reference page.
+- Make every code block work when pasted whole. Put alternatives, and examples that change
+  something, in separate blocks; a list of read-only examples can share one.
+- Say each shared fact once, on the page that owns it, and link to it there. For example,
+  `docs/commands/context.md` owns where a command gets its seller or title.
+- Warn only when a command does something its name doesn't tell the reader, such as removing
+  what you didn't name, making a change you can't reverse, or reaching players or
+  certification. Don't warn that a command which changes something changes it.
+
+Write for developers who are comfortable with a terminal, and define XBOX, Partner Center,
+and PlayFab concepts on first use. Address the reader as *you*, in the present tense and
+active voice, with contractions such as *can't* and *don't*. Use *must* for a requirement,
+*should* for a recommendation, *can* for a capability, and *might* for a possibility, rather
+than *may*. Write *sign in*, not *log in*, except in literal names such as `xbox auth login`.
+Leave out *simply*, *just*, and *easy*. Expand product and domain acronyms such as SCID and
+GDK on first use in a page. Keep headings sentence case and unique at each level, write link
+text that names its destination rather than a raw URL, and start bullets with hyphens.
 
 ## Example data
 
@@ -198,11 +248,12 @@ placeholder identifiers, never values copied from a real title, account, or resp
   | PlayFab GUID ID, such as a build, session, experiment, or catalog item ID | `11111111-2222-3333-4444-555555555555`, counting up (`22222222-3333-4444-5555-666666666666`) when an example needs more than one |
   | Economy operation token | `OPERATIONTOKEN123` |
   | Seller ID | `1234567` |
+  | Audience ID | `1152921504606846976` |
   | XBOX title ID | `1234ABCD` |
   | SCID | `aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee` |
   | Store ID | `9N0000000000` |
   | Product ID | `00000000000000000042` |
-  | MSA app ID | `0000000040ABCDEF` |
+  | Microsoft account (MSA) app ID | `0000000040ABCDEF` |
   | Sandbox | `XDKS.1`, `ABCDEF.1`, `TESTSB.42`, or `RETAIL` |
 
 Keep a placeholder's format, length, and casing when it matters to the test, such as a

@@ -125,8 +125,8 @@ public class CommandLifecycleTests
         CommandHelpWriter.WriteRoot(rootHelp, root, "xbox", width: 200);
         Assert.Contains("Manage XBOX services configuration [Experimental]", rootHelp.ToString());
 
-        foreach (var path in new[] { "", "configuration list", "configuration get", "schema get",
-                     "document download", "document commit", "publish start", "publish status" })
+        foreach (var path in new[] { "", "config list", "config status", "config download", "config save",
+                     "config publish", "schema list", "schema get", "schema download" })
         {
             var segments = new[] { "xbl" }.Concat(path.Split(' ', StringSplitOptions.RemoveEmptyEntries)).ToArray();
             using var output = new StringWriter();
@@ -159,7 +159,7 @@ public class CommandLifecycleTests
             .Order(StringComparer.Ordinal)
             .ToArray();
         Assert.Equal(
-            ["cloudscript", "experiment", "group", "mps", "player", "privacy"],
+            ["cloudscript", "experiment", "group", "mps",             "player", "privacy", "service-principal"],
             experimental);
 
         using var playFabHelp = new StringWriter();

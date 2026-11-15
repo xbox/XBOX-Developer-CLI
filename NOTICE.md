@@ -1,6 +1,6 @@
 # Third-party notices
 
-The XBOX Developer CLI is licensed under the [MIT License](LICENSE). Each release of the CLI is a
+The XBOX CLI is licensed under the [MIT License](LICENSE). Each release of the CLI is a
 self-contained executable that bundles the third-party components below, which are licensed
 under their own terms. Each component's copyright notice and license are reproduced here as
 its license requires.
@@ -10,10 +10,10 @@ its license requires.
 | Component | Version | License | Copyright | Source |
 | --- | --- | --- | --- | --- |
 | .NET runtime (`Microsoft.NETCore.App`) | 10.0 | MIT | Copyright (c) .NET Foundation and Contributors | https://github.com/dotnet/runtime |
-| Azure.Core | 1.60.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/Azure/azure-sdk-for-net |
+| Azure.Core | 1.63.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/Azure/azure-sdk-for-net |
 | Azure.Identity | 1.21.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/Azure/azure-sdk-for-net |
-| Azure.Monitor.OpenTelemetry.Exporter | 1.8.3 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/Azure/azure-sdk-for-net |
-| Microsoft.Bcl.AsyncInterfaces | 10.0.9 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
+| Azure.Monitor.OpenTelemetry.Exporter | 1.10.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/Azure/azure-sdk-for-net |
+| Microsoft.Bcl.AsyncInterfaces | 10.0.10 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Configuration | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Configuration.Abstractions | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Configuration.Binder | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
@@ -21,34 +21,34 @@ its license requires.
 | Microsoft.Extensions.Configuration.FileExtensions | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Configuration.Json | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.DependencyInjection | 10.0.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
-| Microsoft.Extensions.DependencyInjection.Abstractions | 10.0.9 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
-| Microsoft.Extensions.Diagnostics.Abstractions | 10.0.9 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
+| Microsoft.Extensions.DependencyInjection.Abstractions | 10.0.10 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
+| Microsoft.Extensions.Diagnostics.Abstractions | 10.0.10 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.FileProviders.Abstractions | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.FileProviders.Physical | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.FileSystemGlobbing | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
-| Microsoft.Extensions.Hosting.Abstractions | 10.0.9 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
+| Microsoft.Extensions.Hosting.Abstractions | 10.0.10 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Logging | 10.0.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
-| Microsoft.Extensions.Logging.Abstractions | 10.0.9 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
+| Microsoft.Extensions.Logging.Abstractions | 10.0.10 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Logging.Configuration | 10.0.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
-| Microsoft.Extensions.Options | 10.0.9 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
+| Microsoft.Extensions.Options | 10.0.10 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Options.ConfigurationExtensions | 10.0.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | Microsoft.Extensions.Primitives | 10.0.11 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
-| Microsoft.Identity.Client | 4.84.2 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/AzureAD/microsoft-authentication-library-for-dotnet |
-| Microsoft.Identity.Client.Extensions.Msal | 4.84.2 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/AzureAD/microsoft-authentication-library-for-dotnet |
+| Microsoft.Identity.Client | 4.92.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/AzureAD/microsoft-authentication-library-for-dotnet |
+| Microsoft.Identity.Client.Extensions.Msal | 4.92.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/AzureAD/microsoft-authentication-library-for-dotnet |
 | Microsoft.IdentityModel.Abstractions | 8.14.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/AzureAD/azure-activedirectory-identitymodel-extensions-for-dotnet |
 | NuGet.Versioning | 7.0.0 | Apache-2.0 | © Microsoft Corporation. All rights reserved. | https://github.com/NuGet/NuGet.Client |
-| OpenTelemetry | 1.15.3 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
-| OpenTelemetry.Api | 1.15.3 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
-| OpenTelemetry.Api.ProviderBuilderExtensions | 1.15.3 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
-| OpenTelemetry.Extensions.Hosting | 1.15.3 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
-| OpenTelemetry.PersistentStorage.Abstractions | 1.0.3 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet-contrib |
-| OpenTelemetry.PersistentStorage.FileSystem | 1.0.3 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet-contrib |
+| OpenTelemetry | 1.18.0 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
+| OpenTelemetry.Api | 1.18.0 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
+| OpenTelemetry.Api.ProviderBuilderExtensions | 1.18.0 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
+| OpenTelemetry.Extensions.Hosting | 1.18.0 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet |
+| OpenTelemetry.PersistentStorage.Abstractions | 1.1.1 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet-contrib |
+| OpenTelemetry.PersistentStorage.FileSystem | 1.1.1 | Apache-2.0 | Copyright The OpenTelemetry Authors | https://github.com/open-telemetry/opentelemetry-dotnet-contrib |
 | Serilog | 4.4.0 | Apache-2.0 | Copyright © Serilog Contributors | https://github.com/serilog/serilog |
 | Serilog.Formatting.Compact | 3.0.0 | Apache-2.0 | Copyright © Serilog Contributors | https://github.com/serilog/serilog-formatting-compact |
 | Serilog.Sinks.File | 7.0.0 | Apache-2.0 | Copyright © Serilog Contributors | https://github.com/serilog/serilog-sinks-file |
-| System.ClientModel | 1.14.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/Azure/azure-sdk-for-net |
+| System.ClientModel | 1.16.0 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/Azure/azure-sdk-for-net |
 | System.CommandLine | 2.0.3 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
-| System.Memory.Data | 10.0.9 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
+| System.Memory.Data | 10.0.10 | MIT | © Microsoft Corporation. All rights reserved. | https://github.com/dotnet/dotnet |
 | System.Security.Cryptography.ProtectedData | 4.5.0 | MIT | Copyright (c) .NET Foundation and Contributors | https://github.com/dotnet/corefx |
 | Unicode Character Database (`EastAsianWidth.txt`) | 18.0.0 | Unicode-3.0 | Copyright © 1991-2026 Unicode, Inc. | https://www.unicode.org/Public/18.0.0/ucd/EastAsianWidth.txt |
 

@@ -119,6 +119,16 @@ public class CommandPagingTests
                 Assert.True(HasWireField(response, paging.Token), $"'{path}': {response?.Name} has no '{paging.Token}'.");
                 checkedDeclarations++;
             }
+
+            Assert.True(
+                (paging.TokenOption is null) == (paging.PageSizeOption is null),
+                $"'{path}' declares only one of the paging options.");
+            foreach (var optionName in new[] { paging.TokenOption, paging.PageSizeOption }.OfType<string>())
+            {
+                Assert.True(
+                    command.Options.Any(option => option.Name == optionName),
+                    $"'{path}' declares paging through '{optionName}', which it doesn't take.");
+            }
         }
 
         Assert.True(checkedDeclarations > 0, "No paging declarations were checked.");
@@ -141,6 +151,57 @@ public class CommandPagingTests
         Assert.Contains("Returns one page of results", help, StringComparison.Ordinal);
         Assert.Contains("\"SkipToken\"", help, StringComparison.Ordinal);
         Assert.Contains("\"PageSize\"", help, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A command that pages through options takes no request body, so its Help must say to rerun
+    /// it with the token option rather than to edit a body it can't send.
+    /// </summary>
+    [Fact]
+    public void HelpForAnOptionPagedCommandNamesTheOptions()
+    {
+        var root = Program.BuildRootCommand();
+        var list = root.Subcommands.Single(command => command.Name == "playfab")
+            .Subcommands.Single(command => command.Name == "service-principal")
+            .Subcommands.Single(command => command.Name == "list");
+        using var writer = new StringWriter();
+
+        CommandHelpWriter.Write(writer, root, list, CliIdentity.CommandName, width: 100);
+
+        var help = string.Join(' ', writer.ToString().Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        Assert.Contains("--continuation-token set to that value", help, StringComparison.Ordinal);
+        Assert.Contains("--limit sets how many results a page holds", help, StringComparison.Ordinal);
+        Assert.DoesNotContain("request body", help, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void OptionNoticeGivesAShellQuotedToken()
+    {
+        var notice = Program.FormatNextPageNotice(
+            """{"data":{"ContinuationToken":"abc+/="}}""",
+            new CommandPaging("PageSize", "ContinuationToken", "--limit", "--continuation-token"));
+
+        Assert.NotNull(notice);
+        Assert.Contains("--continuation-token 'abc+/='", notice, StringComparison.Ordinal);
+        Assert.Contains("--limit sets how many results a page holds", notice, StringComparison.Ordinal);
+        Assert.DoesNotContain("request body", notice, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Shell quoting doesn't escape control characters, so a token outside printable ASCII is not
+    /// written to the terminal at all; the notice points to JSON output for it instead.
+    /// </summary>
+    [Fact]
+    public void OptionNoticeWithholdsATokenItCannotWriteSafely()
+    {
+        var notice = Program.FormatNextPageNotice(
+            """{"data":{"ContinuationToken":"a\u001b[31m\u202Eb"}}""",
+            new CommandPaging("PageSize", "ContinuationToken", "--limit", "--continuation-token"));
+
+        Assert.NotNull(notice);
+        Assert.Contains("--continuation-token set to the response's ContinuationToken", notice, StringComparison.Ordinal);
+        Assert.DoesNotContain('\u001b', notice);
+        Assert.DoesNotContain('\u202e', notice);
     }
 
     /// <summary>

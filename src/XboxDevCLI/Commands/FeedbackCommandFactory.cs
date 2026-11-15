@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using XboxDevCLI.CommandLine;
+using XboxDevCLI.Presentation;
 
 namespace XboxDevCLI.Commands;
 
@@ -90,7 +91,7 @@ internal static class FeedbackCommandFactory
                 {
                     while (true)
                     {
-                        Console.Error.Write("Open a browser to draft a bug report? [y/N]: ");
+                        ConfirmationPrompt.Write(Console.Error, "Open a browser to draft a bug report? [y/N]: ");
                         var answer = (await dependencies.ReadLineAsync(cancellationToken))?.Trim();
                         cancellationToken.ThrowIfCancellationRequested();
                         if (string.IsNullOrEmpty(answer)

@@ -1,110 +1,93 @@
 ---
 title: XBOX services configuration
-description: Manage XBOX services configuration, including schemas, documents, achievement images, working and published state, and publishing.
+description: Manage XBOX services configuration, including its state, documents, publishing, schemas, and achievement images.
 ---
 
 # XBOX services configuration
 
-The `xbl` command family is Experimental. Its CLI interface may change
+The `xbl` command family is Experimental. Its CLI interface might change
 or be removed based on feedback.
 
-`xbox xbl` manages XBOX services configuration — configuration schemas,
-configuration documents, working and published configuration state, and publishing —
-as well as achievement images. To list the sandboxes configuration commands target,
+`xbox xbl` manages XBOX services configuration — working and published configuration
+state, configuration documents, publishing, and configuration schemas — as well as
+achievement images. To list the sandboxes configuration commands target,
 use [`xbox sandbox list`](sandbox.md).
-
-These commands sit at the top level rather than under `playfab`, because they don't call a
-PlayFab API. The global `--playfab-title-id`
-option is accepted everywhere but selects nothing for this family; an XBOX title is
-identified by its service configuration ID (SCID) instead.
 
 These commands work with the same configuration that Partner Center edits. For what each
 XBOX services feature does and how to configure it, see
 [Portal configuration overview](https://devdocs.xbox.com/services/xbox-services/fundamentals/portal-config/live-portal-config-overview)
-in the XBOX developer documentation. `schema get` downloads the XSD for each configuration
-document type.
+in the XBOX developer documentation.
 
-The command tree is organized noun → verb:
-
-| Noun | Commands | Purpose |
+| Group | Commands | Purpose |
 | --- | --- | --- |
-| `schema` | `get` | List configuration schema types and versions, or download XSDs. |
-| `document` | `download`, `commit` | Download a configuration document set, or validate and commit one. |
-| `configuration` | `list`, `get` | Inspect working and published configuration state. |
-| `publish` | `start`, `status` | Promote configuration between sandboxes and read publish status. |
+| `config` | `list`, `status`, `download`, `save`, `publish` | Inspect working and published configuration state, download and save configuration documents, and publish configuration to a sandbox. |
+| `schema` | `list`, `get`, `download` | List configuration schema types and versions, get one version, or download XSDs. |
 | [`achievement-image`](xbl/achievement-image.md) | `upload`, `get`, `list`, `download` | Register, inspect, or download achievement images. |
-
-See [Commands](../commands.md) for the global options shared across the
-CLI, and [Authentication](../authentication.md) for signing in.
 
 ## Shared behavior
 
-### Seller selection
+### Seller and sandbox
 
-Every command except `schema get` accepts `--seller-id`:
+Every command except the `schema` commands takes `--seller-id`. Without it, a command uses
+`XBOX_SELLER_ID` or the seller saved with [`xbox context set`](context.md), and then your only
+seller; if you have several, pass `--seller-id`.
 
-| Option | Description |
-| --- | --- |
-| `--seller-id <id>` | Optional positive numeric XBOX seller account ID. Must be authorized for the signed-in developer. Takes precedence over `XBOX_SELLER_ID` and the saved seller. |
+`config status` and `config publish` take `--sandbox-id` from `XBOX_SANDBOX_ID` or the saved
+`sandbox-id` when you leave it out. `config download` and `config save` need `--sandbox-id` on
+the command line for sandbox documents.
 
-The seller resolves from `--seller-id`, then `XBOX_SELLER_ID`, then the seller saved by
-[`xbox context set seller-id <id>`](context.md) in the selected profile. The developer's identity
-comes from the signed-in account, so there are no `--user-id` or `--user-email` options.
-With no seller from any of these, the command uses the developer's only authorized seller; when several are available, pass `--seller-id` or save one with
-`xbox context set seller-id <id>`.
+### Title targeting
 
-### Sandbox selection
+`config list`, `config status`, `config publish`, and sandbox-scoped `config download` and
+`config save` take the title's service configuration identifier (SCID) with `--scid`, or its
+XBOX title ID with `--title-id`, but not both. With neither, they use `XBOX_TITLE_ID` or the
+saved `title-id`; see [Context](context.md). `--scid` ignores both.
 
-`configuration get`, `publish start`, and `publish status` take `--sandbox-id` as a
-[context value](context.md#how-commands-use-saved-values): without the flag, they use
-`XBOX_SANDBOX_ID`, then the sandbox ID saved by `xbox context set sandbox-id <id>`. The `document`
-commands' `--sandbox-id` doesn't, since it applies only to sandbox documents.
+- `--title-id` is hexadecimal, as [`game get`](game.md) shows it: `00000001` through
+  `7FFFFFFF`, with an optional `0x` prefix. For other title IDs, pass the SCID.
+- Reads of a title bound to another title's configuration use the primary title's SCID.
+- `config save` and `config publish` by a bound title's ID are refused, even with
+  `--validate-only` (`bound_title_requires_scid`). The error names the primary title and
+  SCID; rerun with that `--scid`.
+- Saving or publishing by `--title-id` to configuration that other titles are bound to
+  changes it for all of them. At a terminal, the CLI lists the bound titles and asks first;
+  without one, it fails. `--allow-shared-configuration` skips the question. A write by
+  `--scid` doesn't ask.
+- `config save` and `config publish` write the seller and SCID they used to stderr. Read
+  commands do with `--verbose`.
 
-`document commit` and `publish start` change configuration, so when the seller or sandbox
-doesn't come from its flag, they first write it and its source to stderr:
+These commands save a title ID, then use it to read, download, and validate that title's
+configuration in XDKS.1. The last one names the title with `--title-id` instead:
 
-```text
-Using --seller-id 1234567 from saved context.
+```powershell
+xbox context set title-id 1234ABCD
+xbox xbl config list --output table
+xbox xbl config status --sandbox-id XDKS.1
+xbox xbl config download --sandbox-id XDKS.1 --view draft --dest .\xbox-config
+xbox xbl config save --sandbox-id XDKS.1 --file ".\xbox-config\*.xml" --validate-only
+xbox xbl config status --title-id 1234ABCD --sandbox-id XDKS.1
 ```
-
-`schema get` reads schema metadata that is not seller-scoped and does not accept
-`--seller-id`.
 
 ### Output
 
-All `xbl` commands declare table views and accept `--output table`
-in addition to the default `json` and to `json-compact`.
-
-| Option | Description |
-| --- | --- |
-| `--output`, `-o` | `json` (default), `json-compact`, or `table` for commands with a declared table view. |
-
-Table columns are a human convenience, not a stability contract. Use `--output json` or
-`--output json-compact` for anything a script or agent parses.
-
-`--data-only` is accepted as a global option but has no effect here: the responses
-carry no PlayFab `{code,status,data}` envelope, so there is no wrapper to strip. The
-`--base-url` option belongs to the [`seller`](seller.md), [`game`](game.md), and
-[`context`](context.md) commands and is not available under `xbl`.
+Every `xbl` command accepts `--output table` as well as `json` (the default) and
+`json-compact`. Each command's options table lists its table columns.
 
 ### Errors
 
-A failed request exits 1. When the error response is JSON, stderr gets a sanitized JSON
-error with `status`, `title`, `detail`, and the error `code` when the response includes one.
-Scripts should branch on `status` or `code`, never on the wording of `detail`.
+A failed request exits 1 and writes a JSON error to stderr with `status`, `title`, `detail`,
+and `code` when the service sends one. Branch on `status` or `code`, not on the wording of
+`detail`. A 429 error includes `retryAfterSeconds`; see
+[Rate limits](../cli-for-agents.md#rate-limits).
 
-HTTP 429 errors include the wait from `Retry-After` as `retryAfterSeconds`, even when the
-body is empty or unreadable. See [Rate limits](../cli-for-agents.md#rate-limits).
-
-When XBOX services validation rejects the configuration, the error also lists each message under
-`validation`, with its `severity` and `message`, plus the `documentName` and `error` key when
-the service sends them:
+When XBOX services validation rejects the configuration, the error lists each message under
+`validation`:
 
 ```json
 {
   "status": 409,
-  "title": "XBOX Live validation failed.",
-  "detail": "The configuration failed XBOX Live validation. See validation for each message. MS-CV: ...",
+  "title": "Validation failed.",
+  "detail": "The configuration failed XBOX services validation. See validation for each message. MS-CV: ...",
   "code": "validation_failed",
   "validation": [
     {
@@ -116,319 +99,249 @@ the service sends them:
 }
 ```
 
-### Short aliases differ between commands
+`config save` and `config publish` without `--validate-only` say whether a failed change
+could have been applied:
 
-Short aliases are not consistent across this family, so prefer the long form in scripts:
-
-`--sandbox-id` and `--source-sandbox-id` have no short aliases.
-
-| Alias | Means `--scid` on | Means something else on |
-| --- | --- | --- |
-| `-s` | `configuration list`, `configuration get`, `publish start`, `publish status` | — |
-| `-c` | `document download`, `document commit` | — |
-| `-d` | — | `--dest` on `document download` and `schema get` |
-| `-v` | — | `--version` on `schema get`; `--validate-only` on `document commit` and `publish start` |
-
-### Identifier rules
-
-- `--scid` is parsed as a GUID. Non-GUID values are rejected.
-- `--sandbox-id` is case-sensitive and must not contain whitespace. `document download`
-  and `document commit` also reject path characters (`/`, `\`, `:`) and the names `.`
-  and `..`, because they use the sandbox ID in local file names.
-- `--type` and `--view` accept any casing and are sent in canonical lowercase.
-
-> [!WARNING]
-> `document commit` and `publish start` change XBOX services configuration for a real title.
-> Both offer `--validate-only` as a dry run. `publish start` asks before it publishes to
-> RETAIL, CERT, CERT.DEBUG, or HIDDEN, or from another sandbox
-> ([Confirmation](#confirmation)). `document commit` doesn't ask, and the global
-> `--confirm`/`--yes`/`-y` flag doesn't gate it. Review the SCID, sandbox, and file
-> selection yourself before running either command. See
-> [Safety and destructive operations](../safety.md).
-
----
-
-## schema
-
-Discover and download XBOX services configuration document schemas. `schema get` has three
-modes, selected by which options you supply.
-
-| Invocation | Description |
+| Exit code | Meaning |
 | --- | --- |
-| `schema get` | List every schema type. |
-| `schema get --type <type>` | List versions for one schema type. |
-| `schema get --type <type> --version <n>` | Download one XSD. |
+| 1 | Nothing was changed: the request was stopped or failed before it was sent, or was rejected with a `4xx` other than `408`. |
+| 3 | The outcome is unknown: Ctrl+C, a timeout, or a lost connection after the request was sent, any other error status, or a success response the CLI can't read. |
 
-All three modes are read-only.
-
-### `schema get` options
-
-| Option | Alias | Required | Description |
-| --- | --- | --- | --- |
-| `--type <type>` | `-t` | No | Schema type. Omitted by default, which lists all types. |
-| `--version <number>` | `-v` | No | Positive schema version to download. Requires `--type`. Omitted by default, which lists versions, or with `--dest` saves every version. |
-| `--dest <directory>` | `-d` | No | Directory for saved XSD files. Omitted by default; a selected XSD is written to stdout. |
-| `--output <format>` | `-o` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `VERSION`, `NAMESPACE`, `PATH`, and `BYTES` columns. |
-
-`--version` without `--type` fails with `--version requires --type.`, and a non-positive
-version fails with `--version must be a positive integer.`
-
-### Output modes
-
-- With `--type` and `--version` but no `--dest`, stdout receives the **raw XSD bytes** so
-  the content can be redirected straight to a file. Adding `--output table` replaces that
-  raw output with a one-row summary carrying the type, version, and byte count.
-- With `--dest`, the schema is saved as `<type>_<version>.xsd` (the type lowercased) and
-  the command prints saved-file metadata instead of the XSD.
-- With `--dest` but no `--version`, every version of the selected type (or of every type,
-  without `--type`) is downloaded into the destination directory, and the command prints
-  the saved paths.
-- Table columns that do not apply to the selected mode are left blank.
-
-### Examples
-
-```bash
-# List every schema type
-xbox xbl schema get
-
-# List versions of one type, as a table
-xbox xbl schema get --type achievements2017 --output table
-
-# Redirect one XSD straight to a file
-xbox xbl schema get --type achievements2017 --version 1 > achievements2017_1.xsd
-
-# Save one XSD into a directory
-xbox xbl schema get --type achievements2017 --version 1 --dest schemas
-
-# Download every version of one schema type
-xbox xbl schema get --type achievements2017 --dest schemas
-
-# Download every version of every schema type
-xbox xbl schema get --dest schemas
-```
+On exit 3, don't resubmit. stderr prints a read-only command to check with: for a save,
+`config download --view draft`, to compare with the files you saved; for a publish,
+`config status`.
 
 ---
 
-## document
+## config
 
-Download, validate, and commit XBOX services configuration document sets. A document set is
-scoped either to a sandbox (the default, requiring `--scid` and `--sandbox-id`) or to the
-account (`--type account`, which rejects `--scid` and `--sandbox-id`).
+Inspect, download, save, and publish XBOX services configuration for one SCID. A sandbox
+holds a working configuration, which `config save` changes, and a published configuration,
+which players and test accounts see once `config publish` makes the working configuration
+live.
 
 | Command | Description |
 | --- | --- |
-| `document download` | Download and extract a document set. Read-only. |
-| `document commit` | Validate or commit a working document set. **Mutating.** |
+| `config list` | List working and published state across every accessible sandbox. |
+| `config status` | Get working and published state for one sandbox, and its last publish. |
+| `config download` | Download and extract a document set. |
+| `config save` | Validate or save a working document set. |
+| `config publish` | Validate or start publishing one configuration set. |
 
-### ETag metadata
+### `config list` and `config status`
 
-`document download` writes the returned ETag alongside the extracted documents as
-`<sandbox>.etag`, or `Account.etag` for account scope; on Windows the file is also marked
-hidden. `document commit` reads that same file by default — looked up next to the first
-file matched by `--file` — and rewrites it with the returned ETag. Pass
-`--etag` to supply a value explicitly, or `--force` to refresh from the server and use the
-current server ETag instead of the saved one.
+Both commands report the latest working and published versions, each version's commit
+time, and whether the working version has unpublished changes. A published commit time is
+the commit time of the published version, not when the publish finished.
 
-Local document and ETag paths reject directories and existing reparse points before any
-request is sent. `schema get` and `document download` also reject a symbolic link
-anywhere in the `--dest` path, except macOS's own `/tmp`, `/var`, and `/etc` links.
+`config list` returns an array with one object per sandbox. `config status` returns one object
+for one sandbox, and adds its last publish under `lastPublish`, or `null` when there's none to
+report. For `--sandbox-id ALL`, `lastPublish` is always `null`, because the title-wide
+configuration in `ALL` goes live through a publish to `HIDDEN`.
 
-### `document download` options
+| `lastPublish` field | Description |
+| --- | --- |
+| `status` | `Running`, `Success`, or `Failed`. `null` when the service doesn't report one. |
+| `jobId` | The publish job's ID. |
+| `message` | The service's message about the publish, or `null`. |
 
-| Option | Alias | Required | Description |
-| --- | --- | --- | --- |
-| `--dest <directory>` | `-d` | Yes | Directory where documents and ETag metadata are saved. |
-| `--type <sandbox\|account>` | `-t` | No | Document scope. Defaults to `sandbox`. |
-| `--scid <guid>` | `-c` | For `sandbox` | Service configuration ID. Required for the default sandbox scope; rejected with `--type account`. |
-| `--sandbox-id <id>` | — | For `sandbox` | Case-sensitive sandbox ID. Required for the default sandbox scope; rejected with `--type account`. |
-| `--view <working\|published>` | — | No | Document-set view. Defaults to `working`. |
-| `--version <number>` | — | No | Positive historical document-set version. Defaults to the latest version. |
-| `--document <filename>` | — | No | Document filename filter. Repeat the option to select several. Defaults to all documents. |
-| `--seller-id <id>` | — | No | Authorized seller ID override. |
-| `--output <format>` | `-o` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `SANDBOX`, `VIEW`, `VERSION`, `FILES`, and `DESTINATION` columns. |
+```json
+{
+  "sandbox": "SANDBOX1",
+  "hasWorkingConfiguration": true,
+  "workingVersion": 9,
+  "workingCommitTime": "2026-10-29T21:40:12+00:00",
+  "hasPublishedConfiguration": true,
+  "publishedVersion": 9,
+  "publishedCommitTime": "2026-10-29T21:40:12+00:00",
+  "hasUnpublishedChanges": false,
+  "lastPublish": {
+    "status": "Success",
+    "jobId": "11111111-2222-3333-4444-555555555555",
+    "message": null
+  }
+}
+```
 
-### `document commit` options
+#### `config list` options
 
-| Option | Alias | Required | Description |
-| --- | --- | --- | --- |
-| `--file <path-or-glob>` | `-f` | Yes | Local file or filename glob pattern. Repeat `--file` for multiple inputs, one path or pattern per occurrence. Quote glob patterns so the CLI expands them. Each base filename is sent as the document name. Every supplied value must match at least one file, or the command fails rather than committing a partial selection. |
-| `--type <sandbox\|account>` | `-t` | No | Document scope. Defaults to `sandbox`. |
-| `--scid <guid>` | `-c` | For `sandbox` | Service configuration ID. Required for the default sandbox scope; rejected with `--type account`. |
-| `--sandbox-id <id>` | — | For `sandbox` | Case-sensitive sandbox ID. Required for the default sandbox scope; rejected with `--type account`. |
-| `--validate-only` | `-v` | No | Validate without persisting. Defaults to `false`, which commits. |
-| `--etag <value>` | `-e` | No | ETag for optimistic concurrency. Defaults to the saved ETag file. |
-| `--force` | — | No | Refresh and use the current server ETag. Defaults to `false`. |
-| `--message <text>` | `-m` | No | Commit message. Omitted by default. |
-| `--seller-id <id>` | — | No | Authorized seller ID override. |
-| `--output <format>` | `-o` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `SANDBOX`, `VALIDATE ONLY`, `CAN COMMIT`, `COMMITTED`, `FILES`, and `ETAG FILE` columns. |
+| Option | Required | Description |
+| --- | --- | --- |
+| `--scid <guid>` | Or title | SCID of the title's configuration. |
+| `--title-id <hex-id>` | Or SCID | XBOX title ID. See [Title targeting](#title-targeting). |
+| `--seller-id <id>` | No | Partner Center seller ID. |
+| `--output <format>` | No | `json` (default), `json-compact`, or `table`. |
 
-If a document name is rejected without identifying the offending archive entry, the CLI
-reports the selected file names and suggests rerunning with `--validate-only` and one
-`--file` value at a time to isolate the unsupported name.
+#### `config status` options
 
-When XBOX services can't commit the documents (`CanCommit` false with `--validate-only`,
+| Option | Required | Description |
+| --- | --- | --- |
+| `--scid <guid>` | Or title | SCID of the title's configuration. |
+| `--title-id <hex-id>` | Or SCID | XBOX title ID. See [Title targeting](#title-targeting). |
+| `--sandbox-id <id>` | Yes | Case-sensitive sandbox ID. Defaults to `XBOX_SANDBOX_ID`, then the saved sandbox ID. |
+| `--seller-id <id>` | No | Partner Center seller ID. |
+| `--output <format>` | No | `json` (default), `json-compact`, or `table`. |
+
+Both commands' tables have the columns `SANDBOX`, `WORKING`, `WORKING COMMIT`,
+`PUBLISHED`, `PUBLISHED COMMIT`, and `UNPUBLISHED`. `config status` adds `PUBLISH STATUS`,
+the last publish's `status`.
+
+#### `config list` and `config status` examples
+
+```bash
+# Every accessible sandbox for one title
+xbox xbl config list \
+  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output table
+
+# One sandbox, single JSON object
+xbox xbl config status \
+  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1
+
+# Compact output for scripting
+xbox xbl config status \
+  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --output json-compact
+```
+
+### `config download` and `config save`
+
+Download, validate, and save XBOX services configuration document sets. A document set
+belongs to a sandbox (the default, which needs a SCID or title and `--sandbox-id`) or to the
+account (`--type account`, which takes no SCID, title, or sandbox).
+
+`config download` saves the document set's ETag next to the documents, as `<sandbox>.etag`, or
+`Account.etag` for account scope; on Windows the file is hidden. `config save` reads the ETag
+file next to the first file `--file` matches, and rewrites it after a save. If the
+configuration changed since you downloaded it, the save fails; pass `--force` to save over
+those changes, or `--etag` to supply an ETag yourself.
+
+`config save` doesn't ask before it saves, and `--confirm` doesn't apply to it. Run it with
+`--validate-only` first.
+
+#### `config download` options
+
+| Option | Required | Description |
+| --- | --- | --- |
+| `--view <draft\|published>` | Yes | `draft`, the working configuration that `config save` changes, or `published`, the live configuration that players and test accounts see. Partner Center uses the same two names. |
+| `--dest <directory>` | Yes | Directory where documents and the ETag file are saved. |
+| `--type <sandbox\|account>` | No | Document scope. Defaults to `sandbox`. |
+| `--scid <guid>` | Or title for `sandbox` | SCID of the title's configuration. |
+| `--title-id <hex-id>` | Or SCID for `sandbox` | XBOX title ID. See [Title targeting](#title-targeting). |
+| `--sandbox-id <id>` | For `sandbox` | Case-sensitive sandbox ID. |
+| `--version <number>` | No | Positive historical document-set version. Defaults to the latest version. |
+| `--document <filename>` | No | Document filename to download. Repeat for more. Defaults to all documents. |
+| `--seller-id <id>` | No | Partner Center seller ID. |
+| `--output <format>` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `SANDBOX`, `VIEW`, `VERSION`, `FILES`, and `DESTINATION` columns. |
+
+#### `config save` options
+
+| Option | Required | Description |
+| --- | --- | --- |
+| `--file <path-or-glob>` | Yes | Local file or quoted filename glob. Repeat `--file` for more, one path or pattern each: `--file a.xml --file b.xml`. Each file's name is its document name. A value that matches no file fails the command. |
+| `--type <sandbox\|account>` | No | Document scope. Defaults to `sandbox`. |
+| `--scid <guid>` | Or title for `sandbox` | SCID of the title's configuration. |
+| `--title-id <hex-id>` | Or SCID for `sandbox` | XBOX title ID. See [Title targeting](#title-targeting). |
+| `--sandbox-id <id>` | For `sandbox` | Case-sensitive sandbox ID. |
+| `--validate-only` | No | Validate without saving. |
+| `--allow-shared-configuration` | No | Save by `--title-id` to configuration other titles are bound to, without asking. See [Title targeting](#title-targeting). |
+| `--etag <value>` | No | ETag to save against. Defaults to the saved ETag file. |
+| `--force` | No | Save over changes made since the saved ETag. |
+| `--message <text>` | No | Save message. |
+| `--seller-id <id>` | No | Partner Center seller ID. |
+| `--output <format>` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `SANDBOX`, `VALIDATE ONLY`, `CAN COMMIT`, `COMMITTED`, `FILES`, and `ETAG FILE` columns. |
+
+When XBOX services can't save the documents (`CanCommit` false with `--validate-only`,
 otherwise `Committed` false), the command still writes the result to stdout, writes each
-validation message to stderr, leaves the saved ETag file unchanged, and exits 1:
+validation message to stderr, leaves the ETag file unchanged, and exits 1:
 
 ```text
-XBOX services can't commit these documents:
+XBOX services can't save these documents:
 Error: achievements2017.xml: The root namespace doesn't match the document type. (NamespaceDocTypeMismatch)
 ```
 
-Documents that match the latest working ones aren't a failure: nothing is committed,
+Documents that match the latest working ones aren't a failure: nothing is saved,
 `ValidationInfo` reports `FilesNotChangedCommit`, and the command exits 0.
 
-Paths containing spaces or commas are literal paths, not lists. Overlapping patterns
-and repeated paths select each file only once. The pre-public `--files` spelling is
-replaced by `--file`; use `--file a.xml --file b.xml`, not `--file a.xml b.xml`.
+#### `config download` and `config save` examples
 
-### Examples
+Download the latest draft sandbox documents into `xbox-config`:
 
 ```bash
-# Download the latest working sandbox documents
-xbox xbl document download \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --dest xbox-config
+xbox xbl config download \
+  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --view draft --dest xbox-config
+```
 
-# Download a historical published version of one document
-xbox xbl document download \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
-  --view published --version 7 --document achievements.xml --dest xbox-config
+After you edit the documents, validate them all, or only the two you changed:
 
-# Download account-scoped documents
-xbox xbl document download --type account --dest xbox-config --output table
-
-# Dry run before committing
-xbox xbl document commit \
+```bash
+xbox xbl config save \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
   --file "xbox-config/*.xml" --validate-only
 
-# Validate two selected documents
-xbox xbl document commit \
+xbox xbl config save \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
   --file xbox-config/achievements2017.xml --file xbox-config/localization.xml --validate-only
+```
 
-# Commit with a message (mutating)
-xbox xbl document commit \
+Save them with a message:
+
+```bash
+xbox xbl config save \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
   --file "xbox-config/*.xml" --message "Update achievements"
 ```
 
----
-
-## configuration
-
-Inspect working and published configuration state for one SCID. Both commands report the
-latest working and published versions, each version's commit time, and whether the
-working version contains unpublished changes. Both are read-only.
-
-| Command | Description |
-| --- | --- |
-| `configuration list` | List state across every accessible sandbox. |
-| `configuration get` | Get state for one sandbox. |
-
-Prefer `get` for focused automation or repeated status checks; it queries only the
-selected sandbox and returns a single object instead of an array.
-
-`configuration list` reads the sandboxes a page at a time (at most 20 a
-page), following every page, and prints them all as one JSON array. If a request fails, even on
-a later page, it prints nothing on stdout. When an error or a page the CLI
-can't read is returned, stderr also gets the `x-ms-correlation-id` shared by every page.
-
-### `configuration list` options
-
-| Option | Alias | Required | Description |
-| --- | --- | --- | --- |
-| `--scid <guid>` | `-s` | Yes | Service configuration ID. No default. |
-| `--seller-id <id>` | — | No | Authorized seller ID override. |
-| `--output <format>` | `-o` | No | `json` (default), `json-compact`, or `table`. |
-
-### `configuration get` options
-
-| Option | Alias | Required | Description |
-| --- | --- | --- | --- |
-| `--scid <guid>` | `-s` | Yes | Service configuration ID. No default. |
-| `--sandbox-id <id>` | — | Yes | Case-sensitive sandbox ID. Defaults to `XBOX_SANDBOX_ID`, then the saved sandbox ID. |
-| `--seller-id <id>` | — | No | Authorized seller ID override. |
-| `--output <format>` | `-o` | No | `json` (default), `json-compact`, or `table`. |
-
-Both commands share the same table columns: `SANDBOX`, `WORKING`, `WORKING COMMIT`,
-`PUBLISHED`, `PUBLISHED COMMIT`, and `UNPUBLISHED`.
-
-A published commit time is history metadata for the published changeset. It is not
-the exact completion time of the asynchronous publish job.
-
-### Examples
+Download one document as it was in published version 7:
 
 ```bash
-# Every accessible sandbox for one title
-xbox xbl configuration list \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output table
-
-# One sandbox, single JSON object
-xbox xbl configuration get \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1
-
-# Compact output for scripting
-xbox xbl configuration get \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --output json-compact
+xbox xbl config download \
+  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
+  --view published --version 7 --document achievements.xml --dest xbox-config
 ```
 
----
+Download the account's draft documents:
 
-## publish
+```bash
+xbox xbl config download --type account --view draft --dest xbox-config --output table
+```
 
-Promote XBOX services configuration to a destination sandbox's published configuration, and
-read publish status. This family intentionally exposes only publishing operations; there
-are no product list or get commands.
+### `config publish`
 
-| Command | Description |
-| --- | --- |
-| `publish start` | Validate or start publishing one configuration set. **Mutating.** |
-| `publish status` | Read publish status for a destination sandbox. Read-only. |
+Publish a working version of XBOX services configuration to a sandbox's published
+configuration. Publishing is asynchronous: start it with `config publish`, then run
+[`config status`](#config-list-and-config-status) for the destination sandbox until
+`lastPublish.status` is `Success` or `Failed`.
 
-### Source selection
+#### Source selection
 
-`--sandbox-id` is always the destination, and the source defaults to the destination. The
-source is always one of the source sandbox's working versions: its latest by default, or
-the one given with `--configset`. Only working versions can be published.
+`--sandbox-id` is the destination. The source is a working version of the source sandbox,
+which defaults to the destination:
 
 | Scenario | Effect |
 | --- | --- |
-| `--source-sandbox-id` omitted or equal to `--sandbox-id` | Publishes the sandbox's latest working version to its published configuration. |
-| `--source-sandbox-id` differs from `--sandbox-id` | Publishes the source sandbox's latest working version to the destination. |
+| `--source-sandbox-id` omitted or equal to `--sandbox-id` | Publishes the sandbox's latest working version. |
+| `--source-sandbox-id` differs from `--sandbox-id` | Publishes the source sandbox's latest working version to the destination, and [replaces the destination's global title storage files](#cross-sandbox-publishing-replaces-global-title-storage-files). |
 | `--configset <number>` | Publishes that working version of the source sandbox. |
 
-A source sandbox with unpublished changes has a latest working version that isn't what's
-live there. For a cross-sandbox publish without `--configset`, the command then writes a
-warning to stderr naming the working version that matches what's live, found by
-comparing document hashes:
+When the source sandbox has unpublished changes, its latest working version isn't what's
+live there. A cross-sandbox publish without `--configset` then warns, and names the version
+that's live:
 
 ```text
 Warning: XDKS.1 has unpublished changes. This publish uses its latest working version, 53; what's live in XDKS.1 is working version 52. To publish that instead, add --configset 52.
 ```
 
-To promote exactly what's live in the source, run with `--validate-only` first, and add
-the `--configset` it suggests. The JSON response carries the same facts:
-`SourceVersion` is the working version used, `sourceHasUnpublishedChanges` says whether
-it differs from what's live in the source, and `sourceLiveVersion` is the working version
-that's live there, absent when none of the source's latest 100 working versions matches
-or the source was never published.
+To promote exactly what's live in the source, run with `--validate-only` first and add the
+`--configset` it suggests. In the JSON output, `SourceVersion` is the working version used,
+`sourceHasUnpublishedChanges` says whether it differs from what's live in the source, and
+`sourceLiveVersion` is the version that's live there, when one is found.
 
-A title-wide publish, `--sandbox-id HIDDEN`, always publishes the latest working configuration in
-`ALL`, so it takes no `--source-sandbox-id` or `--configset`, and `publish start` refuses either
-before it signs in. To see which `ALL` version goes live, run
-`xbox xbl configuration get --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id ALL` first and read
-`workingVersion`.
+A title-wide publish, `--sandbox-id HIDDEN`, always publishes the latest working configuration
+in `ALL`, so it takes no `--source-sandbox-id` or `--configset`. To see which version goes
+live, run `config status --sandbox-id ALL` first and read `workingVersion`.
 
-```console
-$ xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id HIDDEN --configset 42
-A title-wide (HIDDEN) publish always publishes the latest ALL working configuration, so it takes no source or version. Remove --configset.
-```
+#### Confirmation
 
-### Confirmation
-
-`publish start` asks before it publishes when the publish reaches certification, players,
-or every sandbox, or when it copies from another sandbox:
+`config publish` asks before it publishes in these cases:
 
 | Publish | Why it asks |
 | --- | --- |
@@ -437,27 +350,56 @@ or every sandbox, or when it copies from another sandbox:
 | `--sandbox-id HIDDEN` | Publishes the title-wide configuration, which every sandbox uses, RETAIL included. |
 | `--source-sandbox-id` differs from `--sandbox-id` | First replaces the destination's working documents that have the same names, and its [global title storage files](#cross-sandbox-publishing-replaces-global-title-storage-files). |
 
-At a terminal it describes the publish and asks `Publish to RETAIL? [y/N]`. Without a
-terminal it refuses and exits 1. `--confirm` (`--yes`, `-y`) skips the question.
-`--validate-only` never asks. As everywhere else, `--confirm` isn't agent approval.
+At a terminal it describes the publish and asks. Without a terminal it refuses and exits 1.
+`--confirm` (`--yes`, `-y`) skips the question, and `--validate-only` never asks. See
+[Safety and destructive operations](../safety.md).
+
+Before it asks about a RETAIL publish, it validates the publish and lists the
+[achievements it adds](#achievements-a-retail-publish-adds). If you answer yes, it publishes
+the working version it validated, so what goes live is what was listed:
 
 ```console
-$ xbox xbl publish start --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id CERT --sandbox-id RETAIL
-This publishes CERT's latest working configuration to RETAIL for SCID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.
+$ xbox xbl config publish --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id CERT --sandbox-id RETAIL
+This publish adds 2 achievements to RETAIL: 1, 2. Once they're live in RETAIL, achievements can't be removed, and their unlock rules and gamerscore can't change.
+This publishes working version 52 of CERT's configuration to RETAIL for SCID aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.
 RETAIL is live: players see the change when the publish finishes.
 Publishing from CERT first replaces RETAIL's working documents that have the same names.
 Warning: publishing from CERT to RETAIL replaces RETAIL's global title storage files with CERT's. Files with the same path are overwritten, files only CERT holds are added, and files only RETAIL holds are deleted. Deleted files can't be recovered.
+
 Publish to RETAIL? [y/N]:
 ```
 
-### Republishing
+When that validation fails, it publishes nothing and doesn't ask. So at a terminal, a RETAIL
+publish by `--title-id` to configuration other titles are bound to needs
+`--allow-shared-configuration`. With `--confirm` there's no list, so run `--validate-only`
+first to see it.
 
-`publish start` publishes only changes. When nothing changed since the destination's last
+#### Achievements a RETAIL publish adds
+
+Once achievements are live in RETAIL, they can't be removed, and their unlock rules and
+gamerscore can't change. So a RETAIL publish says which achievement IDs it adds that RETAIL
+doesn't have yet:
+
+- With `--validate-only`, the list goes to stderr, and the JSON output carries it in
+  `achievementChanges.added`.
+- At a terminal without `--validate-only`, the list comes before the question, as shown
+  in [Confirmation](#confirmation).
+
+```console
+$ xbox xbl config publish --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id CERT --sandbox-id RETAIL --validate-only
+This publish would add 2 achievements to RETAIL: 1, 2. Once they're live in RETAIL, achievements can't be removed, and their unlock rules and gamerscore can't change.
+```
+
+A publish that adds none says so. Other sandboxes don't list achievements.
+
+#### Republishing
+
+`config publish` publishes only changes. When nothing changed since the destination's last
 successful publish, no publish starts, and the result's `Status` is `AlreadyPublished`. After
-a publish fails, running `publish start` again retries it without `--republish`.
+a publish fails, running `config publish` again retries it.
 
-XBOX also locks RETAIL for a product after a migration, and a RETAIL to RETAIL publish then
-fails with `retail_locked`. To publish anyway, add `--republish`: it forces the selected
+Sometimes XBOX locks RETAIL for a product, and a RETAIL to RETAIL publish then fails with
+`retail_locked`. To publish anyway, add `--republish`: it forces the selected
 configuration, by default RETAIL's latest working configuration, onto RETAIL. Publishing to
 RETAIL from another sandbox, such as CERT, also clears the lock, but it replaces RETAIL's
 working documents with that sandbox's.
@@ -465,21 +407,27 @@ working documents with that sandbox's.
 `--republish` publishes in full, even when nothing changed. It can't be combined with
 `--validate-only`.
 
-### Diagnostics
+#### Diagnostics
 
 Validation diagnostics from XBOX services, such as the warning for a first RETAIL publish
-without an embargo, go to stderr, one per line, after the publish or validation. The JSON
-output keeps them in `ValidationResult`.
+without an embargo, go to stderr, one per line. The JSON output keeps them in
+`ValidationResult`.
 
 ```text
 XBOX services warning (FirstRetailPublishWithoutEffectiveEmbargo): This is the first time these Xbox Gameplay Settings will be published to RETAIL, and no embargo is configured.
 ```
 
-### Cross-sandbox publishing replaces global title storage files
+When validation fails, `config publish` exits 1 and lists each message under `validation`, as
+shown in [Errors](#errors).
 
-Publishing from one sandbox to another also makes the destination's global title storage
-files an exact copy of the source's. Global files are the files every player of the game
-reads, such as news feeds and maps.
+#### Cross-sandbox publishing replaces global title storage files
+
+> [!CAUTION]
+> Publishing from one sandbox to another makes the destination's global title storage files
+> an exact copy of the source's. Files only the destination has are deleted, and can't be
+> recovered.
+
+Global files are the files every player of the game reads, such as news feeds and maps:
 
 | File | Source | Destination before | Destination after |
 | --- | --- | --- | --- |
@@ -487,120 +435,221 @@ reads, such as news feeds and maps.
 | `tuning.cfg` | Present | — | Added |
 | `maps.bin` | — | Present | **Deleted** |
 
-Global files have no versions, so deleted files can't be recovered, and the copy takes
-whatever the source holds when the publish runs. Players' own data isn't touched. A
-same-sandbox publish leaves global files alone.
+The copy takes whatever the source holds when the publish runs. Players' own data isn't
+touched, and a same-sandbox publish leaves global files alone. To keep a destination file,
+add it to the source sandbox before publishing.
 
-`publish start` writes this to stderr whenever `--source-sandbox-id` names a different sandbox
-from `--sandbox-id`, including with `--validate-only`. When it asks for
-[confirmation](#confirmation), the warning is part of the question, so you see it before you
-answer; with `--confirm` it's written before the publish starts. It's written once either way.
-Sandbox IDs that differ only in case are the same sandbox, so they get no warning:
+Every cross-sandbox publish writes this warning to stderr, including with `--validate-only`,
+and includes it in the [confirmation](#confirmation) question:
 
 ```text
 Warning: publishing from SANDBOX1 to SANDBOX2 replaces SANDBOX2's global title storage files with SANDBOX1's. Files with the same path are overwritten, files only SANDBOX1 holds are added, and files only SANDBOX2 holds are deleted. Deleted files can't be recovered.
 ```
 
-To keep a destination file, add it to the source sandbox before publishing.
-
-### `publish start` options
+#### `config publish` options
 
 | Option | Alias | Required | Description |
 | --- | --- | --- | --- |
-| `--scid <guid>` | `-s` | Yes | Service configuration ID. |
-| `--sandbox-id <id>` | — | Yes | Destination sandbox ID whose published configuration will be updated. Defaults to `XBOX_SANDBOX_ID`, then the saved sandbox ID. |
+| `--scid <guid>` | — | Or title | SCID of the title's configuration. |
+| `--title-id <hex-id>` | — | Or SCID | XBOX title ID. See [Title targeting](#title-targeting). |
+| `--sandbox-id <id>` | — | Yes | Destination sandbox ID. Defaults to `XBOX_SANDBOX_ID`, then the saved sandbox ID. |
 | `--source-sandbox-id <id>` | — | No | Source sandbox ID. Defaults to `--sandbox-id`. Not allowed with `--sandbox-id HIDDEN`. |
-| `--validate-only` | `-v` | No | Validate without publishing. Defaults to `false`, which starts publishing. |
-| `--configset <number>` | — | No | Positive working version of the source sandbox. Defaults to its latest working version. Not allowed with `--sandbox-id HIDDEN`. |
-| `--republish` | — | No | Publish in full even when nothing changed. On a RETAIL locked after a migration, forces the selected configuration, by default RETAIL's latest working one, onto RETAIL. Defaults to `false`, which publishes only changes. See [Republishing](#republishing). |
-| `--confirm` | `--yes`, `-y` | No | Publish to RETAIL, CERT, CERT.DEBUG, or HIDDEN, or from another sandbox, without asking. See [Confirmation](#confirmation). |
-| `--seller-id <id>` | — | No | Authorized seller ID override. |
+| `--validate-only` | — | No | Validate without publishing. For RETAIL, also lists the [achievements the publish adds](#achievements-a-retail-publish-adds). |
+| `--allow-shared-configuration` | — | No | Publish by `--title-id` to configuration other titles are bound to, without asking. See [Title targeting](#title-targeting). |
+| `--configset <number>` | — | No | Positive working version of the source sandbox. Defaults to its latest. Not allowed with `--sandbox-id HIDDEN`. |
+| `--republish` | — | No | Publish in full even when nothing changed, or onto a RETAIL locked after a migration. See [Republishing](#republishing). |
+| `--confirm` | `--yes`, `-y` | No | Publish without asking. See [Confirmation](#confirmation). |
+| `--seller-id <id>` | — | No | Partner Center seller ID. |
 | `--output <format>` | `-o` | No | `json` (default), `json-compact`, or `table` with `STATUS`, `SOURCE`, `DESTINATION`, `VALIDATE ONLY`, and `SOURCE VERSION` columns. |
 
-### `publish status` options
+#### `config publish` examples
 
-| Option | Alias | Required | Description |
-| --- | --- | --- | --- |
-| `--scid <guid>` | `-s` | Yes | Service configuration ID. No default. |
-| `--sandbox-id <id>` | — | Yes | Case-sensitive destination sandbox ID. Defaults to `XBOX_SANDBOX_ID`, then the saved sandbox ID. |
-| `--seller-id <id>` | — | No | Authorized seller ID override. |
-| `--output <format>` | `-o` | No | `json` (default), `json-compact`, or `table` with `STATUS` and `SANDBOX` columns. |
-
-Publishing is asynchronous. Start it with `publish start`, then poll `publish status` for
-the destination sandbox.
-
-When validation fails, `publish start` (with or without `--validate-only`) exits 1 and stderr
-lists each validation message under `validation`, as shown in [Errors](#errors).
-
-### Examples
+Validate a publish to SANDBOX1 without publishing:
 
 ```bash
-# Dry run first
-xbox xbl publish start \
+xbox xbl config publish \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --validate-only
+```
 
-# Same sandbox: latest working configuration -> published configuration
-xbox xbl publish start \
+Publish SANDBOX1's latest working configuration, so it's live in SANDBOX1:
+
+```bash
+xbox xbl config publish \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1
+```
 
-# Cross-sandbox: source's latest working version -> destination.
-# Also replaces SANDBOX2's global title storage files with SANDBOX1's.
-xbox xbl publish start \
+Publish SANDBOX1's latest working version to SANDBOX2. This also replaces SANDBOX2's global
+title storage files with SANDBOX1's:
+
+```bash
+xbox xbl config publish \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id SANDBOX1 --sandbox-id SANDBOX2
+```
 
-# Publish one working version of the source sandbox
-xbox xbl publish start \
+Publish working version 42 of SANDBOX1 to SANDBOX2:
+
+```bash
+xbox xbl config publish \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee \
   --source-sandbox-id SANDBOX1 --sandbox-id SANDBOX2 --configset 42
+```
 
-# Validate a RETAIL publish, then publish it without a prompt (mutating)
-xbox xbl publish start \
+Validate a publish from CERT to RETAIL, which lists the achievements it adds:
+
+```bash
+xbox xbl config publish \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id CERT --sandbox-id RETAIL --validate-only
-xbox xbl publish start \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id CERT --sandbox-id RETAIL --confirm
+```
 
-# Publish again although nothing changed
-xbox xbl publish start \
+Then pass the output's `SourceVersion` as `--configset` to publish the version you validated,
+without a prompt:
+
+```bash
+xbox xbl config publish \
+  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --source-sandbox-id CERT --sandbox-id RETAIL --configset 52 --confirm
+```
+
+Publish SANDBOX1 again although nothing changed:
+
+```bash
+xbox xbl config publish \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --republish
+```
 
-# Poll status
-xbox xbl publish status \
+Check the publish to SANDBOX2:
+
+```bash
+xbox xbl config status \
   --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX2 --output table
+```
+
+---
+
+## schema
+
+Discover and download XBOX services configuration document schemas.
+
+| Command | Description |
+| --- | --- |
+| `schema list` | List every schema type. |
+| `schema list --type <type>` | List versions for one schema type. |
+| `schema get --type <type>` | Get one version of a schema type: its type, version, and namespace. Defaults to the latest version. |
+| `schema download --dest <directory>` | Save XSDs into a directory: one version, every version of one type, or every version of every type. |
+| `schema download --type <type> --version <n> --dest -` | Write one XSD to stdout. |
+
+### `schema list` options
+
+| Option | Required | Description |
+| --- | --- | --- |
+| `--type <type>` | No | Schema type whose versions to list. Omit it to list all types. |
+| `--output <format>` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `VERSION`, `NAMESPACE`, `PATH`, and `BYTES` columns. |
+
+### `schema get` options
+
+| Option | Required | Description |
+| --- | --- | --- |
+| `--type <type>` | Yes | Schema type. |
+| `--version <number>` | No | Positive schema version. Defaults to the type's latest version. |
+| `--output <format>` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `VERSION`, and `NAMESPACE` columns. |
+
+`schema get` writes one JSON object:
+
+```json
+{
+  "type": "achievements2017",
+  "version": 1,
+  "namespace": "http://config.mgt.xboxlive.com/schema/achievements2017/1"
+}
+```
+
+### `schema download` options
+
+| Option | Required | Description |
+| --- | --- | --- |
+| `--dest <directory>` | Yes | Directory for saved XSD files, or `-` to write one XSD to stdout. `-` requires both `--type` and `--version`. |
+| `--type <type>` | No | Schema type. Omit it to download every type. |
+| `--version <number>` | No | Positive schema version. Requires `--type`. Omit it to download every version. |
+| `--output <format>` | No | `json` (default), `json-compact`, or `table` with `TYPE`, `VERSION`, `NAMESPACE`, `PATH`, and `BYTES` columns. |
+
+Each schema is saved as `<type>_<version>.xsd`, with the type in lowercase, and the command
+prints the saved paths. With `--dest -`, it writes the raw XSD to stdout instead, and
+`--output` doesn't apply.
+
+### `schema` examples
+
+```bash
+# List every schema type
+xbox xbl schema list
+
+# List versions of one type, as a table
+xbox xbl schema list --type achievements2017 --output table
+
+# Get the latest version of one type
+xbox xbl schema get --type achievements2017
+
+# Redirect one XSD straight to a file
+xbox xbl schema download --type achievements2017 --version 1 --dest - > achievements2017_1.xsd
+
+# Save one XSD into a directory
+xbox xbl schema download --type achievements2017 --version 1 --dest schemas
+
+# Download every version of one schema type
+xbox xbl schema download --type achievements2017 --dest schemas
+
+# Download every version of every schema type
+xbox xbl schema download --dest schemas
 ```
 
 ---
 
 ## A typical configuration round trip
 
-```bash
-# 1. Find the sandboxes you can reach
-xbox sandbox list --output table
+1. Find the sandboxes you can reach:
 
-# 2. See where working and published configuration stand
-xbox xbl configuration list \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output table
+   ```bash
+   xbox sandbox list --output table
+   ```
 
-# 3. Pull the working document set (also saves SANDBOX1.etag)
-xbox xbl document download \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --dest xbox-config
+2. See where working and published configuration stand:
 
-# 4. Edit the documents locally, then validate
-xbox xbl document commit \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
-  --file "xbox-config/*.xml" --validate-only
+   ```bash
+   xbox xbl config list \
+     --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output table
+   ```
 
-# 5. Commit, then publish, then poll
-xbox xbl document commit \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
-  --file "xbox-config/*.xml" --message "Update configuration"
+3. Download the draft document set, which also saves `SANDBOX1.etag`:
 
-xbox xbl publish start \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1
+   ```bash
+   xbox xbl config download \
+     --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --view draft --dest xbox-config
+   ```
 
-xbox xbl publish status \
-  --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --output table
-```
+4. Edit the documents in `xbox-config`, then validate them:
 
-The commit and publish in step 5 change state for a real title. Review the SCID and sandbox
-before running them, and see
-[Safety and destructive operations](../safety.md).
+   ```bash
+   xbox xbl config save \
+     --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
+     --file "xbox-config/*.xml" --validate-only
+   ```
+
+5. Save them:
+
+   ```bash
+   xbox xbl config save \
+     --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 \
+     --file "xbox-config/*.xml" --message "Update configuration"
+   ```
+
+6. Publish them in SANDBOX1:
+
+   ```bash
+   xbox xbl config publish \
+     --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1
+   ```
+
+7. Check the publish, and repeat until its status is `Success` or `Failed`:
+
+   ```bash
+   xbox xbl config status \
+     --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id SANDBOX1 --output table
+   ```

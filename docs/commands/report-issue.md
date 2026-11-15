@@ -5,12 +5,9 @@ description: The hidden compatibility alias for the feedback command.
 
 # Report issue
 
-`report-issue` is a hidden alias for [`feedback`](feedback.md). It accepts the same
-options and runs the same interactive workflow, rather than only printing a URL.
+`xbox report-issue` is a hidden alias for [`xbox feedback`](feedback.md). It takes the same
+options, behaves the same way, and refuses `--output table` too.
 
 ```bash
 xbox report-issue --no-browser
 ```
-
-Use `--no-browser` to print the environment summary and issue URL without prompting
-or opening a browser. Like `feedback`, it refuses `--output table`.

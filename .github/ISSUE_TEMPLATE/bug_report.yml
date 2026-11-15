@@ -10,7 +10,7 @@ body:
 
         Reproduce the problem with the latest CLI release when possible.
 
-        **Before you file**: please search [existing issues](https://github.com/microsoft/XBOX-Developer-CLI/issues?q=is%3Aissue) to avoid duplicates, and **do not** report security vulnerabilities here — see [SECURITY.md](https://github.com/microsoft/XBOX-Developer-CLI/blob/main/SECURITY.md).
+        **Before you file**: please search [existing issues](https://github.com/xbox/cli/issues?q=is%3Aissue) to avoid duplicates, and **do not** report security vulnerabilities here — see [SECURITY.md](https://github.com/xbox/cli/blob/main/SECURITY.md).
 
         🚨 **Before submitting, redact all secrets and sensitive data** (tokens, credentials, API keys, title IDs, account IDs, etc.) from commands, logs, and screenshots.
 

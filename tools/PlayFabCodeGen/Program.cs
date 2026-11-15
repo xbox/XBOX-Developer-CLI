@@ -32,8 +32,18 @@ Console.WriteLine($"Output directory: {outputDir}");
 Directory.CreateDirectory(outputDir);
 
 // Fetch specs
-using var fetcher = new SpecFetcher(config.SpecSource);
+var overlayDir = string.IsNullOrWhiteSpace(config.SpecSource.OverlayPath)
+    ? null
+    : Path.IsPathRooted(config.SpecSource.OverlayPath)
+        ? config.SpecSource.OverlayPath
+        : Path.GetFullPath(Path.Combine(configDir, config.SpecSource.OverlayPath));
+
+using var fetcher = new SpecFetcher(config.SpecSource, overlayDir);
 Console.WriteLine($"Spec source: {config.SpecSource.Type}");
+if (overlayDir is not null)
+{
+    Console.WriteLine($"Spec overlay: {overlayDir} ({string.Join(", ", fetcher.GetOverlayGroups())})");
+}
 
 var availableGroups = await fetcher.GetAvailableGroupsAsync();
 Console.WriteLine($"Available API groups: {string.Join(", ", availableGroups)}");

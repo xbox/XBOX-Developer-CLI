@@ -5,7 +5,9 @@ description: What anonymous product-usage telemetry the CLI collects, and how to
 
 # Telemetry
 
-The XBOX Developer CLI collects limited, anonymous product-usage telemetry to help Microsoft understand command adoption, reliability, and performance. Telemetry is best-effort: it never changes command output or exit behavior, and machine-readable stdout remains reserved for command results.
+The XBOX CLI collects limited, anonymous usage telemetry to help Microsoft understand which
+commands are used, how reliable they are, and how long they take. You can
+[turn it off](#opt-out). Telemetry never changes a command's output or exit code.
 
 Microsoft handles this data as described in the
 [Microsoft privacy statement](https://go.microsoft.com/fwlink/?LinkID=824704). The repository's
@@ -13,25 +15,52 @@ Microsoft handles this data as described in the
 
 ## What is collected
 
-- CLI version, operating-system family, and .NET runtime description
-- Canonical command path, success/failure outcome, bucketed exit code, and duration
-- Authentication mode name (`user`, a service-principal mode such as `githuboidc`, or `invalid`), never the tenant, application, or identity behind it
-- For PlayFab calls, only API group and operation names that match the bundled generated API metadata
-- Bucketed HTTP status, dependency duration, and bounded failure category
-- Counts of unexpected process failures, using a bounded failure category
+Each run of `xbox` creates at most one event, `xbox.cli.command_invocation`, with these fields
+and nothing else:
 
-Dependency traces are sampled independently. The default sampling ratio is 10%.
+| Field | Holds |
+|-------|-------|
+| `xbox.cli.schema_version` | The event's schema version, `3` |
+| Time | When the command ran, rounded down to the hour |
+| `service.version` | The CLI version |
+| `os.type`, `os.version` | The operating-system family, such as `windows`, and its major version only |
+| `host.arch` | The processor architecture: `amd64`, `arm64`, or `unknown` |
+| `process.runtime.name`, `process.runtime.version` | The .NET runtime and its version |
+| `xbox.cli.command` | The command's path in the command tree, joined with hyphens, such as `playfab-economy-inventory-transaction-list`; `root` for `xbox` alone; `unknown` when no command was recognized |
+| `xbox.cli.auth_mode` | How the CLI signed in: `user`, a service-principal mode such as `githuboidc`, or `invalid`; never the tenant, application, or identity |
+| `xbox.cli.outcome` | `success`, `failure`, or `cancelled` |
+| `process.exit.code` | The exit code |
+| `error.type` | Why a command failed, from a fixed list: `usage`, `context`, `auth`, `not_confirmed`, `transport`, `service_rejected`, `service_error`, `local_tool`, `io`, `cancelled`, or `_OTHER`. Not sent on success. |
+| `http.response.status_code` | The status of the last service response, when there was one |
+| `xbox.cli.duration_ms` | How long the command took, in milliseconds |
+| `xbox.cli.options` | The names of the options supplied, without dashes, sorted, such as `output,verbose`; never their values |
+| `xbox.cli.context_keys` | Which context values the command had, whether from an option, an environment variable, or saved context: `playfab-title-id`, `sandbox-id`, `seller-id`, or `title-id`; never the values |
+| `xbox.cli.ci` | `true` when a well-known CI variable, such as `CI` or `TF_BUILD`, is set; only whether it's set is read |
 
-## What is not collected
+A command or option name the CLI doesn't define is sent as `unknown` or left out, so a value
+typed in the wrong place is never sent.
 
-The CLI does not collect command arguments, request or response bodies, PlayFab title IDs, usernames, tenant or account IDs, access tokens, file paths, configured secrets, or raw exception messages. Unknown PlayFab paths are reported only as `unknown`.
+### Approximate location
 
-The `cli.command` dimension contains only canonical command names registered in the command tree,
-joined with hyphens (for example, `playfab-economy-inventory-transaction-list`). It never contains
-arguments, options, aliases, or user-supplied values, and values longer than 64 characters or
-containing unsupported characters are reported as `unknown`. Telemetry schema version 2 changes
-this dimension from the former leaf-only token to the canonical path so commands that share verbs
-such as `list`, `get`, or `status` remain distinguishable.
+The CLI never sends your location. However, Application Insights derives an approximate
+location (country, region or state, and city) from the IP address that sends the event, and
+stores it on every event. The IP address itself isn't kept; it's stored as `0.0.0.0`. The
+location is used only to understand adoption across markets. [Opting out](#opt-out) stops all
+telemetry, including this location.
+
+## What isn't collected
+
+The CLI doesn't collect argument or option values, request or response bodies, PlayFab title
+IDs, seller IDs, sandbox IDs, usernames, tenant or account IDs, access tokens, file paths,
+configured secrets, error messages, or the machine's name.
+
+## When the event is sent
+
+When a command succeeds, the CLI saves the event on disk, and a later run sends it, so the
+command doesn't wait on the network. When a command fails, the CLI waits at most 300
+milliseconds to send its event and any saved ones. In CI, where the CLI might not run again, it
+sends the event before it exits instead of saving it. That can add up to about 5 seconds when
+the endpoint is slow, and the event is dropped if it isn't sent in that time.
 
 ## Version header
 
@@ -40,31 +69,29 @@ Separately from telemetry, every request the CLI sends with an access token carr
 tell which CLI versions call them. It holds nothing else, and opting out of telemetry doesn't
 remove it.
 
-## Approximate location
-
-The CLI never sends your location. However, Application Insights derives an approximate location (country, region/state, and city) from the network IP that connects to the ingestion endpoint, and stores it on every record (including metrics). The source IP itself is not retained — it is stored as `0.0.0.0`. This coarse geography is used only to understand product adoption across markets. Opting out (see below) stops all telemetry, including this derived location.
-
 ## First-run disclosure
 
-The first time telemetry is actually collected on a machine, XBOX CLI prints a concise one-time disclosure to standard error (never to stdout, which stays reserved for command results):
+The first time the CLI collects telemetry on a machine, it writes this notice to stderr, once:
 
 ```text
 TELEMETRY
   XBOX CLI collects anonymous usage telemetry.
-  Learn more or opt out: https://aka.ms/xbox-cli/telemetry
+  Learn more or opt out: https://go.xbox/cli/telemetry
 ```
-
-The linked documentation provides the complete collection and opt-out details. A sentinel file under the CLI state directory records that the notice was shown so it does not repeat.
 
 ## Opt out
 
-Disable telemetry for one command:
+### For one command
+
+Pass `--disable-telemetry`:
 
 ```powershell
 xbox --disable-telemetry auth status
 ```
 
-Disable telemetry for all future invocations:
+### For the current shell session
+
+Set `XBOX_TELEMETRY_OPTOUT` in PowerShell:
 
 ```powershell
 $env:XBOX_TELEMETRY_OPTOUT = "1"
@@ -76,19 +103,23 @@ On bash or zsh:
 export XBOX_TELEMETRY_OPTOUT=1
 ```
 
-Values `1`, `true`, and `yes` are treated as opt-out. The opt-out always wins over other configuration.
+Values `1`, `true`, and `yes` turn telemetry off, whatever else is configured. Setting
+`XBOX_TELEMETRY__ENABLED` to `false` turns it off too.
 
-## Deployment configuration
+### For every new terminal
 
-Official release artifacts embed the Microsoft-owned Azure Monitor Application Insights destination at build time. The destination can't be changed; to stop sending telemetry, use the opt-outs above. The standard `APPLICATIONINSIGHTS_CONNECTION_STRING` variable is not read, because a host that sets it for its own application doesn't intend it for the CLI.
-
-Other telemetry settings can be set with `XBOX_` variables:
+Set the variable for your account. On Windows, run this, then reopen your terminal, and your
+IDE if you use its integrated terminal:
 
 ```powershell
-$env:XBOX_TELEMETRY__DEPENDENCYTRACINGENABLED = "true"
-$env:XBOX_TELEMETRY__DEPENDENCYTRACESAMPLINGRATIO = "0.1"
+[Environment]::SetEnvironmentVariable("XBOX_TELEMETRY_OPTOUT", "1", "User")
 ```
 
-`DependencyTraceSamplingRatio` is clamped to the range 0 through 1. Set `XBOX_TELEMETRY__ENABLED` to `false` to disable export for an environment or distribution.
+On Linux and macOS, add the `export` line to your shell's startup file, such as `~/.zshrc` or
+`~/.bashrc`, the same way [Installation](installation.md) adds the CLI to `PATH`.
 
-Delivery cannot be guaranteed when a device is offline, blocks Azure Monitor endpoints, terminates the process before the bounded flush completes, or the user opts out. The embedded destination ensures zero-configuration delivery whenever telemetry is enabled and the endpoint is reachable.
+## Where telemetry goes
+
+Release builds send telemetry to a Microsoft-owned Azure Monitor Application Insights resource,
+which you can't change. The CLI ignores `APPLICATIONINSIGHTS_CONNECTION_STRING`, so a host that
+sets it for its own application doesn't redirect the CLI's telemetry.

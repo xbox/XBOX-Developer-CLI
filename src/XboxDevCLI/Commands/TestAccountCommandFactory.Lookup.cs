@@ -83,7 +83,6 @@ internal static partial class TestAccountCommandFactory
         }
         catch (XboxPartnerApiException ex)
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, stderr);
             stderr.WriteLine(FormatError(
                 ex,
                 output.IsCompact,
@@ -96,7 +95,7 @@ internal static partial class TestAccountCommandFactory
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
         {
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
@@ -158,6 +157,7 @@ internal static partial class TestAccountCommandFactory
             _ => null,
             output,
             stdout,
-            stderr).ConfigureAwait(false);
+            stderr,
+            cancellationToken).ConfigureAwait(false);
     }
 }

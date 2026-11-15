@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.CommandLine;
 using System.CommandLine.Parsing;
@@ -283,7 +284,6 @@ internal static class AchievementImageCommandFactory
         {
             bool uploadBadRequest = action == "upload" &&
                 ex.StatusCode == System.Net.HttpStatusCode.BadRequest;
-            XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, Console.Error);
             Console.Error.WriteLine(XboxPartnerCommandErrorFormatter.Format(
                 ex, output.IsCompact,
                 uploadBadRequest ? ImageRequirements : null,
@@ -296,7 +296,12 @@ internal static class AchievementImageCommandFactory
             Console.Error.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException) when (action == "upload" && cancellationToken.IsCancellationRequested)
+        {
+            Console.Error.WriteLine("Canceled before the registration request was sent, so no image was registered.");
+            return 1;
+        }
+        catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
         {
             Console.Error.WriteLine($"Request failed: {ex.Message}");
             return 1;

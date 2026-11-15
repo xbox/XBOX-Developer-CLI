@@ -45,9 +45,6 @@ internal sealed record OutputOptions(
     /// <summary>Single-line JSON, with no declared view.</summary>
     internal static OutputOptions JsonCompact { get; } = new("json-compact", DataOnly: false);
 
-    /// <summary>Pretty-printed JSON with the PlayFab response envelope stripped.</summary>
-    internal static OutputOptions JsonDataOnly { get; } = new("json", DataOnly: true);
-
     /// <summary>Table output rendered with <paramref name="view"/>.</summary>
     internal static OutputOptions Table(TableView view) => new("table", DataOnly: false, view);
 

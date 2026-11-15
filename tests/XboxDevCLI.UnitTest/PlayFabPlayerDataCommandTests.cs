@@ -1,14 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.Net;
 using System.Text.Json;
 using XboxDevCLI.PlayFab.Commands;
 using XboxDevCLI.PlayFab.Generated.Admin;
-using XboxDevCLI.Services;
 using XboxDevCLI.Output;
 using Xunit;
 
@@ -171,8 +167,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_ValueOnly_WritesBareValue()
     {
-        var handler = new PlayerDataMockHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
@@ -187,8 +183,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_ValueOnly_MissingKey_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{},"DataVersion":3}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{},"DataVersion":3}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
@@ -201,8 +197,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_ValueOnly_WithoutKey_ReturnsOneWithoutCalling()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
@@ -216,8 +212,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_KeyAndKeys_ReturnsOneWithoutCalling()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
@@ -231,8 +227,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_Normal_SendsToResolvedPath()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
             client, "P1", "read-only", true, "a,b", null, valueOnly: false, null, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
@@ -244,8 +240,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_BlankKey_ValueOnly_ReturnsOneWithoutCalling()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
@@ -259,23 +255,23 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_BlankKey_TreatedAsAllKeys_NotSentAsEmptyKey()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
             client, "P1", "client", false, null, "", valueOnly: false, null, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         Assert.Contains("/Admin/GetUserData", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.False(doc.RootElement.TryGetProperty("Keys", out _));
     }
 
     [Fact]
     public async Task RunGetAsync_Normal_PrettyPrintsResponseToStdout()
     {
-        var handler = new PlayerDataMockHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -291,8 +287,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_JsonCompact_EmitsSingleLine()
     {
-        var handler = new PlayerDataMockHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
@@ -307,12 +303,12 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_DataOnly_StripsEnvelope()
     {
-        var handler = new PlayerDataMockHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Data":{"level":{"Value":"5"}},"DataVersion":3}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
-            client, "P1", "client", false, "level", null, valueOnly: false, null, OutputOptions.JsonDataOnly, stdout, new StringWriter(), cancellationToken: CancellationToken.None);
+            client, "P1", "client", false, "level", null, valueOnly: false, null, new OutputOptions("json", DataOnly: true), stdout, new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
         var output = stdout.ToString();
@@ -324,9 +320,9 @@ public class PlayFabPlayerDataCommandTests
     public async Task RunGetAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad player id"}""";
-        var handler = new PlayerDataMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -342,9 +338,9 @@ public class PlayFabPlayerDataCommandTests
     public async Task RunGetAsync_ValueOnly_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad player id"}""";
-        var handler = new PlayerDataMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -359,8 +355,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_ValueOnly_WithIfChanged_ReturnsOneWithoutCalling()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
@@ -374,14 +370,14 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunGetAsync_Normal_WithIfChanged_SendsFilter()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunGetAsync(
             client, "P1", "client", false, "level", null, valueOnly: false, 3, OutputOptions.Json, new StringWriter(), new StringWriter(), cancellationToken: CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal(3, doc.RootElement.GetProperty("IfChangedFromDataVersion").GetDouble());
     }
 
@@ -392,8 +388,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_KeyValue_SendsData()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         // The value is stored verbatim, including '=' characters.
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -402,7 +398,7 @@ public class PlayFabPlayerDataCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/Admin/UpdateUserData", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("5=hp", doc.RootElement.GetProperty("Data").GetProperty("level").GetString());
         Assert.Equal("Public", doc.RootElement.GetProperty("Permission").GetString());
     }
@@ -410,15 +406,15 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_DataJson_Sends()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
             client, "P1", "client", false, null, null, """{"k":"v"}""", "Private", OutputOptions.Json, new StringWriter(), new StringWriter(),
             CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("v", doc.RootElement.GetProperty("Data").GetProperty("k").GetString());
         Assert.Equal("Private", doc.RootElement.GetProperty("Permission").GetString());
     }
@@ -433,8 +429,8 @@ public class PlayFabPlayerDataCommandTests
     [InlineData(null, false)]
     public async Task RunSetAsync_WithoutPermission_ReturnsOneWithoutCalling(string? visibility, bool publisher)
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -453,8 +449,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_BlankPermission_ReturnsOneWithoutCalling()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -485,8 +481,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_Internal_SendsInternalRequestWithoutPermission()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
             client, "P1", "internal", false, "k", "v", null, null, OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -494,15 +490,15 @@ public class PlayFabPlayerDataCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/Admin/UpdateUserInternalData", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.False(doc.RootElement.TryGetProperty("Permission", out _));
     }
 
     [Fact]
     public async Task RunSetAsync_PermissionWithInternal_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -517,8 +513,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_NothingToSet_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -535,8 +531,8 @@ public class PlayFabPlayerDataCommandTests
     [InlineData("   ")]
     public async Task RunSetAsync_BlankKey_ReturnsOne(string blankKey)
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -551,8 +547,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_KeyWithoutValue_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -567,8 +563,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_ValueWithoutKey_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -583,8 +579,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_InvalidDataJson_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -599,8 +595,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_NumericPermission_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         // Numeric enum forms (e.g. "0") are not accepted — only the documented names.
@@ -616,8 +612,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_KeyValueAndData_ReturnsOneWithoutCalling()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         // --key/--value and --data are mutually exclusive.
@@ -633,15 +629,15 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_ComplexDataValue_StoredAsJsonString()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
             client, "P1", "client", false, null, null, """{"config":{"a":"b"},"tags":[1,2]}""", "Private", OutputOptions.Json, new StringWriter(), new StringWriter(),
             CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var data = doc.RootElement.GetProperty("Data");
         Assert.Equal(JsonValueKind.String, data.GetProperty("config").ValueKind);
         Assert.Equal("""{"a":"b"}""", data.GetProperty("config").GetString());
@@ -651,8 +647,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_NullDataValue_ReturnsOneWithoutCalling()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
@@ -667,15 +663,15 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_ScalarDataValues_SentAsStrings()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunSetAsync(
             client, "P1", "client", false, null, null, """{"level":5,"vip":true}""", "Private", OutputOptions.Json, new StringWriter(), new StringWriter(),
             CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var data = doc.RootElement.GetProperty("Data");
         Assert.Equal(JsonValueKind.String, data.GetProperty("level").ValueKind);
         Assert.Equal("5", data.GetProperty("level").GetString());
@@ -685,8 +681,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunSetAsync_Success_WritesResponseToStdout()
     {
-        var handler = new PlayerDataMockHandler(Ok("""{"code":200,"status":"OK","data":{"DataVersion":7}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"DataVersion":7}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -703,9 +699,9 @@ public class PlayFabPlayerDataCommandTests
     public async Task RunSetAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad key"}""";
-        var handler = new PlayerDataMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -725,8 +721,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunDeleteAsync_SendsKeysToRemove()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunDeleteAsync(
             client, "P1", "client", false, "a,b", OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -734,7 +730,7 @@ public class PlayFabPlayerDataCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/Admin/UpdateUserData", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var keys = doc.RootElement.GetProperty("KeysToRemove").EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Equal(new[] { "a", "b" }, keys);
         Assert.False(doc.RootElement.TryGetProperty("Data", out _));
@@ -743,8 +739,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunDeleteAsync_Internal_UsesInternalPath()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunDeleteAsync(
             client, "P1", "internal", true, "a", OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -758,9 +754,9 @@ public class PlayFabPlayerDataCommandTests
     public async Task RunDeleteAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad player id"}""";
-        var handler = new PlayerDataMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -776,8 +772,8 @@ public class PlayFabPlayerDataCommandTests
     [Fact]
     public async Task RunDeleteAsync_EmptyKeys_ReturnsOne()
     {
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await PlayerDataCommandFactory.RunDeleteAsync(
@@ -795,8 +791,8 @@ public class PlayFabPlayerDataCommandTests
         // player-data delete routes through UpdateUser*Data (not a Delete*/Shutdown* path), so it is
         // deliberately NOT subject to the catastrophic --confirm hard-gate. This test documents that
         // intentional choice: removing named keys succeeds without any destructive confirmation.
-        var handler = new PlayerDataMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await PlayerDataCommandFactory.RunDeleteAsync(
             client, "P1", "client", false, "a,b", OutputOptions.Json, new StringWriter(), new StringWriter(),
@@ -824,8 +820,8 @@ public class PlayFabPlayerDataCommandTests
 
                 foreach (var path in new[] { getPath, setPath })
                 {
-                    var handler = new PlayerDataMockHandler(Ok());
-                    using var client = CreateClientWithHandler(handler);
+                    var handler = new MockHttpMessageHandler(Ok());
+                    using var client = PlayFabTestClient.Create(handler);
 
                     // Only the resolved URL matters here, so send an empty body rather than a
                     // request shape that wouldn't match the update endpoints.
@@ -845,65 +841,5 @@ public class PlayFabPlayerDataCommandTests
     private static HttpResponseMessage Ok(string json = """{"code":200,"status":"OK","data":{"ok":true}}""") =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
-    private static IConfiguration CreateTestConfiguration() =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken) =>
-        new(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     #endregion
-}
-
-/// <summary>
-/// Mock handler that captures the outgoing request URI and body for assertion, then returns a
-/// fixed response.
-/// </summary>
-internal sealed class PlayerDataMockHandler : HttpMessageHandler
-{
-    private readonly HttpResponseMessage _response;
-
-    public PlayerDataMockHandler(HttpResponseMessage response) => _response = response;
-
-    public string? CapturedBody { get; private set; }
-
-    public string? LastRequestUri { get; private set; }
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        LastRequestUri = request.RequestUri?.ToString();
-        if (request.Content != null)
-        {
-            CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
-        }
-
-        return _response;
-    }
 }

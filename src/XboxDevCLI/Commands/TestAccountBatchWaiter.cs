@@ -1,40 +1,61 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using System.Net;
+using System.Text.Json;
 using XboxDevCLI.Services;
 
 namespace XboxDevCLI.Commands;
 
-/// <summary>How a wait for a batch update ended.</summary>
-internal enum TestAccountBatchUpdateOutcome
+/// <summary>How a wait on a test account batch ended.</summary>
+internal enum TestAccountBatchWaitOutcome
 {
-    /// <summary>The batch no longer shows a job, so the update job completed.</summary>
-    Finished,
+    /// <summary>
+    /// A delete removed the batch: a read answered 404 <c>test_account_batch_not_found</c>. A wait
+    /// for an update never ends this way.
+    /// </summary>
+    Deleted,
 
-    /// <summary>The deadline passed with a job, possibly stalled, still on the batch.</summary>
-    Updating,
+    /// <summary>
+    /// Two reads in a row showed no job on the batch, so the job ended. After a delete, the batch
+    /// still exists, so the delete stopped without removing it.
+    /// </summary>
+    JobEnded,
+
+    /// <summary>The deadline passed first. A job, possibly stalled, may still be on the batch.</summary>
+    TimedOut,
 }
 
-/// <summary>How a wait for a batch update ended, with the last batch it read, if any.</summary>
-internal readonly record struct TestAccountBatchUpdateWait(
-    TestAccountBatchUpdateOutcome Outcome,
+/// <summary>How a wait on a test account batch ended, with the last batch it read, if any.</summary>
+internal readonly record struct TestAccountBatchWait(
+    TestAccountBatchWaitOutcome Outcome,
     TestAccountBatch? LastBatch);
 
 /// <summary>
-/// Polls a test account batch until its update job completes or the deadline passes.
+/// Polls a test account batch until the delete or update job on it ends, a delete removes it, or
+/// the deadline passes.
 /// </summary>
 /// <remarks>
-/// XboxPartner cannot read update jobs, so the batch itself is the progress signal: it shows the
-/// job's ID while the job runs, and clears it only when the job completes. A job that fails for
-/// good keeps its ID on the batch, so the deadline is the only way such a wait ends. Reads are
-/// safe to repeat, so transient read failures are tolerated as in <see cref="TestAccountJobWaiter"/>;
-/// the update itself is never sent from here.
+/// XboxPartner cannot read delete or update jobs, so the batch itself is the progress signal: it
+/// shows the job's ID while the job runs, and clears it when the job ends. An update job that fails
+/// for good keeps its ID on the batch, so the deadline is the only way such a wait ends. Once a
+/// delete removes the batch, reads answer 404 <c>test_account_batch_not_found</c>; only a wait for a
+/// delete takes that as success, and for an update it fails the wait like any read that cannot
+/// succeed. Reads are safe to repeat, so transient read failures are tolerated as in
+/// <see cref="TestAccountJobWaiter"/>; the delete or update itself is never sent from here.
 /// </remarks>
-internal static class TestAccountBatchUpdateWaiter
+internal static class TestAccountBatchWaiter
 {
-    public static async Task<TestAccountBatchUpdateWait> WaitAsync(
+    internal const string BatchNotFoundCode = "test_account_batch_not_found";
+
+    private const int ReadsWithoutJobBeforeStopped = 2;
+
+    private static readonly JsonSerializerOptions SerializerOptions = new() { PropertyNameCaseInsensitive = true };
+
+    public static async Task<TestAccountBatchWait> WaitAsync(
         TimeSpan? retryAfter,
         Func<CancellationToken, Task<string>> readBatch,
+        bool deleting,
         TimeSpan timeout,
         Func<TimeSpan, CancellationToken, Task> delayAsync,
         Func<DateTimeOffset> getUtcNow,
@@ -55,7 +76,7 @@ internal static class TestAccountBatchUpdateWaiter
             TimeSpan remaining = deadline - getUtcNow();
             if (remaining <= TimeSpan.Zero)
             {
-                return new(TestAccountBatchUpdateOutcome.Updating, last);
+                return new(TestAccountBatchWaitOutcome.TimedOut, last);
             }
 
             TimeSpan delay = nextDelay ?? interval;
@@ -63,7 +84,7 @@ internal static class TestAccountBatchUpdateWaiter
             remaining = deadline - getUtcNow();
             if (remaining <= TimeSpan.Zero)
             {
-                return new(TestAccountBatchUpdateOutcome.Updating, last);
+                return new(TestAccountBatchWaitOutcome.TimedOut, last);
             }
 
             // The deadline bounds the read too, so a slow answer cannot stretch the wait past --timeout.
@@ -76,18 +97,22 @@ internal static class TestAccountBatchUpdateWaiter
                     .ConfigureAwait(false);
                 failures = 0;
                 nextDelay = null;
-                // One read without a job could race the service recording the update job, so only
-                // two in a row mean it completed.
-                last = TestAccountBatchDeletionWaiter.ReadBatch(body);
+                // One read without a job could race the service recording the job, or a deleted
+                // batch disappearing just after its job ends, so only two in a row mean it ended.
+                last = ReadBatch(body);
                 idleReads = string.IsNullOrWhiteSpace(last.JobId) ? idleReads + 1 : 0;
-                if (idleReads >= TestAccountBatchDeletionWaiter.ReadsWithoutJobBeforeStopped)
+                if (idleReads >= ReadsWithoutJobBeforeStopped)
                 {
-                    return new(TestAccountBatchUpdateOutcome.Finished, last);
+                    return new(TestAccountBatchWaitOutcome.JobEnded, last);
                 }
+            }
+            catch (XboxPartnerApiException exception) when (deleting && IsGone(exception))
+            {
+                return new(TestAccountBatchWaitOutcome.Deleted, null);
             }
             catch (Exception) when (readCancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
             {
-                return new(TestAccountBatchUpdateOutcome.Updating, last);
+                return new(TestAccountBatchWaitOutcome.TimedOut, last);
             }
             catch (Exception exception) when (
                 TestAccountJobWaiter.IsTransient(exception, cancellationToken) &&
@@ -98,6 +123,28 @@ internal static class TestAccountBatchUpdateWaiter
                     : interval;
             }
         }
+    }
+
+    /// <summary>True when a batch read says the batch no longer exists.</summary>
+    private static bool IsGone(XboxPartnerApiException exception) =>
+        exception.StatusCode == HttpStatusCode.NotFound &&
+        TestAccountCommandFactory.ReadProblemString(exception.ResponseBody, "code") == BatchNotFoundCode;
+
+    /// <summary>Reads the batch from a batch response, or throws <see cref="InvalidDataException"/>.</summary>
+    internal static TestAccountBatch ReadBatch(string body)
+    {
+        TestAccountBatchResponse? response;
+        try
+        {
+            response = JsonSerializer.Deserialize<TestAccountBatchResponse>(body, SerializerOptions);
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException("The test account batch response was not valid JSON.", exception);
+        }
+
+        return response?.Batch
+            ?? throw new InvalidDataException("The test account batch response did not contain a batch.");
     }
 
     /// <summary>

@@ -34,10 +34,10 @@ public class InfoCommandTests
             var output = writer.ToString();
 
             Assert.Equal(0, exitCode);
-            Assert.Contains(InfoCommandFactory.Banner, output, StringComparison.Ordinal);
+            Assert.Contains(WelcomeExperience.PlainLogo, output, StringComparison.Ordinal);
             var expectedDetails =
                 $"""
-                XBOX CLI version {CliIdentity.Version}
+                XBOX® CLI version {CliIdentity.Version}
                 {ProjectLinks.Home}
 
                 Run this command to get started:

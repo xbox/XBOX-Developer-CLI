@@ -169,6 +169,25 @@ public class EndpointOverrideWarningTests
     }
 
     [Theory]
+    [InlineData(null, false)]
+    [InlineData("https://xboxdevcli.playfabapi.com", false)]
+    [InlineData("https://studio.nodpublishers.com", true)]
+    public void GetStudioWarning_WarnsOnlyWhenOverridden(string? studioBaseUrl, bool warns)
+    {
+        var warning = EndpointOverrideWarning.GetStudioWarning(studioBaseUrl);
+
+        if (!warns)
+        {
+            Assert.Null(warning);
+            return;
+        }
+
+        Assert.NotNull(warning);
+        Assert.Contains(studioBaseUrl!, warning, StringComparison.Ordinal);
+        Assert.Contains("XBOX_PLAYFAB__STUDIOBASEURL", warning, StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("", "<blank>")]
     [InlineData("   ", "<blank>")]
     public void GetWarning_BlankConfigurationValueHasTheWarning(

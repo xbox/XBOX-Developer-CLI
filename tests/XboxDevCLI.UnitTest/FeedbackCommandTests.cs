@@ -291,7 +291,7 @@ public class FeedbackCommandTests
         Assert.Contains("    id: environment\n", template.ReplaceLineEndings("\n"));
         Assert.Contains("      label: Environment Summary", template);
 
-        // The form has to live in the repository that receives its issues. An aka.ms link's
+        // The form has to live in the repository that receives its issues. A go.xbox link's
         // target is set outside the code, so only a direct GitHub link can be checked here.
         var newIssue = new Uri(ProjectLinks.NewIssue);
         if (newIssue.Host == "github.com")

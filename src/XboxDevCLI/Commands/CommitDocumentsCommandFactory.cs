@@ -3,6 +3,7 @@
 
 using System.CommandLine;
 using System.CommandLine.Parsing;
+using System.Globalization;
 using System.Text.Json;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
@@ -12,26 +13,28 @@ namespace XboxDevCLI.Commands;
 
 internal static class CommitDocumentsCommandFactory
 {
-    public static Command Create()
+    /// <summary>The write was sent, but whether it took effect is unknown.</summary>
+    internal const int OutcomeUnknownExitCode = 3;
+
+    public static Command Create(PublishConfirmationDependencies? confirmationDependencies = null)
     {
+        var dependencies = confirmationDependencies ?? PublishConfirmationDependencies.Default;
         var sellerOption = new XdtsSellerOption();
-        var typeOption = new Option<string>("--type", "-t")
+        var typeOption = new Option<string>("--type")
         {
             Description = "Document scope: 'sandbox' or 'account'. Default: sandbox.",
             DefaultValueFactory = _ => "sandbox",
         };
         typeOption.Validators.Add(result =>
             ValidateAllowedValue(result, "sandbox", "account"));
-        var scidOption = new Option<Guid?>("--scid", "-c")
-        {
-            Description = "Service configuration ID. Required for the default sandbox scope.",
-        };
+        var target = new XboxLiveConfigurationTarget(
+            result => !string.Equals(result.GetValue(typeOption), "account", StringComparison.OrdinalIgnoreCase));
         var sandboxOption = new Option<string?>("--sandbox-id")
         {
             HelpName = "id",
             Description = "Case-sensitive sandbox ID. Required for the default sandbox scope.",
         };
-        var filesOption = new Option<string[]>("--file", "-f")
+        var filesOption = new Option<string[]>("--file")
         {
             Description =
                 "Local file or filename glob pattern. Repeat --file to select multiple inputs. " +
@@ -50,79 +53,86 @@ internal static class CommitDocumentsCommandFactory
                 result.AddError("Each --file requires one non-empty path or glob pattern.");
             }
         });
-        var validateOnlyOption = new Option<bool>("--validate-only", "-v")
+        var validateOnlyOption = new Option<bool>("--validate-only")
         {
-            Description = "Validate without persisting. Default: false, which commits documents.",
+            Description = "Validate without saving. Default: false, which saves documents.",
         };
-        var eTagOption = new Option<string?>("--etag", "-e")
+        var eTagOption = new Option<string?>("--etag")
         {
             Description = "ETag for optimistic concurrency. Default: the saved ETag.",
         };
         var forceOption = new Option<bool>("--force")
         {
-            Description = "Refresh the server ETag. Default: false.",
+            Description =
+                "Save over changes made since the saved ETag, using the server's current ETag. Default: false.",
         };
-        var messageOption = new Option<string?>("--message", "-m")
+        var messageOption = new Option<string?>("--message")
         {
-            Description = "Commit message. Default: omitted.",
+            Description = "Save message. Default: omitted.",
         };
+        var allowSharedOption = XboxLiveConfigurationTarget.CreateAllowSharedConfigurationOption();
 
         var command = new Command(
-            "commit",
-            "Validate or commit XBOX services configuration documents");
+            "save",
+            "Validate or save XBOX services configuration documents to the working configuration");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.RemoteMutation,
             Scope: "A sandbox or account XBOX services working configuration document set.",
-            Output: "The validation or commit result and local ETag metadata as JSON or a table.",
+            Output: "The validation or save result and local ETag metadata as JSON or a table.",
             Examples:
             [
-                "xbox xbl document commit --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --file \"xbox-config/*.xml\" --validate-only",
-                "xbox xbl document commit --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --file xbox-config/achievements2017.xml --file xbox-config/localization.xml --output table",
-                "xbox xbl document commit --type account --file \"xbox-config/*.xml\" --message \"Update account configuration\"",
+                "xbox xbl config save --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --file \"xbox-config/*.xml\" --validate-only",
+                "xbox xbl config save --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 --file xbox-config/achievements2017.xml --file xbox-config/localization.xml --output table",
+                "xbox xbl config save --type account --file \"xbox-config/*.xml\" --message \"Update account configuration\"",
+                "xbox xbl config save --title-id 1234ABCD --sandbox-id XDKS.1 --file \"xbox-config/*.xml\" --validate-only",
             ],
             SafetyDetails:
-                "Without --validate-only, commits the selected working configuration documents.",
+                "Without --validate-only, saves the selected working configuration documents. " +
+                "Every title bound to a primary title shares its configuration. A --title-id that selects a " +
+                "bound title is refused, even with --validate-only; rerun with the primary's --scid. A write by " +
+                "--title-id, validation included, to configuration other titles are bound to lists them and " +
+                "asks before changing it; without a terminal it's refused unless you pass " +
+                "--allow-shared-configuration. A write by --scid isn't checked.",
             Table: XboxPartnerCommandSupport.DocumentCommitTableView));
         sellerOption.AddTo(command);
         command.Options.Add(typeOption);
-        command.Options.Add(scidOption);
+        target.AddTo(command);
         command.Options.Add(sandboxOption);
         command.Options.Add(filesOption);
         command.Options.Add(validateOnlyOption);
         command.Options.Add(eTagOption);
         command.Options.Add(forceOption);
         command.Options.Add(messageOption);
+        command.Options.Add(allowSharedOption);
         command.Validators.Add(result =>
         {
-            // An --scid that isn't a GUID is already a parse error, and reading it would throw.
-            if (result.GetResult(scidOption) is { Tokens: [var scidToken, ..] } && !Guid.TryParse(scidToken.Value, out _))
-            {
-                return;
-            }
-
             string type = result.GetValue(typeOption) ?? "sandbox";
-            Guid? scid = result.GetValue(scidOption);
             string? sandbox = result.GetValue(sandboxOption);
             if (type.Equals("sandbox", StringComparison.OrdinalIgnoreCase))
             {
-                if (!scid.HasValue || scid.Value == Guid.Empty)
-                {
-                    result.AddError("--scid is required for sandbox documents.");
-                }
-
                 if (!IsValidSandbox(sandbox))
                 {
                     result.AddError(
                         "--sandbox-id is required for sandbox documents and cannot contain " +
                         "whitespace or path characters.");
                 }
-
             }
             else
             {
-                if (scid.HasValue || !string.IsNullOrWhiteSpace(sandbox))
+                if (result.GetResult("--scid") is OptionResult { Implicit: false } || !string.IsNullOrWhiteSpace(sandbox))
                 {
                     result.AddError("--scid and --sandbox-id cannot be used with account documents.");
+                }
+
+                if (result.GetResult("--title-id") is OptionResult { Implicit: false })
+                {
+                    result.AddError("--title-id cannot be used with account documents.");
+                }
+
+                if (result.GetResult(allowSharedOption) is { Implicit: false })
+                {
+                    result.AddError(
+                        $"{XboxLiveConfigurationTarget.AllowSharedConfigurationOptionName} cannot be used with account documents.");
                 }
             }
         });
@@ -146,15 +156,19 @@ internal static class CommitDocumentsCommandFactory
                     client,
                     baseUrl,
                     cancellationToken);
-                Program.WriteVerbose(
-                    verbose,
-                    () => $"{(parseResult.GetValue(validateOnlyOption) ? "Validate" : "Commit")} " +
-                        $"{type} documents");
+                var selected = type.Equals("sandbox", StringComparison.OrdinalIgnoreCase)
+                    ? await target.SelectAsync(parseResult, sellerId)
+                    : null;
+                string description = $"{(parseResult.GetValue(validateOnlyOption) ? "Validate" : "Save")} " +
+                    $"{type} documents";
+                Program.WriteVerbose(verbose, () => selected is null
+                    ? description
+                    : $"{description} for {selected.Describe()} in {parseResult.GetValue(sandboxOption)}");
                 return await RunAsync(
                     client,
-                    sellerId,
+                    selected?.SellerId ?? sellerId,
                     type,
-                    parseResult.GetValue(scidOption),
+                    selected?.Scid,
                     parseResult.GetValue(sandboxOption),
                     parseResult.GetValue(filesOption) ?? [],
                     parseResult.GetValue(validateOnlyOption),
@@ -164,9 +178,23 @@ internal static class CommitDocumentsCommandFactory
                     output,
                     Console.Out,
                     Console.Error,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    selected?.TitleId,
+                    parseResult.GetValue(allowSharedOption),
+                    dependencies,
+                    string.Join(' ', RecoveryCommandArguments.Create(parseResult))).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (XboxPartnerApiException ex)
+            {
+                Console.Error.WriteLine(XboxPartnerCommandErrorFormatter.Format(ex, output.IsCompact));
+                return 1;
+            }
+            catch (XboxPartnerResponseException ex)
+            {
+                XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, Console.Error);
+                return XboxPartnerCommandSupport.WriteLocalError(ex);
+            }
+            catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
             {
                 Console.Error.WriteLine($"Request failed: {ex.Message}");
                 return 1;
@@ -190,11 +218,19 @@ internal static class CommitDocumentsCommandFactory
         OutputOptions output,
         TextWriter stdout,
         TextWriter stderr,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? titleId = null,
+        bool allowSharedConfiguration = false,
+        PublishConfirmationDependencies? sharedConfirmation = null,
+        string? recoveryPrefix = null)
     {
         bool compact = output.IsCompact;
         TableView? tableView = output.TableView;
         string[] files = [];
+        var sent = false;
+        string? sentCorrelationId = null;
+        var answered = false;
+        XboxLiveResolvedConfigurationTarget? resolved = null;
         try
         {
             string normalizedDocumentType = documentType.Trim().ToLowerInvariant();
@@ -221,16 +257,62 @@ internal static class CommitDocumentsCommandFactory
                 force,
                 resolvedEtag,
                 NormalizeOptional(message),
-                documents);
-            string response;
-            using (RequestProgress.Start(DescribeCommit(request), stderr))
+                documents,
+                titleId,
+                allowSharedConfiguration);
+            XboxPartnerOperationResult<XboxLiveCommitResponse> response;
+            try
             {
-                response = await client
-                    .CommitXboxLiveDocumentsAsync(sellerId, request, cancellationToken)
-                    .ConfigureAwait(false);
+                response = await SendAsync(request).ConfigureAwait(false);
+            }
+            catch (XboxPartnerApiException ex) when (
+                !request.AllowSharedConfiguration &&
+                XboxLiveConfigurationTarget.ReadSharedConfiguration(ex) is not null)
+            {
+                // The service refused the first send, so nothing was saved.
+                sent = false;
+                if (!await XboxLiveConfigurationTarget.ConfirmSharedConfigurationAsync(
+                    XboxLiveConfigurationTarget.ReadSharedConfiguration(ex)!, ex, compact, validateOnly,
+                    sharedConfirmation, stderr,
+                    cancellationToken).ConfigureAwait(false))
+                {
+                    return 1;
+                }
+
+                request = request with { AllowSharedConfiguration = true };
+                response = await SendAsync(request).ConfigureAwait(false);
             }
 
-            XboxLiveCommitResponse result = ParseResponse(response);
+            async Task<XboxPartnerOperationResult<XboxLiveCommitResponse>> SendAsync(
+                XboxLiveCommitDocumentsRequest body)
+            {
+                resolved = null;
+                try
+                {
+                    using (RequestProgress.Start(DescribeCommit(body), stderr))
+                    {
+                        return await client.CommitXboxLiveDocumentsAsync(
+                            sellerId, body, cancellationToken,
+                            target => resolved = target,
+                            onSending: correlationId =>
+                            {
+                                sent = true;
+                                sentCorrelationId = correlationId;
+                            })
+                            .ConfigureAwait(false);
+                    }
+                }
+                finally
+                {
+                    if (resolved is not null)
+                    {
+                        XboxLiveConfigurationTarget.WriteResolved(resolved, sellerId, stderr);
+                    }
+                }
+            }
+
+            answered = true;
+            XboxLiveCommitResponse result = response.Value;
             IReadOnlyList<XboxLiveValidationMessage> validationMessages =
                 XboxLiveValidationMessages.Read(result.ValidationInfo);
             bool failed = IsValidationFailure(result, validateOnly, validationMessages);
@@ -238,12 +320,14 @@ internal static class CommitDocumentsCommandFactory
             string? savedEtagPath = null;
 
             // A refused commit leaves the saved ETag alone, so the retry checks the same version.
+            // Once a save is accepted, Ctrl+C no longer stops the command: the small ETag write
+            // finishes and the result is written, so the next save doesn't fail on a stale ETag.
             if (!failed && !string.IsNullOrWhiteSpace(responseEtag))
             {
                 savedEtagPath = await SaveEtagAsync(
                     eTagPath,
                     responseEtag,
-                    cancellationToken).ConfigureAwait(false);
+                    validateOnly ? cancellationToken : CancellationToken.None).ConfigureAwait(false);
             }
 
             stdout.WriteLine(tableView is not null
@@ -277,6 +361,20 @@ internal static class CommitDocumentsCommandFactory
             WriteValidationFailure(validationMessages, validateOnly, stderr);
             return 1;
         }
+        catch (OperationCanceledException) when (!validateOnly && !sent && cancellationToken.IsCancellationRequested)
+        {
+            stderr.WriteLine("Canceled before the request was sent, so no documents were saved.");
+            return 1;
+        }
+        catch (Exception ex) when (!validateOnly && sent && !answered
+            && XboxPartnerCommandSupport.IsUncertainSubmission(ex))
+        {
+            XboxPartnerCommandSupport.WriteUncertainCause(ex, compact, stderr, cancellationToken, sentCorrelationId);
+            stderr.WriteLine("It is unknown whether the documents were saved. Don't resubmit them.");
+            stderr.WriteLine(
+                $"Check with: {FormatDownloadCheck(documentType, scid, sandbox, sellerId, titleId, resolved, recoveryPrefix)}");
+            return OutcomeUnknownExitCode;
+        }
         catch (XboxPartnerApiException ex)
         {
             stderr.WriteLine(XboxPartnerCommandErrorFormatter.Format(
@@ -285,11 +383,40 @@ internal static class CommitDocumentsCommandFactory
                 CreateInvalidDocumentNameGuidance(ex, files)));
             return 1;
         }
-        catch (Exception ex)
+        catch (XboxPartnerResponseException ex)
+        {
+            XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, stderr);
+            stderr.WriteLine($"Request failed: {ex.Message}");
+            return 1;
+        }
+        catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
         {
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
+    }
+
+    /// <summary>
+    /// The read-only command that shows whether an interrupted save landed: the latest working
+    /// documents, which a saved set replaces.
+    /// </summary>
+    internal static string FormatDownloadCheck(
+        string documentType, Guid? scid, string? sandbox, long? sellerId = null,
+        string? titleId = null, XboxLiveResolvedConfigurationTarget? resolved = null,
+        string? recoveryPrefix = null)
+    {
+        string prefix = recoveryPrefix ?? CliIdentity.CommandName;
+        if (string.Equals(documentType.Trim(), "account", StringComparison.OrdinalIgnoreCase))
+        {
+            long? seller = resolved?.SellerId ?? sellerId;
+            return $"{prefix} xbl config download --type account " +
+                (seller is { } s ? $"--seller-id {s.ToString(CultureInfo.InvariantCulture)} " : "") +
+                "--view draft --dest <directory>";
+        }
+
+        return $"{prefix} xbl config download " +
+            XboxPartnerCommandSupport.FormatConfigurationTarget(resolved, scid, titleId, sellerId) +
+            $" --sandbox-id {ShellQuoting.Quote(sandbox?.Trim() ?? "")} --view draft --dest <directory>";
     }
 
     internal static string DescribeCommit(XboxLiveCommitDocumentsRequest request)
@@ -301,8 +428,8 @@ internal static class CommitDocumentsCommandFactory
         {
             (true, null) => $"Validating {documents}",
             (true, { } sandbox) => $"Validating {documents} for {sandbox}",
-            (false, null) => $"Committing {documents}",
-            (false, { } sandbox) => $"Committing {documents} to {sandbox}",
+            (false, null) => $"Saving {documents}",
+            (false, { } sandbox) => $"Saving {documents} to {sandbox}",
         };
     }
 
@@ -377,14 +504,14 @@ internal static class CommitDocumentsCommandFactory
 
         if (files.Count == 0)
         {
-            throw new FileNotFoundException("There are no files selected to commit.");
+            throw new FileNotFoundException("There are no files selected to save.");
         }
 
         return files.ToArray();
     }
 
     /// <summary>
-    /// Whether XCon didn't validate or commit the documents. Documents that match the latest ones
+    /// Whether XBOX services didn't validate or commit the documents. Documents that match the latest ones
     /// aren't a failure.
     /// </summary>
     private static bool IsValidationFailure(
@@ -396,38 +523,21 @@ internal static class CommitDocumentsCommandFactory
         return !succeeded && !XboxLiveValidationMessages.IsUnchanged(messages);
     }
 
-    /// <summary>Writes XCon's validation messages to stderr after it refused the documents.</summary>
+    /// <summary>Writes the validation messages to stderr after XBOX services refused the documents.</summary>
     private static void WriteValidationFailure(
         IReadOnlyList<XboxLiveValidationMessage> messages,
         bool validateOnly,
         TextWriter stderr)
     {
         string summary = validateOnly
-            ? "XBOX services can't commit these documents"
-            : "XBOX services didn't commit these documents";
+            ? "XBOX services can't save these documents"
+            : "XBOX services didn't save these documents";
         XboxLiveValidationMessage[] shown = [.. messages.Where(static message => message.HasText)];
         stderr.WriteLine(shown.Length == 0 ? $"{summary}." : $"{summary}:");
         foreach (XboxLiveValidationMessage message in shown)
         {
             stderr.WriteLine(XboxLiveValidationMessages.Format(message));
         }
-    }
-
-    private static XboxLiveCommitResponse ParseResponse(string response)
-    {
-        XboxLiveCommitResponse result =
-            XboxPartnerCommandSupport.DeserializeResponse<XboxLiveCommitResponse>(
-                response,
-                "document commit");
-        if (result.ValidationInfo.ValueKind == JsonValueKind.Undefined ||
-            !result.CanCommit.HasValue ||
-            !result.Committed.HasValue)
-        {
-            throw new InvalidDataException(
-                "The document commit response was missing required fields.");
-        }
-
-        return result;
     }
 
     private static async Task<IReadOnlyList<XboxDocumentUpload>> ReadDocumentsAsync(

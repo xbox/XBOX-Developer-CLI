@@ -8,6 +8,7 @@ using Microsoft.Identity.Client;
 using Moq;
 using XboxDevCLI.Safety;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 using Xunit;
 
 namespace XboxDevCLI.UnitTest;
@@ -30,7 +31,7 @@ public sealed class ContextResolverTests : IDisposable
 
     private static readonly string[] Variables =
     [
-        "XBOX_SELLER_ID", "XBOX_PLAYFAB_TITLE_ID", "XBOX_SANDBOX_ID", "XBOX_PROFILE",
+        "XBOX_SELLER_ID", "XBOX_PLAYFAB_TITLE_ID", "XBOX_SANDBOX_ID", "XBOX_PROFILE", "XBOX_TITLE_ID",
         "XBOX_CONFIRM", "XBOX_YES", "XBOX_BODY", "XBOX_BODY_FILE", "XBOX_PLAYFAB__BASEURLTEMPLATE",
         "XBOX_PLAYFAB__TITLEID",
     ];
@@ -99,10 +100,112 @@ public sealed class ContextResolverTests : IDisposable
         Assert.Equal(0, _identityReads);
     }
 
+    /// <summary>
+    /// Telemetry learns which context keys had a value, wherever it came from, but never the value.
+    /// </summary>
     [Theory]
-    [InlineData("configuration", "get")]
-    [InlineData("publish", "start")]
-    [InlineData("publish", "status")]
+    [InlineData("flag", "seller-id")]
+    [InlineData("variable", "seller-id")]
+    [InlineData("saved", "seller-id")]
+    [InlineData("none", "")]
+    public async Task ContextKeys_AreRecordedForTelemetryFromEverySourceWithoutValues(string from, string expected)
+    {
+        if (from == "variable")
+        {
+            Environment.SetEnvironmentVariable("XBOX_SELLER_ID", "1234567");
+        }
+        else if (from == "saved")
+        {
+            await SaveAsync("seller-id", Gateway, "1234567");
+        }
+
+        var recorded = TelemetryRecorder.Start();
+        try
+        {
+            await ResolveAsync(from == "flag" ? ["game", "list", "--seller-id", "1234567"] : ["game", "list"]);
+
+            Assert.Equal(expected, string.Join(",", recorded.ContextKeys));
+            Assert.DoesNotContain(recorded.ContextKeys, key => key.Contains("1234567", StringComparison.Ordinal));
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
+    }
+
+    /// <summary>
+    /// A value filled in from the environment or saved context is a context key, not an option the
+    /// user supplied, and a missing seller is a context failure.
+    /// </summary>
+    [Theory]
+    [InlineData("variable", "seller-id", null)]
+    [InlineData("saved", "seller-id", null)]
+    [InlineData("none", "", "context")]
+    public async Task Main_SendsFilledInValuesAsContextKeysNotOptions(string from, string contextKeys, string? errorType)
+    {
+        if (from == "variable")
+        {
+            Environment.SetEnvironmentVariable("XBOX_SELLER_ID", "1234567");
+        }
+        else if (from == "saved")
+        {
+            await SaveAsync("seller-id", Gateway, "1234567");
+        }
+
+        var commandEvent = await MainEventAsync("--client-id", NoAccountClientId, "game", "list");
+
+        Assert.Equal(["client-id"], commandEvent.Options);
+        Assert.Equal(contextKeys, string.Join(",", commandEvent.ContextKeys));
+        if (errorType is not null)
+        {
+            Assert.Equal(errorType, commandEvent.ErrorType);
+        }
+    }
+
+    /// <summary>A destructive call the user doesn't confirm is recorded as not confirmed.</summary>
+    [Fact]
+    public async Task Main_RecordsARefusedConfirmationAsNotConfirmed()
+    {
+        var commandEvent = await MainEventAsync(
+            "--client-id", NoAccountClientId, "playfab", "api", "/Admin/DeleteTitle", "--playfab-title-id", "ABC123");
+
+        Assert.Equal(1, commandEvent.ExitCode);
+        Assert.Equal(TelemetryErrorTypes.NotConfirmed, commandEvent.ErrorType);
+    }
+
+    /// <summary>A client ID no account has signed in with, so no cached token is found.</summary>
+    private const string NoAccountClientId = "00000000-0000-0000-0000-000000000000";
+
+    /// <summary>Runs the CLI, answering "no" to any prompt, and returns the event it built.</summary>
+    private static async Task<CommandInvocationEvent> MainEventAsync(params string[] args)
+    {
+        CommandInvocationEvent? commandEvent = null;
+        var originalObserver = Program.TelemetryEventObserver;
+        var originalIn = Console.In;
+        var originalOut = Console.Out;
+        var originalError = Console.Error;
+        Program.TelemetryEventObserver = invocationEvent => commandEvent = invocationEvent;
+        Console.SetIn(new StringReader("no" + Environment.NewLine));
+        Console.SetOut(TextWriter.Null);
+        Console.SetError(TextWriter.Null);
+        try
+        {
+            await Program.Main(args);
+        }
+        finally
+        {
+            Program.TelemetryEventObserver = originalObserver;
+            Console.SetIn(originalIn);
+            Console.SetOut(originalOut);
+            Console.SetError(originalError);
+        }
+
+        return commandEvent ?? throw new InvalidOperationException("No telemetry event was built.");
+    }
+
+    [Theory]
+    [InlineData("config", "status")]
+    [InlineData("config", "publish")]
     public async Task SandboxId_UsesFlagThenVariableThenSavedContext(string group, string action)
     {
         await SaveAsync("sandbox-id", Gateway, "TESTSB.42");
@@ -122,6 +225,111 @@ public sealed class ContextResolverTests : IDisposable
         Assert.Equal("ABCDEF.1", explicitValue.GetValue<string>("--sandbox-id"));
     }
 
+    [Theory]
+    [InlineData("config", "publish")]
+    [InlineData("config", "list")]
+    [InlineData("config", "status")]
+    [InlineData("config", "download")]
+    [InlineData("config", "save")]
+    public async Task ConfigurationTitle_FlagVariableAndSavedPrecedence(string family, string action)
+    {
+        string[] args = TitleCommandArgs(family, action);
+        await SaveAsync("title-id", Gateway, "ABCDEF");
+        var (_, saved, _) = await ResolveAsync(args);
+        Assert.Empty(saved.Errors);
+        Assert.Equal("ABCDEF", saved.GetValue<string>("--title-id"));
+
+        Environment.SetEnvironmentVariable("XBOX_TITLE_ID", "42");
+        var (_, variable, _) = await ResolveAsync(args);
+        Assert.Empty(variable.Errors);
+        Assert.Equal("42", variable.GetValue<string>("--title-id"));
+
+        var (_, flag, _) = await ResolveAsync([.. args, "--title-id", "1234"]);
+        Assert.Empty(flag.Errors);
+        Assert.Equal("1234", flag.GetValue<string>("--title-id"));
+    }
+
+    [Theory]
+    [InlineData("config", "publish")]
+    [InlineData("config", "list")]
+    [InlineData("config", "status")]
+    [InlineData("config", "download")]
+    [InlineData("config", "save")]
+    public async Task ConfigurationScid_IgnoresInvalidSavedTitle(string family, string action)
+    {
+        await SaveAsync("title-id", Gateway, "invalid");
+        var (_, result, stderr) = await ResolveAsync([.. TitleCommandArgs(family, action), "--scid", Scid]);
+
+        Assert.Empty(result.Errors);
+        Assert.Null(result.GetValue<string>("--title-id"));
+        Assert.DoesNotContain("title-id", stderr);
+        Assert.Equal(0, _identityReads);
+    }
+
+    [Theory]
+    [InlineData("download")]
+    [InlineData("save")]
+    public async Task AccountDocuments_IgnoreInvalidSavedTitle(string action)
+    {
+        await SaveAsync("title-id", Gateway, "invalid");
+        string[] args = action == "download" ? ["--view", "draft", "--dest", "output"] : ["--file", "nsal.xml"];
+        var (_, result, stderr) = await ResolveAsync(
+            ["xbl", "config", action, "--type", "account", .. args]);
+        Assert.Empty(result.Errors);
+        Assert.Null(result.GetValue<string>("--title-id"));
+        Assert.DoesNotContain("title-id", stderr);
+    }
+
+    private static string[] TitleCommandArgs(string family, string action)
+    {
+        List<string> args = ["xbl", family, action];
+        if (action != "list") args.AddRange(["--sandbox-id", "Dev.1"]);
+        if (action == "download") args.AddRange(["--view", "draft", "--dest", "output"]);
+        if (action == "save") args.AddRange(["--file", "nsal.xml"]);
+        return [.. args];
+    }
+
+    [Fact]
+    public async Task PublishTitle_ProfileAndAccountIsolation()
+    {
+        await SaveAsync("title-id", Gateway, "ABCDEF");
+        await SaveAsync("title-id", Gateway, "42", "test");
+        var (_, selected, stderr) = await ResolveAsync(
+            "--profile", "test", "xbl", "config", "publish", "--sandbox-id", "Dev.1");
+        Assert.Equal("42", selected.GetValue<string>("--title-id"));
+        Assert.Contains("profile test", stderr);
+
+        _signedIn = new SignedInIdentity("other-tenant", "other-user");
+        var (_, other, _) = await ResolveAsync("xbl", "config", "status", "--sandbox-id", "Dev.1");
+        Assert.Null(other.GetValue<string>("--title-id"));
+    }
+
+    [Theory]
+    [InlineData("invalid")]
+    [InlineData("80000000")]
+    public async Task PublishTitle_InvalidSavedValueNamesItsSource(string saved)
+    {
+        await SaveAsync("title-id", Gateway, saved);
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            ResolveAsync("xbl", "config", "status", "--sandbox-id", "Dev.1"));
+        Assert.Contains("saved context: --title-id", error.Message);
+        Assert.Contains("7FFFFFFF", error.Message);
+    }
+
+    [Fact]
+    public async Task PublishTitle_DoesNotBorrowFromOtherEndpointOrDefaultProfile()
+    {
+        await SaveAsync("title-id", "https://other.example", "42");
+        var (_, otherEndpoint, _) = await ResolveAsync("xbl", "config", "status", "--sandbox-id", "Dev.1");
+        Assert.Null(otherEndpoint.GetValue<string>("--title-id"));
+
+        await SaveAsync("title-id", Gateway, "ABCDEF");
+        await SaveAsync("seller-id", Gateway, "123", "test");
+        var (_, selected, _) = await ResolveAsync(
+            "--profile", "test", "xbl", "config", "status", "--sandbox-id", "Dev.1");
+        Assert.Null(selected.GetValue<string>("--title-id"));
+    }
+
     /// <summary>
     /// A saved value belongs to the signed-in account and the endpoint the command talks to: the
     /// gateway, which <c>--base-url</c> moves, or the PlayFab endpoint. The account is read once.
@@ -133,7 +341,7 @@ public sealed class ContextResolverTests : IDisposable
         await SaveAsync("sandbox-id", Gateway, "Dev.1");
         await SaveAsync("playfab-title-id", EndpointOverrideWarning.DefaultBaseUrlTemplate, "SAVED1");
 
-        var (_, publish, _) = await ResolveAsync("xbl", "publish", "status", "--scid", Scid);
+        var (_, publish, _) = await ResolveAsync("xbl", "config", "status", "--scid", Scid);
         var (_, title, _) = await ResolveAsync("playfab", "title-data", "get");
         var (_, moved, _) = await ResolveAsync("game", "list", "--base-url", "https://other.example");
 
@@ -153,6 +361,8 @@ public sealed class ContextResolverTests : IDisposable
     [InlineData("game", "list")]
     [InlineData("game", "list", "--bogus")]
     [InlineData("auth", "status")]
+    [InlineData("playfab", "service-principal", "list", "--studio-id", "1234567890ABCDEF")]
+    [InlineData("playfab", "api", "/Studio/ListServicePrincipals")]
     public async Task NothingToFillIn_ReadsNothing(params string[] args)
     {
         Environment.SetEnvironmentVariable("XBOX_PLAYFAB_TITLE_ID", "ABC12");
@@ -184,8 +394,8 @@ public sealed class ContextResolverTests : IDisposable
     /// <summary>A value is parsed and validated as if typed, and fails naming where it came from.</summary>
     [Theory]
     [InlineData("XBOX_PLAYFAB_TITLE_ID", "ABC-12", "playfab title-data get", "XBOX_PLAYFAB_TITLE_ID: --playfab-title-id must contain only letters and digits.")]
-    [InlineData("XBOX_SANDBOX_ID", "Dev 1", "xbl publish status --scid " + Scid, "XBOX_SANDBOX_ID: --sandbox-id must be non-empty and cannot contain whitespace.")]
-    [InlineData("XBOX_SELLER_ID", "0", "xbl publish status --sandbox-id Dev.1 --scid " + Scid, "XBOX_SELLER_ID: --seller-id")]
+    [InlineData("XBOX_SANDBOX_ID", "Dev 1", "xbl config status --scid " + Scid, "XBOX_SANDBOX_ID: --sandbox-id must be non-empty and cannot contain whitespace.")]
+    [InlineData("XBOX_SELLER_ID", "0", "xbl config status --sandbox-id Dev.1 --scid " + Scid, "XBOX_SELLER_ID: --seller-id")]
     public async Task BadValue_FailsNamingItsSource(string variable, string value, string command, string expected)
     {
         Environment.SetEnvironmentVariable(variable, value);
@@ -301,13 +511,24 @@ public sealed class ContextResolverTests : IDisposable
         Assert.Equal(expected, Program.LoadConfiguration(resolved)["PlayFab:TitleId"]);
     }
 
-    /// <summary>Main stops with the reason, before the command runs, when a value can't be used.</summary>
-    [Fact]
-    public async Task Main_FailsBeforeTheCommandWhenAValueCantBeUsed()
+    /// <summary>
+    /// Main stops with the reason, before the command runs, when a value can't be used. A command
+    /// that says what failed, such as <c>Download failed:</c>, didn't run, so the reason has no prefix.
+    /// </summary>
+    [Theory]
+    [InlineData("playfab", "title-data", "get")]
+    [InlineData(
+        "playfab", "file", "download", "--entity-id", "TITLEPLAYER123", "--entity-type", "title_player_account",
+        "--name", "save.json")]
+    [InlineData(
+        "playfab", "file", "upload", "--entity-id", "TITLEPLAYER123", "--entity-type", "title_player_account",
+        "--file", "save.json")]
+    [InlineData("playfab", "mps", "asset", "upload", "--file", "gameserver.zip", "--asset-name", "gameserver.zip")]
+    public async Task Main_FailsBeforeTheCommandWhenAValueCantBeUsed(params string[] command)
     {
         Environment.SetEnvironmentVariable("XBOX_PLAYFAB_TITLE_ID", "ABC-12");
 
-        var (exitCode, stdout, stderr) = await MainAsync("playfab", "title-data", "get");
+        var (exitCode, stdout, stderr) = await MainAsync(command);
 
         Assert.Equal(1, exitCode);
         Assert.Equal(
@@ -628,18 +849,21 @@ public sealed class ContextResolverTests : IDisposable
     }
 
     /// <summary>
-    /// Only the seller, PlayFab title and XBOX sandbox resolve, so nothing fills in
+    /// Only marked targeting options resolve, so nothing fills in
     /// <c>--confirm</c>, a request body, or any option that hasn't opted in.
     /// </summary>
     [Fact]
     public async Task OnlyMarkedOptionsResolve()
     {
         Assert.Equal(
-            ["--playfab-title-id", "--sandbox-id", "--seller-id"],
+            ["--playfab-title-id", "--sandbox-id", "--seller-id", "--title-id"],
             ContextResolver.FindAll(Program.BuildRootCommand()).Select(found => found.Option.Name).Distinct().Order());
         Assert.All(
             ContextResolver.FindAll(Program.BuildRootCommand()).Where(found => found.Option.Name == "--sandbox-id"),
-            found => Assert.Contains(found.Command.Parents.OfType<Command>(), parent => parent.Name == "publish" || parent.Name == "configuration"));
+            found => Assert.True(
+                found.Command.Name is "status" or "publish" &&
+                    found.Command.Parents.OfType<Command>().Any(parent => parent.Name == "config"),
+                found.Command.Name));
 
         Environment.SetEnvironmentVariable("XBOX_CONFIRM", "true");
         Environment.SetEnvironmentVariable("XBOX_YES", "true");
@@ -844,6 +1068,26 @@ public sealed class ContextResolverTests : IDisposable
         Assert.Equal("Using --playfab-title-id ABC12 from XBOX_PLAYFAB_TITLE_ID." + Environment.NewLine, stderr);
         Assert.Contains("--playfab-title-id", refused.Message, StringComparison.Ordinal);
         Assert.Equal(0, _identityReads);
+    }
+
+    /// <summary>A refused implicit target still reports the context key that supplied it.</summary>
+    [Fact]
+    public async Task RefusedImplicitTarget_StillRecordsItsContextKey()
+    {
+        Environment.SetEnvironmentVariable("XBOX_PLAYFAB_TITLE_ID", "ABC12");
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(
+                () => ResolveAsync("playfab", "api", "/Admin/DeleteTitle", "--confirm"));
+
+            Assert.Equal(["playfab-title-id"], recorded.ContextKeys);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
     }
 
     [Fact]

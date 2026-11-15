@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using System.Net;
@@ -55,7 +55,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_NoWaitPostsOnceAndPrintsTheJob()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running", retryAfterSeconds: 30));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running", retryAfterSeconds: 30));
 
         Invocation result = await InvokeAsync(
             CreateArgs("--confirm", "--no-wait", "--tag", " nightly ", "--subscription", "Silver", "--child-count", "0"),
@@ -92,7 +92,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_WaitsUntilTheJobSucceeds()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.Accepted, "running"),
             Job(HttpStatusCode.OK, "running", succeeded: 2),
             Job(HttpStatusCode.OK, "succeeded", succeeded: 5));
@@ -117,7 +117,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_FailedJobExitsTwoWithTheJobError()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.Accepted, "running"),
             Job(HttpStatusCode.OK, "failed", succeeded: 1, errorCode: "test_account_job_failed", errorMessage: "Creation\nstopped"));
 
@@ -133,7 +133,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_StillRunningAtTheTimeoutExitsFourWithTheResumeCommand()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.Accepted, "running"),
             Job(HttpStatusCode.OK, "running", succeeded: 1),
             Job(HttpStatusCode.OK, "running", succeeded: 1));
@@ -149,7 +149,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_PollFailureAfterAcceptanceExitsFourWithTheResumeCommand()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.Accepted, "running"),
             Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
 
@@ -168,7 +168,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_TableOutputShowsTheJobRow()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "succeeded", succeeded: 5));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "succeeded", succeeded: 5));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm", "--output", "table"), handler);
 
@@ -193,7 +193,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData(HttpStatusCode.PermanentRedirect, null)]
     public async Task Create_OutcomeUnknownExitsThreeWithRecoverySteps(HttpStatusCode statusCode, string? code)
     {
-        var handler = new ScriptedHandler(Problem(statusCode, code));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(statusCode, code));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -205,7 +205,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData("service_configuration_invalid")]
     public async Task Create_ServiceUnavailableExitsOne(string? code)
     {
-        var handler = new ScriptedHandler(Problem(HttpStatusCode.ServiceUnavailable, code));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(HttpStatusCode.ServiceUnavailable, code));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -218,7 +218,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_SignedOutSendsNothingAndExitsOne()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             CreateArgs("--confirm"),
@@ -243,7 +243,7 @@ public class TestAccountCreateCommandTests : IDisposable
                 cancellation.Cancel();
                 return "y";
             });
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(CreateArgs("--no-wait"), handler, cancellation.Token);
 
@@ -265,7 +265,7 @@ public class TestAccountCreateCommandTests : IDisposable
                 return Task.CompletedTask;
             },
         };
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler, cancellation.Token);
 
@@ -286,7 +286,7 @@ public class TestAccountCreateCommandTests : IDisposable
     public async Task Create_TokenFailureWhileWaitingExitsFour()
     {
         int tokens = 0;
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             CreateArgs("--confirm"),
@@ -307,10 +307,9 @@ public class TestAccountCreateCommandTests : IDisposable
     public async Task Create_ClientTimeoutWhilePollingReportsATimeout()
     {
         int reads = 0;
-        var handler = new ScriptedHandler(() => ++reads == 1
+        var handler = new RoutingHttpHandler(_ => ++reads == 1
             ? Job(HttpStatusCode.Accepted, "running")
             : throw new TaskCanceledException("timeout"));
-        handler.Repeat = true;
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -324,10 +323,9 @@ public class TestAccountCreateCommandTests : IDisposable
     public async Task Create_UnexpectedPollFailureReportsTheMessage()
     {
         int reads = 0;
-        var handler = new ScriptedHandler(() => ++reads == 1
+        var handler = new RoutingHttpHandler(_ => ++reads == 1
             ? Job(HttpStatusCode.Accepted, "running")
             : throw new InvalidOperationException("Handler exploded."));
-        handler.Repeat = true;
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -340,7 +338,7 @@ public class TestAccountCreateCommandTests : IDisposable
     public async Task Create_CtrlCAfterTheCreateWasSentIsAnUnknownOutcome()
     {
         using var cancellation = new CancellationTokenSource();
-        var handler = new ScriptedHandler(() =>
+        var handler = new XboxPartnerHttpMessageHandler(() =>
         {
             cancellation.Cancel();
             throw new OperationCanceledException(cancellation.Token);
@@ -355,7 +353,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_UnexpectedFailureAfterTheCreateWasSentIsAnUnknownOutcome()
     {
-        var handler = new ScriptedHandler(() => throw new InvalidOperationException("Handler exploded."));
+        var handler = new XboxPartnerHttpMessageHandler(() => throw new InvalidOperationException("Handler exploded."));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -371,7 +369,7 @@ public class TestAccountCreateCommandTests : IDisposable
     {
         HttpResponseMessage response = Problem(HttpStatusCode.TooManyRequests, "downstream_throttled");
         response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(30));
-        var handler = new ScriptedHandler(response);
+        var handler = new XboxPartnerHttpMessageHandler(response);
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -387,7 +385,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_RecoveryCommandQuotesAJobIdThatLooksLikeAPlaceholder()
     {
-        var handler = new ScriptedHandler(Respond(
+        var handler = new XboxPartnerHttpMessageHandler(Respond(
             HttpStatusCode.Accepted,
             """{"batchId":42,"jobId":"<job>\u001b[31m","state":"running","total":5,"succeeded":0,"failed":0}"""));
 
@@ -408,7 +406,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData("<batch-id>")]
     public async Task Create_RecoveryCommandQuotesAJobIdEqualToAPlaceholder(string jobId)
     {
-        var handler = new ScriptedHandler(Respond(
+        var handler = new XboxPartnerHttpMessageHandler(Respond(
             HttpStatusCode.Accepted,
             $$"""{"batchId":42,"jobId":"{{jobId}}","state":"running","total":5,"succeeded":0,"failed":0}"""));
 
@@ -426,7 +424,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_RecoveryCommandKeepsAnExplicitProfile()
     {
-        var handler = new ScriptedHandler(Respond(
+        var handler = new XboxPartnerHttpMessageHandler(Respond(
             HttpStatusCode.Accepted,
             """{"batchId":42,"jobId":"job-1","state":"running","total":5,"succeeded":0,"failed":0}"""));
 
@@ -442,7 +440,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_RecoveryCommandKeepsAProfileFromTheEnvironment()
     {
-        var handler = new ScriptedHandler(Respond(
+        var handler = new XboxPartnerHttpMessageHandler(Respond(
             HttpStatusCode.Accepted,
             """{"batchId":42,"jobId":"job-1","state":"running","total":5,"succeeded":0,"failed":0}"""));
         Environment.SetEnvironmentVariable(ContextProfiles.EnvironmentVariable, "work");
@@ -460,7 +458,7 @@ public class TestAccountCreateCommandTests : IDisposable
     public async Task Create_VerbosePollingCleansAHostileJobId()
     {
         const string HostileJob = """{"batchId":42,"jobId":"job\u001b[31m\nFORGED","state":"running","total":5,"succeeded":0,"failed":0}""";
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Respond(HttpStatusCode.Accepted, HostileJob),
             Respond(HttpStatusCode.OK, HostileJob.Replace("running", "succeeded", StringComparison.Ordinal)
                 .Replace("\"succeeded\":0", "\"succeeded\":5", StringComparison.Ordinal)));
@@ -478,7 +476,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_RecoveryCommandQuotesAJobIdSoTheShellCannotExpandIt()
     {
-        var handler = new ScriptedHandler(Respond(
+        var handler = new XboxPartnerHttpMessageHandler(Respond(
             HttpStatusCode.Accepted,
             """{"batchId":42,"jobId":"job$(Get-Date)'x\"y","state":"running","total":5,"succeeded":0,"failed":0}"""));
 
@@ -520,7 +518,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_VerboseOutputNeverContainsTheSecrets()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.Accepted, "running"),
             Job(HttpStatusCode.OK, "succeeded", succeeded: 5));
 
@@ -537,7 +535,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData(false)]
     public async Task Create_UnreadableSecretSourceFailsBeforeBuildingTheClient(bool missingFile)
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
         string[] secretArgs = missingFile
             ? ["--password-file", Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N")), "--security-answer-file", _answerFile]
             : ["--security-answer-file", _answerFile];
@@ -582,7 +580,7 @@ public class TestAccountCreateCommandTests : IDisposable
                 events.Add("confirm");
                 return answer;
             });
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -603,7 +601,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData(HttpRequestError.ConnectionError)]
     public async Task Create_DroppedConnectionIsAnUnknownOutcome(HttpRequestError error)
     {
-        var handler = new ScriptedHandler(() => throw new HttpRequestException(error, "The connection failed."));
+        var handler = new XboxPartnerHttpMessageHandler(() => throw new HttpRequestException(error, "The connection failed."));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -614,7 +612,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_ClientTimeoutIsAnUnknownOutcome()
     {
-        var handler = new ScriptedHandler(() => throw new TaskCanceledException("timeout"));
+        var handler = new XboxPartnerHttpMessageHandler(() => throw new TaskCanceledException("timeout"));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -625,7 +623,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_UnreadableAcceptedResponseIsAnUnknownOutcome()
     {
-        var handler = new ScriptedHandler(Respond(HttpStatusCode.Accepted, "{}"));
+        var handler = new XboxPartnerHttpMessageHandler(Respond(HttpStatusCode.Accepted, "{}"));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -636,7 +634,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_ConnectionThatNeverReachedTheServiceExitsOne()
     {
-        var handler = new ScriptedHandler(() => throw new HttpRequestException(
+        var handler = new XboxPartnerHttpMessageHandler(() => throw new HttpRequestException(
             HttpRequestError.NameResolutionError, "No such host is known."));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
@@ -651,22 +649,22 @@ public class TestAccountCreateCommandTests : IDisposable
     {
         var response = Problem(HttpStatusCode.BadRequest, "test_account_subscription_unavailable");
         response.Headers.Add("x-ms-correlation-id", "server-correlation");
-        var handler = new ScriptedHandler(response);
+        var handler = new XboxPartnerHttpMessageHandler(response);
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        Assert.Contains("x-ms-correlation-id: server-correlation", result.Stderr, StringComparison.Ordinal);
+        TestAccountCommandTests.AssertCorrelationIdWrittenOnce(result.Stderr, "server-correlation");
         Assert.Contains("\"code\": \"test_account_subscription_unavailable\"", result.Stderr, StringComparison.Ordinal);
-        Assert.Contains("some environments offer only Silver", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("Try another --subscription, such as Silver.", result.Stderr, StringComparison.Ordinal);
         Assert.Single(handler.Requests);
     }
 
     [Fact]
     public async Task Create_WithoutConfirmationOrTerminalSendsNothing()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(CreateArgs(), handler);
 
@@ -687,7 +685,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_SummaryShowsTheValuesGiven()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             CreateArgs(
@@ -711,7 +709,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Help_DescribesScopeSafetyAndOutput()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(["test-account", "batch", "create", "--help"], handler);
 
@@ -739,7 +737,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_SendsTheGivenSecurityQuestion()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             CreateArgs("--confirm", "--no-wait", "--security-question", " Favorite game? "),
@@ -755,7 +753,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData(" GOLD ", "Gold")]
     public async Task Create_SendsTheSubscriptionInTheServiceSpelling(string given, string expected)
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm", "--no-wait", "--subscription", given), handler);
 
@@ -774,7 +772,7 @@ public class TestAccountCreateCommandTests : IDisposable
             "securityQuestion", "securityAnswer", "sandboxes", "alternateEmail", "accessExpirationDate",
             "keywords", "locale", "subscription",
         ];
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             CreateArgs(
@@ -792,7 +790,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task Create_ValidationProblemShowsTheFieldErrorsAndExitsOne()
     {
-        var handler = new ScriptedHandler(Respond(
+        var handler = new XboxPartnerHttpMessageHandler(Respond(
             HttpStatusCode.BadRequest,
             """{"type":"https://tools.ietf.org/html/rfc9110#section-15.5.1","title":"One or more validation errors occurred.","status":400,"errors":{"$.subscriptions":["The JSON property 'subscriptions' could not be mapped to any .NET member contained in type 'CreateTestAccountsRequest'."]}}"""));
 
@@ -813,7 +811,7 @@ public class TestAccountCreateCommandTests : IDisposable
     {
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
             interactive: true, confirmation: () => answer);
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(CreateArgs("--no-wait", "--child-count", "2"), handler);
 
@@ -851,7 +849,7 @@ public class TestAccountCreateCommandTests : IDisposable
                 confirmed = true;
                 return "yes";
             });
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -887,7 +885,7 @@ public class TestAccountCreateCommandTests : IDisposable
             interactive: interactive,
             masked: _ => Answer,
             confirmation: () => throw new InvalidOperationException("Unexpected picker."));
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -938,7 +936,7 @@ public class TestAccountCreateCommandTests : IDisposable
 
                 return null;
             });
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -963,7 +961,7 @@ public class TestAccountCreateCommandTests : IDisposable
             HttpStatusCode.BadRequest,
             $$"""{"status":400,"title":"Failed","detail":"{{TestAccountSecretReader.PasswordRequirements}}","code":"test_account_password_invalid"}""");
         response.Headers.Add("x-ms-correlation-id", "server-correlation");
-        var handler = new ScriptedHandler(response);
+        var handler = new XboxPartnerHttpMessageHandler(response);
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm"), handler);
 
@@ -978,14 +976,14 @@ public class TestAccountCreateCommandTests : IDisposable
             TestAccountSecretReader.PasswordRequirements,
             problem.RootElement.GetProperty("detail").GetString(),
             StringComparison.Ordinal);
-        Assert.Contains("x-ms-correlation-id: server-correlation", result.Stderr, StringComparison.Ordinal);
+        TestAccountCommandTests.AssertCorrelationIdWrittenOnce(result.Stderr, "server-correlation");
         AssertNoSecrets(result);
     }
 
     [Fact]
     public async Task Create_HelpExplainsPasswordRequirementsWithoutReadingSecrets()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(["test-account", "batch", "create", "--help"], handler);
 
@@ -1011,7 +1009,7 @@ public class TestAccountCreateCommandTests : IDisposable
                 return secrets.Dequeue();
             },
             confirmation: () => string.Empty);
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -1045,7 +1043,7 @@ public class TestAccountCreateCommandTests : IDisposable
             var response = Respond(
                 HttpStatusCode.BadRequest,
                 $$"""{"status":400,"title":"Failed","detail":"{{TestAccountSecretReader.PasswordRequirements}}","code":"test_account_password_invalid"}""");
-            var handler = new ScriptedHandler(response);
+            var handler = new XboxPartnerHttpMessageHandler(response);
             string[] args = CreateArgs("--confirm", "--no-wait");
             args[Array.IndexOf(args, "--password-file") + 1] = source;
 
@@ -1070,7 +1068,7 @@ public class TestAccountCreateCommandTests : IDisposable
         File.WriteAllText(_passwordFile, string.Empty);
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(
             interactive: source == "prompt", masked: _ => string.Empty);
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -1092,7 +1090,7 @@ public class TestAccountCreateCommandTests : IDisposable
         const string answer = "Abcdef12";
         File.WriteAllText(_passwordFile, "Abcdef12");
         File.WriteAllText(_answerFile, answer);
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(CreateArgs("--confirm", "--no-wait"), handler);
 
@@ -1110,7 +1108,7 @@ public class TestAccountCreateCommandTests : IDisposable
     public async Task Create_ReadsThePasswordFromStandardInput()
     {
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(stdin: Password + "\n");
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -1130,7 +1128,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData("--sandbox-id", "ABCD.2")]
     public async Task Create_ARepeatedOptionWithoutAValueFailsBeforeAnyRequest(string option, string value)
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
         string[] args =
         [
             "test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -1157,7 +1155,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData(new[] { "--password-file", "-", "--security-answer-file", "-" }, "cannot both read stdin")]
     public async Task Create_InvalidOptionsFailBeforeAnyRequest(string[] options, string expected)
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.Accepted, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.Accepted, "running"));
         string[] args =
         [
             "test-account", "batch", "create", "--seller-id", "1234567", "--email-prefix", "ABCD-tester",
@@ -1174,7 +1172,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobGet_RunningJobExitsZeroWithRetryHint()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.OK, "running", retryAfterSeconds: 120));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.OK, "running", retryAfterSeconds: 120));
 
         Invocation result = await InvokeAsync(
             ["test-account", "job", "get", "job-1", "--batch-id", "42", "--seller-id", "1234567"], handler);
@@ -1190,7 +1188,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobGet_FailedJobExitsTwo()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.OK, "failed", errorCode: "test_account_job_failed"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.OK, "failed", errorCode: "test_account_job_failed"));
 
         Invocation result = await InvokeAsync(["test-account", "job", "get", "job-1", "--batch-id", "42", "--seller-id", "1234567"], handler);
 
@@ -1201,19 +1199,19 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobGet_AccessDeniedExplainsOwnership()
     {
-        var handler = new ScriptedHandler(Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
 
         Invocation result = await InvokeAsync(["test-account", "job", "get", "job-1", "--batch-id", "42", "--seller-id", "1234567"], handler);
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        Assert.Contains("Another developer or another seller owns this job", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains("Check --batch-id and --seller-id", result.Stderr, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task JobGet_TableOutputSendsProgressAndErrorNotesToStderr()
     {
-        var handler = new ScriptedHandler(Job(
+        var handler = new XboxPartnerHttpMessageHandler(Job(
             HttpStatusCode.OK,
             "failed",
             succeeded: 1,
@@ -1237,7 +1235,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData("--batch-id", "abc")]
     public async Task JobGet_InvalidBatchIdFailsBeforeAnyRequest(string name, string value)
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.OK, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.OK, "running"));
 
         Invocation result = await InvokeAsync(["test-account", "job", "get", "job-1", "--seller-id", "1234567", name, value], handler);
 
@@ -1248,7 +1246,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobWait_PollsUntilSucceededWithTable()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.OK, "running"),
             Job(HttpStatusCode.OK, "succeeded", succeeded: 5));
 
@@ -1264,7 +1262,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobWait_StoppedJobReturnsWithoutPolling()
     {
-        var handler = new ScriptedHandler(Job(HttpStatusCode.OK, "failed"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.OK, "failed"));
 
         Invocation result = await InvokeAsync(["test-account", "job", "wait", "job-1", "--batch-id", "42", "--seller-id", "1234567"], handler);
 
@@ -1276,7 +1274,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobWait_ReadFailureWhileWaitingExitsFour()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.OK, "running"),
             Problem(HttpStatusCode.ServiceUnavailable, "feature_disabled"));
 
@@ -1303,7 +1301,7 @@ public class TestAccountCreateCommandTests : IDisposable
                 return Task.CompletedTask;
             },
         };
-        var handler = new ScriptedHandler(Job(HttpStatusCode.OK, "running"));
+        var handler = new XboxPartnerHttpMessageHandler(Job(HttpStatusCode.OK, "running"));
 
         Invocation result = await InvokeAsync(
             ["test-account", "job", "wait", "job-1", "--batch-id", "42", "--seller-id", "1234567"],
@@ -1319,7 +1317,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobWait_StillRunningAtTheTimeoutExitsFour()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Job(HttpStatusCode.OK, "running"),
             Job(HttpStatusCode.OK, "running", succeeded: 2),
             Job(HttpStatusCode.OK, "running", succeeded: 2));
@@ -1336,7 +1334,7 @@ public class TestAccountCreateCommandTests : IDisposable
     [Fact]
     public async Task JobWait_InitialReadFailureExitsOne()
     {
-        var handler = new ScriptedHandler(Respond(HttpStatusCode.OK, "not json"));
+        var handler = new XboxPartnerHttpMessageHandler(Respond(HttpStatusCode.OK, "not json"));
 
         Invocation result = await InvokeAsync(["test-account", "job", "wait", "job-1", "--batch-id", "42", "--seller-id", "1234567"], handler);
 
@@ -1364,6 +1362,8 @@ public class TestAccountCreateCommandTests : IDisposable
     [InlineData("downstream_request_rejected", HttpStatusCode.BadRequest, true, "sandbox groups")]
     [InlineData("downstream_request_rejected", HttpStatusCode.BadGateway, false, null)]
     [InlineData("downstream_request_rejected", HttpStatusCode.NotFound, false, "No such job")]
+    [InlineData("test_account_job_not_in_batch", HttpStatusCode.NotFound, false, "Check the job ID and --batch-id")]
+    [InlineData("test_account_batch_not_found", HttpStatusCode.NotFound, false, "Check --batch-id and --seller-id")]
     [InlineData("downstream_throttled", HttpStatusCode.ServiceUnavailable, false, "throttling")]
     [InlineData("rate_limited", HttpStatusCode.TooManyRequests, true, "too many requests")]
     [InlineData("downstream_service_failed", HttpStatusCode.BadGateway, true, null)]
@@ -1443,7 +1443,7 @@ public class TestAccountCreateCommandTests : IDisposable
         .. extra,
     ];
 
-    private static void AssertOutcomeUnknown(Invocation result, ScriptedHandler handler)
+    private static void AssertOutcomeUnknown(Invocation result, XboxPartnerHttpMessageHandler handler)
     {
         Assert.Equal(TestAccountCommandFactory.OutcomeUnknownExitCode, result.ExitCode);
         Assert.Single(handler.Requests);
@@ -1556,44 +1556,4 @@ public class TestAccountCreateCommandTests : IDisposable
     private sealed record Invocation(int ExitCode, string Stdout, string Stderr);
 
     private static int s_clientsBuilt;
-
-    /// <summary>Returns scripted responses in order, or throws, and records every request.</summary>
-    private sealed class ScriptedHandler : HttpMessageHandler
-    {
-        private readonly Queue<Func<HttpResponseMessage>> _responses;
-
-        public ScriptedHandler(params HttpResponseMessage[] responses)
-        {
-            _responses = new Queue<Func<HttpResponseMessage>>(responses.Select(response => (Func<HttpResponseMessage>)(() => response)));
-        }
-
-        public ScriptedHandler(Func<HttpResponseMessage> response)
-        {
-            _responses = new Queue<Func<HttpResponseMessage>>([response]);
-        }
-
-        public List<CapturedHttpRequest> Requests { get; } = [];
-
-        /// <summary>When true, the single scripted response answers every request.</summary>
-        public bool Repeat { get; set; }
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            string? body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new CapturedHttpRequest(
-                request.Method,
-                request.RequestUri,
-                body,
-                request.Content?.Headers.ContentType?.MediaType,
-                request.Headers.ToDictionary(header => header.Key, header => header.Value.ToArray(), StringComparer.OrdinalIgnoreCase)));
-            if (_responses.Count == 0)
-            {
-                throw new InvalidOperationException("No scripted response remains for this request.");
-            }
-
-            return Repeat ? _responses.Peek()() : _responses.Dequeue()();
-        }
-    }
 }

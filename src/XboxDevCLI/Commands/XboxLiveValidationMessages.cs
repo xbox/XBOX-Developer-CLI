@@ -6,7 +6,7 @@ using XboxDevCLI.Output;
 
 namespace XboxDevCLI.Commands;
 
-/// <summary>One XBOX services validation message from XCon or XORC.</summary>
+/// <summary>One XBOX services validation message.</summary>
 internal sealed record XboxLiveValidationMessage(
     string? Severity,
     string? DocumentName,
@@ -18,12 +18,12 @@ internal sealed record XboxLiveValidationMessage(
 }
 
 /// <summary>
-/// Reads and writes the XBOX services validation messages that explain why XCon or XORC refused
+/// Reads and writes the XBOX services validation messages that explain why XBOX services refused
 /// configuration documents: a commit's <c>ValidationInfo</c> and the gateway's <c>validation</c>.
 /// </summary>
 internal static class XboxLiveValidationMessages
 {
-    /// <summary>XCon's warning that the documents match the latest ones, so there's nothing to commit.</summary>
+    /// <summary>The warning that the documents match the latest ones, so there's nothing to commit.</summary>
     internal const string FilesNotChangedCommit = "FilesNotChangedCommit";
 
     /// <summary>
@@ -55,8 +55,8 @@ internal static class XboxLiveValidationMessages
     }
 
     /// <summary>
-    /// Whether a commit result says only that the documents match the latest ones: XCon then
-    /// reports nothing committed or committable, with no error.
+    /// Whether a commit result says only that the documents match the latest ones: XBOX
+    /// services then report nothing committed or committable, with no error.
     /// </summary>
     public static bool IsUnchanged(IReadOnlyList<XboxLiveValidationMessage> messages) =>
         messages.Any(static message => string.Equals(

@@ -8,7 +8,9 @@ using System.Net;
 using System.Text.Json.Nodes;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
+using XboxDevCLI.Presentation;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -272,14 +274,12 @@ internal static partial class TestAccountCommandFactory
         }
         catch (XboxPartnerApiException exception) when (IsOutcomeUnknown(exception))
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(exception.CorrelationId, stderr);
             stderr.WriteLine(FormatError(exception, output.IsCompact));
             WriteUpdateOutcomeUnknown(id, getBatch, stderr);
             return OutcomeUnknownExitCode;
         }
         catch (XboxPartnerApiException exception)
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(exception.CorrelationId, stderr);
             stderr.WriteLine(FormatError(
                 exception,
                 output.IsCompact,
@@ -343,20 +343,21 @@ internal static partial class TestAccountCommandFactory
         stderr.WriteLine($"Waiting up to {FormatDuration(timeout)} for batch {id} to be updated...");
         try
         {
-            TestAccountBatchUpdateWait wait = await TestAccountBatchUpdateWaiter.WaitAsync(
+            TestAccountBatchWait wait = await TestAccountBatchWaiter.WaitAsync(
                 accepted.RetryAfter,
                 token =>
                 {
                     Program.WriteVerbose(verbose, () => $"Reading test account batch {id}");
                     return client.GetTestAccountBatchAsync(sellerId, batchId, token);
                 },
+                deleting: false,
                 timeout,
                 dependencies.DelayAsync,
                 dependencies.GetUtcNow,
                 cancellationToken).ConfigureAwait(false);
-            if (wait.Outcome == TestAccountBatchUpdateOutcome.Finished && wait.LastBatch is { } batch)
+            if (wait.Outcome == TestAccountBatchWaitOutcome.JobEnded && wait.LastBatch is { } batch)
             {
-                IReadOnlyList<string> mismatches = TestAccountBatchUpdateWaiter.FindMismatches(request, update, batch);
+                IReadOnlyList<string> mismatches = TestAccountBatchWaiter.FindMismatches(request, update, batch);
                 if (mismatches.Count > 0)
                 {
                     stderr.WriteLine(
@@ -416,6 +417,7 @@ internal static partial class TestAccountCommandFactory
             stderr.WriteLine($"This changes test account batch {id} for {seller}:");
             WriteRequestedChanges(request, current: null, stderr);
             stderr.WriteLine("Run again with --confirm (--yes, -y) to proceed without an interactive prompt.");
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
             return false;
         }
 
@@ -423,7 +425,7 @@ internal static partial class TestAccountCommandFactory
         try
         {
             string body = await client.GetTestAccountBatchAsync(sellerId, batchId, cancellationToken).ConfigureAwait(false);
-            batch = TestAccountBatchDeletionWaiter.ReadBatch(body);
+            batch = TestAccountBatchWaiter.ReadBatch(body);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -447,8 +449,7 @@ internal static partial class TestAccountCommandFactory
                 $"  A job is running on this batch ({Clean(batch.JobId)}); the service refuses the update until it stops.");
         }
 
-        stderr.Write("Update this batch? [y/N]: ");
-        stderr.Flush();
+        ConfirmationPrompt.Write(stderr, "Update this batch? [y/N]: ");
         string? answer = dependencies.ReadConfirmation()?.Trim();
         if (string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
@@ -457,6 +458,7 @@ internal static partial class TestAccountCommandFactory
         }
 
         stderr.WriteLine("Test account batch update canceled.");
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
         return false;
     }
 
@@ -578,7 +580,7 @@ internal static partial class TestAccountCommandFactory
                 "Your XBOX developer token does not grant access to a sandbox in the change. Extending the " +
                 "expiry needs access to every sandbox on the batch. Check the sandbox IDs and your access.",
             "test_account_keyword_invalid" => "Check the --tag values.",
-            TestAccountBatchDeletionWaiter.BatchNotFoundCode =>
+            TestAccountBatchWaiter.BatchNotFoundCode =>
                 "No such batch for this seller. Check the batch ID and --seller-id.",
             AccessDeniedCode =>
                 "Your account lacks the Partner Center role to manage test accounts for this seller, or the " +

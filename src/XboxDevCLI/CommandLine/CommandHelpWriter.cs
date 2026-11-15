@@ -94,7 +94,7 @@ internal static class CommandHelpWriter
         int width,
         bool useAnsi)
     {
-        WriteRootDescription(writer, rootCommand.Description, width, useAnsi);
+        WriteRootDescription(writer, rootCommand.Description, width);
         writer.WriteLine();
 
         WriteTextSection(writer, "GET STARTED", useAnsi, $"$ {cliName} auth login");
@@ -212,8 +212,11 @@ internal static class CommandHelpWriter
             writer,
             "LEARN MORE",
             useAnsi,
-            $"Use `{commandPath} <command> --help` for more information about a command.",
-            $"Read the documentation at {ProjectLinks.Documentation}");
+            [
+                $"Use `{commandPath} <command> --help` for more information about a command.",
+                .. CommandMetadataRegistry.GetMetadata(command).LearnMore ?? [],
+                $"Read the documentation at {ProjectLinks.Documentation}",
+            ]);
     }
 
     private static void WriteLeafHelp(
@@ -653,7 +656,16 @@ internal static class CommandHelpWriter
 
     /// <summary>What Help says about a command that returns one page per call.</summary>
     private static string DescribePaging(CommandPaging paging) =>
-        $"Returns one page of results, not necessarily all of them. When more exist, the " +
+        paging.TokenOption is { } tokenOption
+            ? $"Returns one page of results, not necessarily all of them. When more exist, the " +
+              $"response's {paging.Token} is set: to get the next page, run the command again with " +
+              $"the same options and {tokenOption} set to that value, and repeat until " +
+              $"{paging.Token} is null. " +
+              (paging.PageSizeOption is { } pageSizeOption
+                  ? $"{pageSizeOption} sets how many results a page holds. "
+                  : string.Empty) +
+              "With --output table, a notice on stderr gives the token."
+            : $"Returns one page of results, not necessarily all of them. When more exist, the " +
         $"response's {paging.Token} is set: to get the next page, add \"{paging.Token}\" with " +
         $"that value to the request body, keeping its other fields, and repeat until " +
         $"{paging.Token} is null. Set \"{paging.PageSize}\" in the request body to change how " +
@@ -691,18 +703,15 @@ internal static class CommandHelpWriter
     private static void WriteRootDescription(
         TextWriter writer,
         string? description,
-        int width,
-        bool useAnsi)
+        int width)
     {
-        var value = description ?? string.Empty;
-        var lines = Wrap(value, width).ToArray();
+        var lines = Wrap(description ?? string.Empty, width).ToArray();
         foreach (var (line, index) in lines.Select((line, index) => (line, index)))
         {
             if (index == 0 &&
-                useAnsi &&
                 line.StartsWith(CliIdentity.DisplayName, StringComparison.Ordinal))
             {
-                writer.Write(WelcomeExperience.ColorizeBrand("XBOX", useColor: true));
+                writer.Write("XBOX" + WelcomeExperience.RegisteredMark(writer));
                 writer.WriteLine(line["XBOX".Length..]);
             }
             else

@@ -8,7 +8,8 @@
     "BaseUrlTemplate": "https://xboxdevcli.playfabapi.com",
     "MaxRequestBodyBytes": 1048576,
     "MaxResponseBytes": 4194304,
-    "HostHeader": "{titleId}.playfabapi.com"
+    "HostHeader": "{titleId}.playfabapi.com",
+    "StudioBaseUrl": "https://xboxdevcli.playfabapi.com"
   },
   "AuditLog": {
     "Enabled": false
@@ -17,8 +18,6 @@
     "BaseUrl": "https://p-xbsvc.xboxpartner.mainp.azureplayfab.com"
   },
   "Telemetry": {
-    "Enabled": true,
-    "DependencyTracingEnabled": true,
-    "DependencyTraceSamplingRatio": 0.1
+    "Enabled": true
   }
 }

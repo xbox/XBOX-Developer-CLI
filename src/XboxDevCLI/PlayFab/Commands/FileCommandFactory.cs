@@ -8,6 +8,8 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using XboxDevCLI.PlayFab.Generated.Data;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
+using static XboxDevCLI.PlayFab.Commands.PlayFabCommandHelper;
 
 namespace XboxDevCLI.PlayFab.Commands;
 
@@ -29,11 +31,6 @@ internal static class FileCommandFactory
     {
         WriteIndented = true,
         Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-    };
-
-    private static readonly JsonSerializerOptions RequestOptions = new()
-    {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
     };
 
@@ -103,25 +100,14 @@ internal static class FileCommandFactory
             entityTypeOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var entityId = parseResult.GetValue(entityIdOption)!;
-            var entityType = parseResult.GetValue(entityTypeOption)!;
-            var output = Output.OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunListAsync(
-                    client, entityId, entityType, output, Console.Out, Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunListAsync(
+                    client,
+                    parseResult.GetValue(entityIdOption)!,
+                    parseResult.GetValue(entityTypeOption)!,
+                    output, stdout, stderr,
+                    cancellationToken)));
 
         // File metadata is keyed by file name rather than returned as an array; the renderer
         // enumerates the values of a keyed collection, so a view describes it the same way.
@@ -172,11 +158,6 @@ internal static class FileCommandFactory
             stderr.WriteLine(Program.FormatErrorOutput(ex, output.IsCompact));
             return 1;
         }
-        catch (Exception ex)
-        {
-            stderr.WriteLine($"Request failed: {ex.Message}");
-            return 1;
-        }
     }
 
     private static Command CreateDownloadCommand()
@@ -220,9 +201,9 @@ internal static class FileCommandFactory
                     BuildListCommandSuggestion(parseResult, entityId, entityType),
                     output.Format, Console.Error, cancellationToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (CommandErrorBoundary.IsExpected(ex))
             {
-                Console.Error.WriteLine($"Download failed: {ex.Message}");
+                Console.Error.WriteLine($"Download failed: {TerminalText.Message(ex.Message)}");
                 return 1;
             }
         });
@@ -326,6 +307,7 @@ internal static class FileCommandFactory
 
             // Download the file
             using var downloadResponse = await blobClient.GetAsync(downloadUrl, cancellationToken);
+            TelemetryRecorder.RecordResponseStatus((int)downloadResponse.StatusCode);
             if (!downloadResponse.IsSuccessStatusCode)
             {
                 stderr.WriteLine($"Error: Download failed with HTTP {(int)downloadResponse.StatusCode}.");
@@ -354,8 +336,10 @@ internal static class FileCommandFactory
             stderr.WriteLine(Program.FormatErrorOutput(ex, compact));
             return 1;
         }
-        catch (Exception ex)
+        catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
+            // The transfer timed out. Ctrl-C isn't caught, so it stops the command quietly.
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
             stderr.WriteLine($"Download failed: {ex.Message}");
             return 1;
         }
@@ -511,9 +495,9 @@ internal static class FileCommandFactory
                     output.Format, BuildRecoveryCommandPrefix(parseResult),
                     Console.Error, cancellationToken);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (CommandErrorBoundary.IsExpected(ex))
             {
-                Console.Error.WriteLine($"Upload failed: {ex.Message}");
+                Console.Error.WriteLine($"Upload failed: {TerminalText.Message(ex.Message)}");
                 return 1;
             }
         });
@@ -621,11 +605,6 @@ internal static class FileCommandFactory
 
             return 1;
         }
-        catch (Exception ex)
-        {
-            stderr.WriteLine($"Upload failed: {ex.Message}");
-            return 1;
-        }
 
         var pending = new PendingUpload(
             client, entity, fileName, initiateResponse.ProfileVersion, recoveryCommandPrefix, stderr);
@@ -673,6 +652,7 @@ internal static class FileCommandFactory
             putContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
 
             using var putResponse = await blobClient.PutAsync(uploadUrl, putContent, cancellationToken);
+            TelemetryRecorder.RecordResponseStatus((int)putResponse.StatusCode);
             if (!putResponse.IsSuccessStatusCode)
             {
                 var errorBody = await putResponse.Content.ReadAsStringAsync(cancellationToken);
@@ -682,6 +662,15 @@ internal static class FileCommandFactory
         }
         catch (Exception ex)
         {
+            if (ex is OperationCanceledException && !cancellationToken.IsCancellationRequested)
+            {
+                TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
+            }
+            else
+            {
+                TelemetryRecorder.RecordError(ex);
+            }
+
             stderr.WriteLine(ex switch
             {
                 OperationCanceledException when cancellationToken.IsCancellationRequested => "Upload canceled.",
@@ -863,11 +852,6 @@ internal static class FileCommandFactory
 
         command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
         {
-            var entityId = parseResult.GetValue(entityIdOption)!;
-            var entityType = parseResult.GetValue(entityTypeOption)!;
-            var names = parseResult.GetValue(namesArgument)!;
-            var output = Output.OutputOptions.From(parseResult);
-
             // /File/DeleteFiles is a destructive operation. Resolve confirmation
             // (via --confirm or an interactive prompt) before calling, then pass
             // confirmedDestructive so the client's fail-closed guard allows it.
@@ -878,19 +862,15 @@ internal static class FileCommandFactory
                 return 1;
             }
 
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunDeleteAsync(
-                    client, entityId, entityType, names, confirmedDestructive,
-                    output.Format, Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
+            return await WithClientAsync(parseResult, cancellationToken, (client, output, _, stderr, cancellationToken) =>
+                RunDeleteAsync(
+                    client,
+                    parseResult.GetValue(entityIdOption)!,
+                    parseResult.GetValue(entityTypeOption)!,
+                    parseResult.GetValue(namesArgument)!,
+                    confirmedDestructive,
+                    output.Format, stderr,
+                    cancellationToken));
         });
 
         return command.WithMetadata(new CommandMetadata(
@@ -937,11 +917,6 @@ internal static class FileCommandFactory
         {
             var compact = outputFormat.Equals("json-compact", StringComparison.OrdinalIgnoreCase);
             stderr.WriteLine(Program.FormatErrorOutput(ex, compact));
-            return 1;
-        }
-        catch (Exception ex)
-        {
-            stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
     }

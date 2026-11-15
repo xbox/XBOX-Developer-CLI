@@ -9,6 +9,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using XboxDevCLI.PlayFab.Generated.Admin;
 using XboxDevCLI.Services;
+using static XboxDevCLI.PlayFab.Commands.PlayFabCommandHelper;
 
 namespace XboxDevCLI.PlayFab.Commands;
 
@@ -36,11 +37,6 @@ internal static class TitleDataCommandFactory
 
     private const string TierLearnMore =
         "--internal selects the server-only internal tier; omit it for the client-readable tier.";
-
-    private static readonly JsonSerializerOptions RequestOptions = new()
-    {
-        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    };
 
     private static readonly JsonSerializerOptions RequestOptionsIncludingNulls = new()
     {
@@ -122,11 +118,6 @@ internal static class TitleDataCommandFactory
         {
             Description = "Comma-separated title data keys to retrieve. Omit to fetch all keys.",
         };
-        var valueOnlyOption = new Option<bool>("--value-only")
-        {
-            Description = "Deprecated alias for the single-key bare-value default. Does not change " +
-                "output and does not override -o/--output or --data-only.",
-        };
 
         var command = new Command("get", "Get title data values")
         {
@@ -134,40 +125,22 @@ internal static class TitleDataCommandFactory
             internalOption,
             keyOption,
             keysOption,
-            valueOnlyOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var output = OutputOptions.From(parseResult);
-
-            // A single key prints its bare value by default. An explicit -o/--output request
-            // returns the PlayFab envelope; --data-only returns the unwrapped data payload.
-            // Either is structured JSON and wins over the bare-value default.
-            var explicitStructuredOutput = RequestsExplicitStructuredOutput(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunGetAsync(
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunGetAsync(
                     client,
                     parseResult.GetValue(internalOption),
                     parseResult.GetValue(keyArgument),
                     parseResult.GetValue(keyOption),
                     parseResult.GetValue(keysOption),
-                    parseResult.GetValue(valueOnlyOption),
-                    explicitStructuredOutput,
-                    output,
-                    Console.Out,
-                    Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+                    // A single key prints its bare value by default. An explicit -o/--output request
+                    // returns the PlayFab envelope; --data-only returns the unwrapped data payload.
+                    // Either is structured JSON and wins over the bare-value default.
+                    RequestsExplicitStructuredOutput(parseResult),
+                    output, stdout, stderr,
+                    cancellationToken)));
 
         return command.WithMetadata(new CommandMetadata(
             ApiPaths: GetPaths,
@@ -180,7 +153,6 @@ internal static class TitleDataCommandFactory
         string? positionalKey,
         string? key,
         string? keysCsv,
-        bool valueOnly,
         bool explicitStructuredOutput,
         OutputOptions output,
         TextWriter stdout,
@@ -210,21 +182,6 @@ internal static class TitleDataCommandFactory
             return 1;
         }
 
-        if (valueOnly)
-        {
-            stderr.WriteLine(
-                "Warning: --value-only is deprecated; omit it because single-key gets already print the bare value.");
-
-            // --value-only does not select an output shape. It is a deprecated alias for the
-            // single-key bare-value default, so it must not override -o/--output or --data-only.
-            // A stray flag without a single key remains an error.
-            if (string.IsNullOrWhiteSpace(singleKey))
-            {
-                stderr.WriteLine("--value-only requires a single key.");
-                return 1;
-            }
-        }
-
         var keys = !string.IsNullOrWhiteSpace(singleKey)
             ? new List<string> { singleKey.Trim() }
             : ParseCsv(keysCsv);
@@ -234,10 +191,6 @@ internal static class TitleDataCommandFactory
             stderr.WriteLine("--keys must contain at least one key.");
             return 1;
         }
-
-        // valueOnly is intentionally not an input here. A single key is bare unless the caller
-        // asked for structured JSON; the deprecated flag must not force the bare value back.
-        var emitValueOnly = !string.IsNullOrWhiteSpace(singleKey) && !explicitStructuredOutput;
 
         var (apiPath, request) = BuildGetCall(internalTier, keys);
         var jsonBody = JsonSerializer.Serialize(request, RequestOptions);
@@ -255,7 +208,7 @@ internal static class TitleDataCommandFactory
                     return 1;
                 }
 
-                if (emitValueOnly)
+                if (!explicitStructuredOutput)
                 {
                     stdout.WriteLine(value);
                     return 0;
@@ -268,11 +221,6 @@ internal static class TitleDataCommandFactory
         catch (PlayFabApiException ex)
         {
             stderr.WriteLine(Program.FormatErrorOutput(ex, compact));
-            return 1;
-        }
-        catch (Exception ex)
-        {
-            stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
     }
@@ -301,30 +249,16 @@ internal static class TitleDataCommandFactory
             dataOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunSetAsync(
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunSetAsync(
                     client,
                     parseResult.GetValue(internalOption),
                     parseResult.GetValue(keyOption),
                     parseResult.GetValue(valueOption),
                     parseResult.GetValue(dataOption),
-                    output,
-                    Console.Out,
-                    Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+                    output, stdout, stderr,
+                    cancellationToken)));
 
         return command.WithMetadata(new CommandMetadata(
             ApiPaths: SetPaths,
@@ -407,28 +341,14 @@ internal static class TitleDataCommandFactory
             keysOption,
         };
 
-        command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
-        {
-            var output = OutputOptions.From(parseResult);
-
-            try
-            {
-                using var client = PlayFabCommandHelper.CreateClient(parseResult);
-                return await RunDeleteAsync(
+        command.SetAction((ParseResult parseResult, CancellationToken cancellationToken) =>
+            WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+                RunDeleteAsync(
                     client,
                     parseResult.GetValue(internalOption),
                     parseResult.GetValue(keysOption)!,
-                    output,
-                    Console.Out,
-                    Console.Error,
-                    cancellationToken);
-            }
-            catch (Exception ex)
-            {
-                Console.Error.WriteLine($"Request failed: {ex.Message}");
-                return 1;
-            }
-        });
+                    output, stdout, stderr,
+                    cancellationToken)));
 
         return command.WithMetadata(new CommandMetadata(
             ApiPaths: SetPaths,
@@ -593,16 +513,6 @@ internal static class TitleDataCommandFactory
 
         stdout.WriteLine(FormatMutationSummary(applied, failedKey: null, exception: null, compact, output.DataOnly));
         return 0;
-    }
-
-    private static List<string>? ParseCsv(string? csv)
-    {
-        if (csv is null)
-        {
-            return null;
-        }
-
-        return csv.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).ToList();
     }
 
     private static string FormatMutationSummary(

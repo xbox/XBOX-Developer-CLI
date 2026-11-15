@@ -33,7 +33,7 @@ public class HelpCommandTests
 
     [Theory]
     [InlineData("playfab mps asset upload", "--file-path")]
-    [InlineData("xbl document commit", "--files")]
+    [InlineData("xbl config save", "--files")]
     public async Task LocalFileInputHelp_UsesCanonicalFileOption(string path, string oldOption)
     {
         string[] segments = path.Split(' ');
@@ -47,7 +47,7 @@ public class HelpCommandTests
         Assert.Equal(flag.Stdout, command.Stdout);
         Assert.Contains("--file ", flag.Stdout, StringComparison.Ordinal);
         Assert.DoesNotContain(oldOption, flag.Stdout, StringComparison.Ordinal);
-        if (path == "xbl document commit")
+        if (path == "xbl config save")
         {
             Assert.Contains("Repeat --file", NormalizeWhitespace(flag.Stdout), StringComparison.Ordinal);
         }
@@ -110,7 +110,7 @@ public class HelpCommandTests
             rootWriter.ToString(),
             StringComparison.Ordinal);
         Assert.StartsWith(
-            $"\u001b[1;38;2;139;240;0mXBOX\u001b[0m CLI: {CliIdentity.Tagline}",
+            $"XBOX® CLI: {CliIdentity.Tagline}",
             rootWriter.ToString(),
             StringComparison.Ordinal);
         Assert.Contains(
@@ -134,7 +134,7 @@ public class HelpCommandTests
 
         Assert.Equal(0, result.ExitCode);
         Assert.StartsWith(
-            $"{CliIdentity.DisplayName}: {CliIdentity.Tagline}",
+            $"XBOX® CLI: {CliIdentity.Tagline}",
             result.Stdout,
             StringComparison.Ordinal);
         Assert.Contains("GET STARTED", result.Stdout, StringComparison.Ordinal);
@@ -221,6 +221,18 @@ public class HelpCommandTests
         Assert.Equal(
             expectedDescriptionColumn,
             help.IndexOf("Show help", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task GroupHelp_ShowsTheGroupsLearnMoreLines()
+    {
+        var result = await InvokeAsync(["help", "package"]);
+
+        var learnMore = result.Stdout[result.Stdout.IndexOf("LEARN MORE", StringComparison.Ordinal)..];
+        var lines = learnMore.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("  Use `xbox package <command> --help` for more information about a command.", lines[1]);
+        Assert.Equal($"  {XboxDevCLI.Commands.PackageCommandFactory.UploadLearnMore}", lines[2]);
+        Assert.StartsWith("  Read the documentation at ", lines[3], StringComparison.Ordinal);
     }
 
     [Fact]
@@ -417,14 +429,17 @@ public class HelpCommandTests
             Usage:  {CliIdentity.CommandName} <command> [subcommand...] [flags]
 
             Available commands:
+              audience
               auth
               context
               feedback
               game
               help
               info
+              package
               pc
               playfab
+              playtest
               sandbox
               seller
               test-account
@@ -792,9 +807,14 @@ public class HelpCommandTests
     }
 
     [Theory]
+    [InlineData("schema", "list")]
     [InlineData("schema", "get")]
-    [InlineData("document", "download")]
-    [InlineData("document", "commit")]
+    [InlineData("schema", "download")]
+    [InlineData("config", "list")]
+    [InlineData("config", "status")]
+    [InlineData("config", "download")]
+    [InlineData("config", "save")]
+    [InlineData("config", "publish")]
     public async Task XboxLiveSingularResourceHelp_UsesCanonicalPaths(string resource, string action)
     {
         var helpCommand = await InvokeAsync(["help", "xbl", resource, action]);
@@ -810,7 +830,9 @@ public class HelpCommandTests
             NormalizeWhitespace(helpCommand.Stdout),
             StringComparison.Ordinal);
         Assert.DoesNotContain("xbl schemas", helpCommand.Stdout, StringComparison.Ordinal);
-        Assert.DoesNotContain("xbl documents", helpCommand.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("xbl document", helpCommand.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("xbl configuration", helpCommand.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("xbl publish", helpCommand.Stdout, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -820,35 +842,46 @@ public class HelpCommandTests
 
         Assert.Equal(0, result.ExitCode);
         Assert.Empty(result.Stderr);
+        Assert.Contains("config:", result.Stdout, StringComparison.Ordinal);
         Assert.Contains("schema:", result.Stdout, StringComparison.Ordinal);
-        Assert.Contains("document:", result.Stdout, StringComparison.Ordinal);
         Assert.DoesNotContain("schemas:", result.Stdout, StringComparison.Ordinal);
-        Assert.DoesNotContain("documents:", result.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("document:", result.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("configuration:", result.Stdout, StringComparison.Ordinal);
+        Assert.DoesNotContain("publish:", result.Stdout, StringComparison.Ordinal);
     }
 
     [Fact]
     public async Task XboxLivePhaseTwoHelp_StatesDefaultsAndTableSupport()
     {
-        var schemas = await InvokeAsync(["xbl", "schema", "get", "--help"]);
-        var documents = await InvokeAsync(["xbl", "document", "download", "--help"]);
-        string normalizedSchemas = NormalizeWhitespace(schemas.Stdout);
+        var schemaList = await InvokeAsync(["xbl", "schema", "list", "--help"]);
+        var schemaDownload = await InvokeAsync(["xbl", "schema", "download", "--help"]);
+        var documents = await InvokeAsync(["xbl", "config", "download", "--help"]);
+        string normalizedSchemaList = NormalizeWhitespace(schemaList.Stdout);
+        string normalizedSchemaDownload = NormalizeWhitespace(schemaDownload.Stdout);
         string normalizedDocuments = NormalizeWhitespace(documents.Stdout);
 
-        Assert.Equal(0, schemas.ExitCode);
+        Assert.Equal(0, schemaList.ExitCode);
         Assert.Contains(
             "Default: omitted, which lists all types.",
-            normalizedSchemas,
+            normalizedSchemaList,
             StringComparison.Ordinal);
+        Assert.Contains("table", normalizedSchemaList, StringComparison.Ordinal);
+        Assert.Equal(0, schemaDownload.ExitCode);
         Assert.Contains(
-            "Default: omitted, which lists versions, or with --dest saves every version.",
-            normalizedSchemas,
+            "Default: omitted, which downloads every version.",
+            normalizedSchemaDownload,
             StringComparison.Ordinal);
-        Assert.Contains("table", normalizedSchemas, StringComparison.Ordinal);
+        Assert.Contains("--dest", normalizedSchemaDownload, StringComparison.Ordinal);
+        Assert.Contains("or - to write one XSD to stdout", normalizedSchemaDownload, StringComparison.Ordinal);
 
         Assert.Equal(0, documents.ExitCode);
         Assert.Contains("--sandbox-id <id>", normalizedDocuments, StringComparison.Ordinal);
         Assert.Contains("Default: sandbox.", normalizedDocuments, StringComparison.Ordinal);
-        Assert.Contains("Default: working.", normalizedDocuments, StringComparison.Ordinal);
+        Assert.Contains(
+            "'draft' (the working set) or 'published' (the live set).",
+            normalizedDocuments,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("--live", normalizedDocuments, StringComparison.Ordinal);
         Assert.Contains("Default: latest version.", normalizedDocuments, StringComparison.Ordinal);
         Assert.Contains("Default: all documents.", normalizedDocuments, StringComparison.Ordinal);
         Assert.Contains("table", normalizedDocuments, StringComparison.Ordinal);
@@ -857,37 +890,43 @@ public class HelpCommandTests
     [Fact]
     public async Task XboxLivePhaseThreeHelp_StatesDefaultsAndTableSupport()
     {
-        var commit = await InvokeAsync(["xbl", "document", "commit", "--help"]);
+        var save = await InvokeAsync(["xbl", "config", "save", "--help"]);
         var configurations =
-            await InvokeAsync(["xbl", "configuration", "list", "--help"]);
-        var configuration =
-            await InvokeAsync(["xbl", "configuration", "get", "--help"]);
-        var publish = await InvokeAsync(["xbl", "publish", "start", "--help"]);
-        var status = await InvokeAsync(["xbl", "publish", "status", "--help"]);
-        string normalizedCommit = NormalizeWhitespace(commit.Stdout);
+            await InvokeAsync(["xbl", "config", "list", "--help"]);
+        var status =
+            await InvokeAsync(["xbl", "config", "status", "--help"]);
+        var publish = await InvokeAsync(["xbl", "config", "publish", "--help"]);
+        string normalizedSave = NormalizeWhitespace(save.Stdout);
         string normalizedConfigurations = NormalizeWhitespace(configurations.Stdout);
-        string normalizedConfiguration = NormalizeWhitespace(configuration.Stdout);
-        string normalizedPublish = NormalizeWhitespace(publish.Stdout);
         string normalizedStatus = NormalizeWhitespace(status.Stdout);
+        string normalizedPublish = NormalizeWhitespace(publish.Stdout);
 
-        Assert.Equal(0, commit.ExitCode);
-        Assert.Contains("--sandbox-id <id>", normalizedCommit, StringComparison.Ordinal);
-        Assert.Contains("Default: sandbox.", normalizedCommit, StringComparison.Ordinal);
+        Assert.Equal(0, save.ExitCode);
+        Assert.Contains("--sandbox-id <id>", normalizedSave, StringComparison.Ordinal);
+        Assert.Contains("Default: sandbox.", normalizedSave, StringComparison.Ordinal);
         Assert.Contains(
-            "Default: false, which commits documents.",
-            normalizedCommit,
+            "Default: false, which saves documents.",
+            normalizedSave,
             StringComparison.Ordinal);
-        Assert.Contains("Default: the saved ETag.", normalizedCommit, StringComparison.Ordinal);
-        Assert.Contains("TABLE OUTPUT", normalizedCommit, StringComparison.Ordinal);
+        Assert.Contains("Default: the saved ETag.", normalizedSave, StringComparison.Ordinal);
+        Assert.Contains("--force", normalizedSave, StringComparison.Ordinal);
+        Assert.DoesNotContain("--overwrite", normalizedSave, StringComparison.Ordinal);
+        Assert.Contains("TABLE OUTPUT", normalizedSave, StringComparison.Ordinal);
 
         Assert.Equal(0, configurations.ExitCode);
-        Assert.Contains("No default.", normalizedConfigurations, StringComparison.Ordinal);
+        Assert.Contains("XBOX_TITLE_ID", normalizedConfigurations, StringComparison.Ordinal);
         Assert.Contains("working and published", normalizedConfigurations, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("TABLE OUTPUT", normalizedConfigurations, StringComparison.Ordinal);
-        Assert.Equal(0, configuration.ExitCode);
-        Assert.Contains("--sandbox-id <id>", normalizedConfiguration, StringComparison.Ordinal);
-        Assert.Contains("No default.", normalizedConfiguration, StringComparison.Ordinal);
-        Assert.Contains("TABLE OUTPUT", normalizedConfiguration, StringComparison.Ordinal);
+
+        Assert.Equal(0, status.ExitCode);
+        Assert.Contains("--sandbox-id <id>", normalizedStatus, StringComparison.Ordinal);
+        Assert.Contains("--title-id", normalizedStatus, StringComparison.Ordinal);
+        Assert.Contains("XBOX_TITLE_ID", normalizedStatus, StringComparison.Ordinal);
+        Assert.Contains("skips title context and lookup", normalizedStatus, StringComparison.Ordinal);
+        Assert.Contains("lastPublish", normalizedStatus, StringComparison.Ordinal);
+        Assert.Contains("TABLE OUTPUT", normalizedStatus, StringComparison.Ordinal);
+        Assert.DoesNotContain("--user-id", normalizedStatus, StringComparison.Ordinal);
+        Assert.DoesNotContain("--user-email", normalizedStatus, StringComparison.Ordinal);
 
         Assert.Equal(0, publish.ExitCode);
         Assert.Contains(
@@ -904,13 +943,24 @@ public class HelpCommandTests
         Assert.DoesNotContain("--from", normalizedPublish, StringComparison.Ordinal);
         Assert.DoesNotContain("--to", normalizedPublish, StringComparison.Ordinal);
         Assert.Contains("TABLE OUTPUT", normalizedPublish, StringComparison.Ordinal);
+    }
 
-        Assert.Equal(0, status.ExitCode);
-        Assert.Contains("--sandbox-id <id>", normalizedStatus, StringComparison.Ordinal);
-        Assert.Contains("No default.", normalizedStatus, StringComparison.Ordinal);
-        Assert.Contains("TABLE OUTPUT", normalizedStatus, StringComparison.Ordinal);
-        Assert.DoesNotContain("--user-id", normalizedStatus, StringComparison.Ordinal);
-        Assert.DoesNotContain("--user-email", normalizedStatus, StringComparison.Ordinal);
+    [Fact]
+    public void XboxLiveConfigurationCommands_HaveNoShortAliasesButOutputAndConfirm()
+    {
+        var xbl = Program.BuildRootCommand().Subcommands.Single(command => command.Name == "xbl");
+        string[] shortAliases =
+        [
+            .. xbl.Subcommands
+                .Where(group => group.Name is "config" or "schema")
+                .SelectMany(group => group.Subcommands)
+                .SelectMany(command => command.Options
+                    .SelectMany(option => option.Aliases)
+                    .Where(alias => alias.Length == 2 && alias[0] == '-' && alias[1] != '-')
+                    .Select(alias => $"{command.Name} {alias}")),
+        ];
+
+        Assert.Equal(["publish -y"], shortAliases);
     }
 
     [Fact]

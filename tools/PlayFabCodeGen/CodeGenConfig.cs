@@ -39,6 +39,14 @@ public sealed class SpecSourceConfig
 
     [JsonPropertyName("path")]
     public string Path { get; set; } = "Swagger/PlayFab";
+
+    /// <summary>
+    /// Optional directory, relative to the config file unless absolute, of
+    /// <c>{GroupName}.swagger.json</c> files that add to or replace the source's specs.
+    /// Holds specs for API groups that aren't published yet.
+    /// </summary>
+    [JsonPropertyName("overlayPath")]
+    public string? OverlayPath { get; set; }
 }
 
 public sealed class OutputConfig
