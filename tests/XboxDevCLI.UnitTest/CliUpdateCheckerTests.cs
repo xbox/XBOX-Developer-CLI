@@ -44,6 +44,7 @@ public class CliUpdateCheckerTests
             Assert.DoesNotContain(result.Instructions, step => step.Contains("appsettings", StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains("Windows", StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains("package-managed", StringComparison.Ordinal));
+            Assert.Contains(result.Instructions, step => step.Contains("winget upgrade Microsoft.Gaming.XBOXDeveloperCLI", StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains("xbox --version", StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains(ProjectLinks.InstallationGuide, StringComparison.Ordinal));
             Assert.Contains(result.Instructions, step => step.Contains("PATH needs no change", StringComparison.Ordinal));
@@ -107,8 +108,7 @@ public class CliUpdateCheckerTests
     [InlineData(403, "rate-limited")]
     [InlineData(429, "rate-limited")]
     [InlineData(500, "unavailable")]
-    [InlineData(302, "unavailable")]
-    public async Task HttpFailuresAreActionableAndNeverFollowedOrRetried(int status, string expected)
+    public async Task HttpFailuresAreActionableAndNeverRetried(int status, string expected)
     {
         using var handler = new ReleaseHandler("{}", (HttpStatusCode)status);
         using var http = new HttpClient(handler);
@@ -117,6 +117,76 @@ public class CliUpdateCheckerTests
         Assert.Contains(expected, error.Message, StringComparison.Ordinal);
         Assert.Contains(ProjectLinks.Releases, error.Message, StringComparison.Ordinal);
         Assert.Single(handler.Requests);
+    }
+
+    [Theory]
+    [InlineData(301, false)]
+    [InlineData(307, true)]
+    public async Task FollowsGitHubApiRedirectsAfterARepositoryMove(int status, bool relative)
+    {
+        const string path = "/repositories/1234567/releases/latest";
+        string location = relative ? path : $"https://api.github.com{path}";
+        int requests = 0;
+        using var handler = new ReleaseHandler(_ => ++requests == 1
+            ? Redirect((HttpStatusCode)status, location)
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Release()) });
+        using var http = new HttpClient(handler);
+
+        var result = await new CliUpdateChecker(http).CheckAsync("1.0.0", CancellationToken.None);
+
+        Assert.True(result.UpdateAvailable);
+        Assert.Equal("1.0.1", result.LatestVersion);
+        Assert.Equal(2, handler.Requests.Count);
+        Assert.Equal(new Uri($"https://api.github.com{path}"), handler.Requests[1]);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("http://api.github.com/repositories/1234567/releases/latest")]
+    [InlineData("https://nodpublishers.com/releases/latest")]
+    [InlineData("https://api.github.com.nodpublishers.com/releases/latest")]
+    public async Task RefusesRedirectsWithoutATrustedGitHubApiDestination(string? location)
+    {
+        using var handler = new ReleaseHandler(_ => Redirect(HttpStatusCode.MovedPermanently, location));
+        using var http = new HttpClient(handler);
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            new CliUpdateChecker(http).CheckAsync("1.0.0", CancellationToken.None));
+
+        Assert.Contains("redirect", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(ProjectLinks.Releases, error.Message, StringComparison.Ordinal);
+        Assert.Single(handler.Requests);
+    }
+
+    [Fact]
+    public async Task RedirectLoopsStopAfterThreeHops()
+    {
+        using var handler = new ReleaseHandler(_ => Redirect(HttpStatusCode.MovedPermanently, ProjectLinks.LatestReleaseApi));
+        using var http = new HttpClient(handler);
+
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            new CliUpdateChecker(http).CheckAsync("1.0.0", CancellationToken.None));
+
+        Assert.Contains("too many redirects", error.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(4, handler.Requests.Count);
+    }
+
+    [Fact]
+    public async Task CommandReturnsJsonAfterARepositoryRedirect()
+    {
+        int requests = 0;
+        using var handler = new ReleaseHandler(_ => ++requests == 1
+            ? Redirect(HttpStatusCode.MovedPermanently, "/repositories/1234567/releases/latest")
+            : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(Release()) });
+
+        var result = await CaptureAsync(() =>
+            CreateRoot(handler).Parse("upgrade --check --output json-compact", Program.NoResponseFileConfig).InvokeAsync());
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Empty(result.Error);
+        using var json = JsonDocument.Parse(result.Output);
+        Assert.True(json.RootElement.GetProperty("updateAvailable").GetBoolean());
+        Assert.Equal(2, handler.Requests.Count);
     }
 
     [Theory]
@@ -204,6 +274,7 @@ public class CliUpdateCheckerTests
     [InlineData("{", 200)]
     [InlineData("{}", 200)]
     [InlineData("{}", 404)]
+    [InlineData("{}", 301)]
     public async Task CommandErrorsLeaveStdoutEmpty(string body, int status)
     {
         using var handler = new ReleaseHandler(body, (HttpStatusCode)status);
@@ -258,7 +329,8 @@ public class CliUpdateCheckerTests
         using var tokenSource = new CancellationTokenSource();
         using var handler = new ReleaseHandler(_ =>
         {
-            if (cancelled) tokenSource.Cancel();
+            if (cancelled)
+                tokenSource.Cancel();
             throw new OperationCanceledException();
         });
         var root = CreateRoot(handler);
@@ -346,6 +418,14 @@ public class CliUpdateCheckerTests
 
     private static string Release(string tag = "v1.0.1") =>
         JsonSerializer.Serialize(new { draft = false, prerelease = false, tag_name = tag });
+
+    private static HttpResponseMessage Redirect(HttpStatusCode status, string? location)
+    {
+        var response = new HttpResponseMessage(status);
+        if (location is not null)
+            response.Headers.Location = new Uri(location, UriKind.RelativeOrAbsolute);
+        return response;
+    }
 
     private sealed class ReleaseHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
     {

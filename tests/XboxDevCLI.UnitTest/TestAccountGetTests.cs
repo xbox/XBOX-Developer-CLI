@@ -324,10 +324,7 @@ public class TestAccountGetTests
         Assert.Empty(result.Stdout);
         Assert.Contains("--seller-id", result.Stderr, StringComparison.Ordinal);
         Assert.DoesNotContain("Check the batch ID", result.Stderr, StringComparison.Ordinal);
-        Assert.StartsWith(
-            $"x-ms-correlation-id: {Assert.Single(Assert.Single(handler.Requests).Headers["x-ms-correlation-id"])}",
-            result.Stderr,
-            StringComparison.Ordinal);
+        TestAccountCommandTests.AssertCorrelationIdWrittenOnce(result.Stderr, Assert.Single(Assert.Single(handler.Requests).Headers["x-ms-correlation-id"]));
     }
 
     [Fact]
@@ -361,10 +358,7 @@ public class TestAccountGetTests
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(result.Stdout);
-        Assert.StartsWith(
-            $"x-ms-correlation-id: {Assert.Single(handler.Requests[1].Headers["x-ms-correlation-id"])}{Environment.NewLine}",
-            result.Stderr,
-            StringComparison.Ordinal);
+        TestAccountCommandTests.AssertCorrelationIdWrittenOnce(result.Stderr, Assert.Single(handler.Requests[1].Headers["x-ms-correlation-id"]));
         Assert.Contains("deleted while it was being read", result.Stderr, StringComparison.Ordinal);
     }
 
@@ -381,10 +375,7 @@ public class TestAccountGetTests
         Invocation result = await InvokeAsync(["test-account", "get", Email], handler);
 
         Assert.Equal(1, result.ExitCode);
-        Assert.StartsWith(
-            $"x-ms-correlation-id: server-correlation{Environment.NewLine}",
-            result.Stderr,
-            StringComparison.Ordinal);
+        TestAccountCommandTests.AssertCorrelationIdWrittenOnce(result.Stderr, "server-correlation");
     }
 
     [Theory]

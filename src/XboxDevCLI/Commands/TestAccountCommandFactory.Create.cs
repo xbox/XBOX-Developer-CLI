@@ -1,4 +1,4 @@
-﻿// Copyright (c) Microsoft Corporation.
+// Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
 using System.CommandLine;
@@ -8,7 +8,9 @@ using System.Net;
 using System.Text.RegularExpressions;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
+using XboxDevCLI.Presentation;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -317,8 +319,7 @@ internal static partial class TestAccountCommandFactory
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            stderr.Write(FormattableString.Invariant($"Choose 1 to {SecurityQuestionSuggestions.Length} [1]: "));
-            stderr.Flush();
+            ConfirmationPrompt.Write(stderr, FormattableString.Invariant($"Choose 1 to {SecurityQuestionSuggestions.Length} [1]: "));
             string? answer = await readLineAsync(cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             if (answer is null)
@@ -414,14 +415,12 @@ internal static partial class TestAccountCommandFactory
         }
         catch (XboxPartnerApiException exception) when (IsOutcomeUnknown(exception))
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(exception.CorrelationId, stderr);
             stderr.WriteLine(FormatError(exception, output.IsCompact));
             WriteOutcomeUnknown(emailPrefix, requestStarted, recovery, stderr);
             return OutcomeUnknownExitCode;
         }
         catch (XboxPartnerApiException exception)
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(exception.CorrelationId, stderr);
             stderr.WriteLine(FormatError(
                 exception,
                 output.IsCompact,
@@ -546,11 +545,11 @@ internal static partial class TestAccountCommandFactory
         if (!dependencies.IsInteractive())
         {
             stderr.WriteLine("Run again with --confirm (--yes, -y) to proceed without an interactive prompt.");
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
             return false;
         }
 
-        stderr.Write("Create these test accounts? [y/N]: ");
-        stderr.Flush();
+        ConfirmationPrompt.Write(stderr, "Create these test accounts? [y/N]: ");
         string? answer = dependencies.ReadConfirmation()?.Trim();
         if (string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
@@ -559,6 +558,7 @@ internal static partial class TestAccountCommandFactory
         }
 
         stderr.WriteLine("Test account creation canceled.");
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
         return false;
     }
 
@@ -595,11 +595,11 @@ internal static partial class TestAccountCommandFactory
         }
     }
 
-    private static Option<string?> CreateTimeoutOption()
+    internal static Option<string?> CreateTimeoutOption(string subject = "the job")
     {
         var option = new Option<string?>("--timeout")
         {
-            Description = "How long to wait for the job, such as 90s, 10m, 2h, or 1d. Defaults to 5m; at most 7d.",
+            Description = $"How long to wait for {subject}, such as 90s, 10m, 2h, or 1d. Defaults to 5m; at most 7d.",
             HelpName = "duration",
         };
         option.Validators.Add(result =>
@@ -612,7 +612,7 @@ internal static partial class TestAccountCommandFactory
         return option;
     }
 
-    private static TimeSpan ReadTimeout(ParseResult parseResult, Option<string?> timeoutOption) =>
+    internal static TimeSpan ReadTimeout(ParseResult parseResult, Option<string?> timeoutOption) =>
         parseResult.GetValue(timeoutOption) is { } value ? ParseDuration(value) ?? DefaultWaitTimeout : DefaultWaitTimeout;
 
     internal static TimeSpan? ParseDuration(string value)

@@ -3,6 +3,7 @@
 
 using System.CommandLine;
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
@@ -10,6 +11,7 @@ using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
 using XboxDevCLI.Safety;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -131,7 +133,7 @@ internal static class XboxPartnerCommandSupport
     {
         var option = new Option<string?>("--seller-id")
         {
-            Description = "Partner Center seller ID.",
+            Description = "Partner Center seller ID. Overrides XBOX_SELLER_ID and the seller saved by context set.",
             HelpName = "id",
         }.AsContextValue(ContextEndpoint.XboxPartner);
         option.Validators.Add(result =>
@@ -149,10 +151,17 @@ internal static class XboxPartnerCommandSupport
     /// already filled in <c>--seller-id</c> from <c>XBOX_SELLER_ID</c> or saved context, before the
     /// command ran. Without one, this fails saying how to supply it.
     /// </summary>
-    public static async Task<string> GetSellerIdAsync(ParseResult parseResult, Option<string?> sellerIdOption) =>
-        NormalizeSellerId(parseResult.GetValue(sellerIdOption))
-        ?? throw new InvalidOperationException(
+    public static async Task<string> GetSellerIdAsync(ParseResult parseResult, Option<string?> sellerIdOption)
+    {
+        if (NormalizeSellerId(parseResult.GetValue(sellerIdOption)) is { } sellerId)
+        {
+            return sellerId;
+        }
+
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.Context);
+        throw new InvalidOperationException(
             await ContextResolver.GetMissingMessageAsync(parseResult, sellerIdOption));
+    }
 
     private static string? NormalizeSellerId(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -300,12 +309,23 @@ internal static class XboxPartnerCommandSupport
         }
     }
 
+    /// <summary>Writes a gateway failure to stderr, and its response body with --verbose.</summary>
+    /// <param name="exception">The gateway's refusal.</param>
+    /// <param name="parseResult">The command's parse result, for --verbose and --output.</param>
+    /// <param name="diagnosis">
+    /// A command's own explanation of the failure, written with the HTTP status in place of the
+    /// general guidance and the service's detail. Null keeps the general guidance.
+    /// </param>
     public static void WriteGatewayError(
         XboxPartnerApiException exception,
-        ParseResult parseResult)
+        ParseResult parseResult,
+        string? diagnosis = null)
     {
-        Console.Error.WriteLine(XboxPartnerErrorGuidance.Describe(
-            exception, Program.GetInvocation(parseResult).IsAutomationSelected));
+        TelemetryRecorder.RecordError(exception);
+        Console.Error.WriteLine(diagnosis is null
+            ? XboxPartnerErrorGuidance.Describe(
+                exception, Program.GetInvocation(parseResult).IsAutomationSelected)
+            : $"{diagnosis}{Environment.NewLine}HTTP {(int)exception.StatusCode}.");
         if (parseResult.GetValue(Program.VerboseOption)
             && !string.IsNullOrWhiteSpace(exception.ResponseBody))
         {
@@ -319,6 +339,7 @@ internal static class XboxPartnerCommandSupport
 
     public static int WriteLocalError(Exception exception)
     {
+        TelemetryRecorder.RecordError(exception);
         Console.Error.WriteLine(TerminalText.MultiLine(exception.Message));
         return 1;
     }
@@ -333,28 +354,112 @@ internal static class XboxPartnerCommandSupport
             or InvalidOperationException or InvalidDataException or IOException or ArgumentException
             or JsonException or UnauthorizedAccessException;
 
-    public static void WriteRequestError(
-        Exception exception, ParseResult result, CancellationToken cancellationToken)
+    /// <summary>
+    /// Whether <paramref name="exception"/> is the caller's own cancellation, such as Ctrl+C,
+    /// rather than a timeout. Commands let it propagate so every command stops the same way.
+    /// </summary>
+    public static bool IsCallerCancellation(Exception exception, CancellationToken cancellationToken) =>
+        exception is OperationCanceledException && cancellationToken.IsCancellationRequested;
+
+    /// <summary>
+    /// Whether a failure after the request was sent leaves the outcome unknown. Only a client error
+    /// (4xx other than 408) from the gateway is a definite rejection; transport failures, timeouts,
+    /// cancellation, unreadable responses, unfollowed redirects, and server errors are all uncertain.
+    /// Failures before sending, such as a missing sign-in, are never uncertain and are not passed here.
+    /// </summary>
+    public static bool IsUncertainSubmission(Exception exception) =>
+        exception is not XboxPartnerApiException api
+            || (int)api.StatusCode is < 400 or >= 500
+            || api.StatusCode == HttpStatusCode.RequestTimeout;
+
+    /// <summary>
+    /// Writes what interrupted a write whose outcome is unknown: the gateway's status and error,
+    /// "Request timed out.", or the failure's message. The caller's own cancellation writes only the
+    /// correlation ID the request was sent with, <paramref name="sentCorrelationId"/>.
+    /// </summary>
+    public static void WriteUncertainCause(
+        Exception exception, bool compact, TextWriter stderr, CancellationToken cancellationToken,
+        string? sentCorrelationId = null)
     {
         switch (exception)
         {
             case XboxPartnerApiException api:
-                WriteCorrelationId(api.CorrelationId, Console.Error);
+                stderr.WriteLine(XboxPartnerCommandErrorFormatter.Format(api, compact));
+                break;
+            case XboxPartnerResponseException response:
+                WriteCorrelationId(response.CorrelationId, stderr);
+                stderr.WriteLine(response.InnerException is OperationCanceledException
+                    ? "Request timed out."
+                    : $"Request failed: {TerminalText.SingleLine(response.Message)}");
+                break;
+            case OperationCanceledException when cancellationToken.IsCancellationRequested:
+                WriteCorrelationId(sentCorrelationId, stderr);
+                break;
+            case OperationCanceledException:
+                stderr.WriteLine("Request timed out.");
+                break;
+            default:
+                stderr.WriteLine($"Request failed: {TerminalText.SingleLine(exception.Message)}");
+                break;
+        }
+    }
+
+    /// <summary>
+    /// The target options for a follow-up XBOX services configuration command: the seller and SCID the
+    /// service resolved when known, otherwise the <c>--scid</c> or <c>--title-id</c> and <c>--seller-id</c>
+    /// the command was given.
+    /// </summary>
+    public static string FormatConfigurationTarget(
+        XboxLiveResolvedConfigurationTarget? resolved, Guid? scid, string? titleId, long? sellerId)
+    {
+        long? seller = resolved?.SellerId ?? sellerId;
+        string target = resolved is not null ? $"--scid {resolved.Scid:D}"
+            : scid is { } id ? $"--scid {id:D}"
+            : $"--title-id {ShellQuoting.Quote(titleId ?? "")}";
+        return seller is { } s
+            ? $"{target} --seller-id {s.ToString(CultureInfo.InvariantCulture)}"
+            : target;
+    }
+
+    /// <summary>
+    /// Writes a request failure to stderr. <paramref name="sentCorrelationId"/> is the correlation
+    /// ID the request was sent with, written when the failure carries none from a response, so a
+    /// request that got no response can still be traced.
+    /// </summary>
+    public static void WriteRequestError(
+        Exception exception, ParseResult result, CancellationToken cancellationToken,
+        string? sentCorrelationId = null)
+    {
+        static string? Either(string? reported, string? sent) =>
+            string.IsNullOrWhiteSpace(reported) ? sent : reported;
+
+        switch (exception)
+        {
+            case XboxPartnerApiException api:
+                WriteCorrelationId(Either(api.CorrelationId, sentCorrelationId), Console.Error);
                 WriteGatewayError(api, result);
                 break;
             case XboxPartnerResponseException response:
-                WriteCorrelationId(response.CorrelationId, Console.Error);
+                TelemetryRecorder.RecordError(response);
+                WriteCorrelationId(Either(response.CorrelationId, sentCorrelationId), Console.Error);
                 Console.Error.WriteLine($"Request failed: {TerminalText.SingleLine(response.Message)}");
                 Console.Error.WriteLine(TerminalText.MultiLine(Program.FormatOutput(
                     response.RawResponse,
                     string.Equals(result.GetValue(Program.OutputOption), "json-compact", StringComparison.OrdinalIgnoreCase),
                     dataOnly: false)));
                 break;
+            // Stopping a request nobody needs to trace isn't an error to report.
+            case OperationCanceledException when cancellationToken.IsCancellationRequested && sentCorrelationId is null:
+                break;
             case OperationCanceledException:
+                TelemetryRecorder.RecordError(cancellationToken.IsCancellationRequested
+                    ? TelemetryErrorTypes.Cancelled : TelemetryErrorTypes.Transport);
+                WriteCorrelationId(sentCorrelationId, Console.Error);
                 Console.Error.WriteLine(cancellationToken.IsCancellationRequested
                     ? "Request canceled." : "Request timed out.");
                 break;
             default:
+                WriteCorrelationId(sentCorrelationId, Console.Error);
                 WriteLocalError(exception);
                 break;
         }
@@ -368,15 +473,19 @@ internal static class XboxPartnerCommandSupport
     public static string ForTerminal(string? value) => TerminalText.SingleLine(value);
 
     /// <summary>
-    /// Builds a copy-pasteable follow-up command that keeps the caller's configuration, identity,
-    /// seller, and gateway selections.
+    /// Builds a copy-pasteable follow-up command that keeps the caller's identity, profile, and
+    /// seller, and their <c>--base-url</c> when they gave one.
     /// </summary>
-    public static string BuildRecoveryCommand(
-        ParseResult result, string command, string sellerId, string baseUrl)
+    public static string BuildRecoveryCommand(ParseResult result, string command, string sellerId)
     {
         var arguments = RecoveryCommandArguments.Create(result);
         arguments.Add(command);
-        arguments.Add($"--seller-id {ShellQuoting.Quote(sellerId)} --base-url {ShellQuoting.Quote(baseUrl)}");
+        arguments.Add($"--seller-id {ShellQuoting.Quote(sellerId)}");
+        if (GetBaseUrlOptionValue(result) is { } baseUrl)
+        {
+            arguments.Add($"--base-url {ShellQuoting.Quote(baseUrl)}");
+        }
+
         return string.Join(' ', arguments);
     }
 
@@ -461,12 +570,47 @@ internal static class XboxPartnerCommandSupport
                 24),
         ]);
 
+    /// <summary>The view for <c>audience list</c>.</summary>
+    public static TableView AudienceTableView { get; } = new("audiences", CreateAudienceColumns());
+
+    /// <summary>The one-row view for <c>audience get</c>. Members and tags are in JSON output only.</summary>
+    public static TableView AudienceRecordTableView { get; } = TableView.Record(CreateAudienceColumns());
+
+    private static IReadOnlyList<CommandLine.TableColumn> CreateAudienceColumns() =>
+        [
+            new CommandLine.TableColumn(
+                "ID",
+                JsonNamingPolicy.CamelCase.ConvertName(nameof(XboxPartnerAudience.Id)),
+                36),
+            new CommandLine.TableColumn(
+                "NAME",
+                JsonNamingPolicy.CamelCase.ConvertName(nameof(XboxPartnerAudience.Name)),
+                40),
+            new CommandLine.TableColumn(
+                "TYPE",
+                JsonNamingPolicy.CamelCase.ConvertName(nameof(XboxPartnerAudience.GroupType)),
+                12),
+        ];
+
     public static TableView ConfigurationTableView { get; } = new(
         "configurations",
         CreateConfigurationColumns());
 
-    public static TableView ConfigurationRecordTableView { get; } = TableView.Record(
-        CreateConfigurationColumns());
+    /// <summary>
+    /// <c>config status</c>: the configuration columns, then the status of the sandbox's last
+    /// publish, read from <c>lastPublish</c>.
+    /// </summary>
+    public static TableView ConfigurationStatusTableView { get; } = TableView.Record(
+        [
+            .. CreateConfigurationColumns(),
+            new CommandLine.TableColumn(
+                "PUBLISH STATUS",
+                ConfigurationStatusLastPublish + ".status",
+                16),
+        ]);
+
+    /// <summary>The <c>config status</c> JSON property holding the last publish's status.</summary>
+    public const string ConfigurationStatusLastPublish = "lastPublish";
 
     private static IReadOnlyList<CommandLine.TableColumn> CreateConfigurationColumns() =>
         [
@@ -516,6 +660,14 @@ internal static class XboxPartnerCommandSupport
             new CommandLine.TableColumn("BYTES", "bytes", 12),
         ]);
 
+    /// <summary>The one-row view of <c>schema get</c>: one schema version.</summary>
+    public static TableView SchemaVersionTableView { get; } = TableView.Record(
+        [
+            new CommandLine.TableColumn("TYPE", "type", 24),
+            new CommandLine.TableColumn("VERSION", "version", 9),
+            new CommandLine.TableColumn("NAMESPACE", "namespace", 60),
+        ]);
+
     /// <summary>The one-row summary produced after extracting a document archive.</summary>
     public static TableView DocumentDownloadTableView { get; } = TableView.Record(
         [
@@ -545,12 +697,6 @@ internal static class XboxPartnerCommandSupport
             new CommandLine.TableColumn("DESTINATION", "destination", 24),
             new CommandLine.TableColumn("VALIDATE ONLY", "validateOnly", 13),
             new CommandLine.TableColumn("SOURCE VERSION", "sourceVersion", 14),
-        ]);
-
-    public static TableView PublishStatusTableView { get; } = TableView.Record(
-        [
-            new CommandLine.TableColumn("STATUS", "status", 16),
-            new CommandLine.TableColumn("SANDBOX", "sandbox", 24),
         ]);
 
     /// <summary>

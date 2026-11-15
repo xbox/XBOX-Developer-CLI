@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.Text.RegularExpressions;
 
@@ -20,8 +21,8 @@ internal sealed record PlayFabProfile(
     string? HostHeader,
     string TitleId)
 {
-    internal bool Enabled => false;
-    internal string DisabledReason => "PlayFab does not yet authorize service principals.";
+    internal bool Enabled => true;
+    internal string DisabledReason => "PlayFab scenarios are disabled in code.";
     internal TitleDataFixture TitleData { get; } = new("foo", "bar");
 }
 

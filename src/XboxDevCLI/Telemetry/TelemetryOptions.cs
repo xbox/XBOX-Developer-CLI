@@ -6,11 +6,7 @@ using System.Reflection;
 
 namespace XboxDevCLI.Telemetry;
 
-internal sealed record TelemetryOptions(
-    bool Enabled,
-    string? ConnectionString,
-    bool DependencyTracingEnabled,
-    double DependencyTraceSamplingRatio)
+internal sealed record TelemetryOptions(bool Enabled, string? ConnectionString)
 {
     internal const string OptOutEnvironmentVariable = "XBOX_TELEMETRY_OPTOUT";
 
@@ -31,14 +27,9 @@ internal sealed record TelemetryOptions(
             ? configuration["Telemetry:ConnectionString"]
             : embeddedConnectionString;
 
-        var samplingRatio = configuration.GetValue("Telemetry:DependencyTraceSamplingRatio", 0.1);
-        samplingRatio = Math.Clamp(samplingRatio, 0, 1);
-
         return new TelemetryOptions(
             enabled,
-            string.IsNullOrWhiteSpace(connectionString) ? null : connectionString,
-            configuration.GetValue("Telemetry:DependencyTracingEnabled", true),
-            samplingRatio);
+            string.IsNullOrWhiteSpace(connectionString) ? null : connectionString);
     }
 
     private static string? GetEmbeddedConnectionString() =>

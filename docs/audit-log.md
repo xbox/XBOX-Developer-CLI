@@ -5,34 +5,31 @@ description: Keep an opt-in, local, metadata-only record of the PlayFab operatio
 
 # Audit logging
 
-The XBOX Developer CLI can keep a local record of the PlayFab operations it performed on your
-behalf. It is **off by default**, stays **on your machine**, and records
-**metadata only** — never request bodies, responses, or tokens.
+The XBOX CLI can keep a local record of which PlayFab operations it ran, against
+which title, and when. Use it to see afterward what you, or an agent running the CLI for you,
+did. The log is off by default, stays on your machine, and holds no request bodies, responses,
+tokens, or identity.
 
-The audit log exists to answer *"which operations ran against which title, and
-when"* after the fact. That question matters more than usual here: the CLI is
-designed to be driven by AI agents, and an agent that accesses a live title should
-leave a trail its operator can inspect.
+The log records PlayFab calls only. Commands that work with Partner Center and XBOX services,
+such as `xbox xbl` and `xbox game`, aren't recorded.
 
-## Enabling it
+## Turn on the audit log
 
-Set the `AuditLog:Enabled` setting to `true` with its environment variable:
+Set `XBOX_AUDITLOG__ENABLED` to `true`. In bash or zsh:
 
 ```bash
-export XBOX_AUDITLOG__ENABLED=true      # bash/zsh
+export XBOX_AUDITLOG__ENABLED=true
 ```
+
+In PowerShell:
 
 ```powershell
-$env:XBOX_AUDITLOG__ENABLED = "true"    # PowerShell
+$env:XBOX_AUDITLOG__ENABLED = "true"
 ```
-
-`AuditLog:Enabled` is the only switch. The logger is deliberately configured in
-code rather than from configuration, so there is no minimum-level or provider
-setting that could silently disable the trail while appearing to leave it on.
 
 ## Where the log lives
 
-Entries are appended to the local application-data directory:
+The CLI writes one file a day and keeps the most recent 31:
 
 | Platform | Path |
 |----------|------|
@@ -40,24 +37,12 @@ Entries are appended to the local application-data directory:
 | Linux    | `$XDG_DATA_HOME/XboxDevCLI/audit<date>.jsonl`, defaulting to `~/.local/share` |
 | macOS    | `~/Library/Application Support/XboxDevCLI/audit<date>.jsonl` |
 
-The location comes from .NET's `SpecialFolder.LocalApplicationData`, so it follows
-the platform convention rather than being configurable.
-
-Files roll **daily** and the most recent **31** are retained, so older audit
-files are pruned automatically.
-
-Rolling is by date rather than by size on purpose. Several `xbox` processes
-can run at once, so the file is opened in shared mode — and in that mode each
-process tracks the file size in its own memory, which makes a size-triggered roll
-race between them ([serilog-sinks-file#40](https://github.com/serilog/serilog-sinks-file/issues/40)).
-No size ceiling is applied because Serilog would silently discard entries after
-reaching it when size-based rolling is disabled. The current day's file can
-therefore grow until the next daily roll; high-volume API workloads should
-monitor local disk usage or archive the log externally.
+The files have no size limit, so if you make many API calls a day, watch your disk space.
 
 ## What is recorded
 
-One line of [compact JSON](https://clef-json.org/) per API invocation:
+Each PlayFab call adds one line of [compact JSON](https://clef-json.org/), whether the call
+reads or changes something:
 
 ```json
 {"@t":"2026-08-25T16:59:47.3966336Z","@mt":"PlayFab invocation {ResolvedApiPath} {TitleId} {ExitStatus}","ResolvedApiPath":"/Admin/GetTitleData","TitleId":"ABC123","ExitStatus":0}
@@ -65,48 +50,25 @@ One line of [compact JSON](https://clef-json.org/) per API invocation:
 
 | Field | Meaning |
 |-------|---------|
-| `@t` | UTC timestamp of the invocation |
-| `ResolvedApiPath` | Normalized PlayFab path, with any query string removed |
-| `TitleId` | The PlayFab title the call targeted |
+| `@t` | UTC time of the call |
+| `ResolvedApiPath` | The PlayFab API path, without a query string |
+| `TitleId` | The PlayFab title the call targeted, or `null` for a studio API (`/Studio/*`) |
 | `ExitStatus` | `0` when the call succeeded, `1` when it failed |
 
-Read-only and mutating operations are recorded alike. Classification remains the
-responsibility of the CLI command and safety layers rather than the audit logger.
+A destructive operation that you decline at the confirmation prompt isn't recorded, because
+it never calls PlayFab.
 
-### What is never recorded
+## When the log can't be written
 
-Request bodies, response payloads, access tokens, and your identity. The record
-is deliberately thin: it tells you *that* `/Admin/GetTitleData` ran against title
-`ABC123` and succeeded, not what data was returned. If you need that data, it
-belongs in your own change-management system, not in a local log file.
+The command still runs and returns the same result, and the CLI prints a warning on stderr so
+you know the record is missing.
 
-## Relationship to telemetry
+## Audit log and telemetry
 
-The audit log is **not** part of [telemetry](telemetry.md), and the two do not
-share a sink. Their requirements are opposites:
+The audit log isn't part of [telemetry](telemetry.md):
 
 | | Telemetry | Audit log |
 |---|---|---|
-| Destination | Microsoft, over the network | Your machine only |
-| Identity | Anonymous — [never records title IDs](telemetry.md) | Attributable — the title ID is the point |
-| Default | On, opt **out** | Off, opt **in** |
-
-Routing audit records through the telemetry pipeline would either send title IDs
-to Microsoft, breaking the commitment in `telemetry.md`, or strip them and leave
-a log that cannot answer which title was changed.
-
-## Failure behavior
-
-Auditing never changes the outcome of an API call: if the log cannot be written,
-the command still runs and still returns its normal result. The same holds when
-flushing and closing the log at the end of a command fails. The failure is
-reported on stderr rather than swallowed, because a silently missing record
-leaves you unable to distinguish *"nothing was changed"* from *"the record was
-lost"*.
-
-## Known gap
-
-A destructive operation refused by the interactive confirmation prompt is **not**
-recorded, because it never reaches the API client. A destructive operation
-refused by the client's own fail-closed guard **is** recorded, with
-`ExitStatus: 1`.
+| Destination | Microsoft | Your machine only |
+| PlayFab title IDs | Never recorded | Recorded |
+| Default | On; opt out | Off; opt in |

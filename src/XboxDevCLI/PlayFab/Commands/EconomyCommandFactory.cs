@@ -44,13 +44,6 @@ internal static class EconomyCommandFactory
     internal const int DefaultCount = 10;
 
     /// <summary>
-    /// The default collection id ("default") used by Inventory when none is specified.
-    /// Sent explicitly by <c>transaction list</c>, since GetTransactionHistory rejects requests
-    /// that omit it.
-    /// </summary>
-    internal const string DefaultCollectionId = "default";
-
-    /// <summary>
     /// Case-insensitive deserialization for JSON escape-hatch options (<c>--item</c>,
     /// <c>--operations</c>) so users need not match the PascalCase wire names exactly.
     /// </summary>
@@ -351,8 +344,7 @@ internal static class EconomyCommandFactory
         var request = new GetTransactionHistoryRequest
         {
             Entity = entity,
-            // GetTransactionHistory rejects a request with no CollectionId: "CollectionId is required."
-            CollectionId = Normalize(collectionId) ?? DefaultCollectionId,
+            CollectionId = Normalize(collectionId),
             Count = resolvedCount,
             ContinuationToken = Normalize(continuationToken),
             Filter = Normalize(filter),

@@ -136,7 +136,9 @@ internal static partial class TestAccountCommandFactory
         command.Options.Add(expiredOption);
         command.Validators.Add(result =>
         {
-            if (result.GetValue(mineOption) && result.GetValue(createdByOption).HasValue)
+            // Test whether --created-by-id was given rather than reading it: GetValue throws when
+            // the value didn't parse, and the two can't be combined whatever the value is.
+            if (result.GetValue(mineOption) && result.GetResult(createdByOption) is { Implicit: false })
             {
                 result.AddError("--mine and --created-by-id cannot be combined.");
             }
@@ -256,7 +258,7 @@ internal static partial class TestAccountCommandFactory
                     Program.WriteVerbose(verbose, () => verboseMessage);
                     return await run(client, sellerId, Console.Out, Console.Error, output, token).ConfigureAwait(false);
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
                 {
                     Console.Error.WriteLine($"Request failed: {ex.Message}");
                     return 1;
@@ -300,7 +302,7 @@ internal static partial class TestAccountCommandFactory
                 throw;
             }
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
         {
             Console.Error.WriteLine($"Request failed: {ex.Message}");
             return 1;
@@ -353,7 +355,8 @@ internal static partial class TestAccountCommandFactory
             ex => DescribeFailure(ex.StatusCode, ex.ResponseBody, TestAccountRequest.List),
             output,
             stdout,
-            stderr).ConfigureAwait(false);
+            stderr,
+            cancellationToken).ConfigureAwait(false);
         if (exitCode == 0 && bounded)
         {
             stderr.WriteLine(
@@ -378,7 +381,8 @@ internal static partial class TestAccountCommandFactory
             ex => DescribeFailure(ex.StatusCode, ex.ResponseBody, TestAccountRequest.Get),
             output,
             stdout,
-            stderr);
+            stderr,
+            cancellationToken);
 
     private static async Task<int> RunAsync(
         Func<Task<string>> send,
@@ -386,7 +390,8 @@ internal static partial class TestAccountCommandFactory
         Func<XboxPartnerApiException, string?> describeFailure,
         OutputOptions output,
         TextWriter stdout,
-        TextWriter stderr)
+        TextWriter stderr,
+        CancellationToken cancellationToken)
     {
         try
         {
@@ -412,7 +417,6 @@ internal static partial class TestAccountCommandFactory
         }
         catch (XboxPartnerApiException ex)
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, stderr);
             stderr.WriteLine(FormatError(
                 ex,
                 output.IsCompact,
@@ -425,7 +429,7 @@ internal static partial class TestAccountCommandFactory
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
         {
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;

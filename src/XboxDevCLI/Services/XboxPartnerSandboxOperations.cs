@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using System.Text.Json;
-using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 
@@ -57,8 +56,7 @@ internal sealed partial class XboxPartnerClient
         ArgumentException.ThrowIfNullOrWhiteSpace(sellerId);
         ArgumentException.ThrowIfNullOrWhiteSpace(sandboxId);
         var uri = BuildRequestUri(baseUrl, $"xboxpartner/v1/sandboxes/{Uri.EscapeDataString(sandboxId)}");
-        var token = await AcquireRequiredTokenAsync(cancellationToken);
-        return await GetAuthorizedAsync(uri, token, sellerId.Trim(), cancellationToken);
+        return (await SendAuthorizedAsync(uri, sellerId.Trim(), cancellationToken, HttpMethod.Get)).Body;
     }
 
     /// <summary>
@@ -77,51 +75,20 @@ internal sealed partial class XboxPartnerClient
         Action<int>? pageRead = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sellerId);
-        _ = BuildRequestUri(baseUrl, SandboxesPath);
-        var correlationId = Guid.NewGuid().ToString();
-        var sandboxes = new JsonArray();
-        var seenTokens = new HashSet<string>(StringComparer.Ordinal);
-        string? continuationToken = null;
-        var pages = 0;
-        do
-        {
-            pages++;
-            var path = continuationToken is null
-                ? SandboxesPath
-                : $"{SandboxesPath}?continuationToken={Uri.EscapeDataString(continuationToken)}";
-
-            // Acquired per page so MSAL can refresh the token during a long listing.
-            var token = await AcquireRequiredTokenAsync(cancellationToken);
-            var response = await SendAuthorizedAsync(
-                BuildRequestUri(baseUrl, path), token, sellerId.Trim(), cancellationToken,
-                HttpMethod.Get, correlationId: correlationId);
-            try
-            {
-                int before = sandboxes.Count;
-                continuationToken = ReadSandboxPage(response.Body, sandboxes);
-                pageRead?.Invoke(sandboxes.Count - before);
-                if (continuationToken is not null && !seenTokens.Add(continuationToken))
-                {
-                    throw new InvalidDataException(
-                        "The sandbox list response repeated a continuation token, so the list " +
-                        "could not be completed.");
-                }
-
-                if (continuationToken is not null && pages >= MaxSandboxListPages)
-                {
-                    throw new InvalidDataException(
-                        $"The sandbox list did not end after {MaxSandboxListPages} pages, so it was stopped.");
-                }
-            }
-            catch (InvalidDataException exception)
-            {
-                // Carries the page's body and correlation ID to the error output.
-                throw new XboxPartnerResponseException(response.Body, response.CorrelationId, exception);
-            }
-        }
-        while (continuationToken is not null);
-
-        return sandboxes.ToJsonString();
+        IReadOnlyList<string> sandboxes = await ReadEveryPageAsync(
+            "sandboxes",
+            "sandbox list",
+            token => (
+                HttpMethod.Get,
+                token is null ? SandboxesPath : $"{SandboxesPath}?continuationToken={Uri.EscapeDataString(token)}",
+                null),
+            cancellationToken,
+            readItem: RequireSandboxId,
+            pageRead: pageRead,
+            baseUrl: baseUrl,
+            sellerId: sellerId.Trim(),
+            maxPages: MaxSandboxListPages);
+        return "[" + string.Join(',', sandboxes) + "]";
     }
 
     private const string SandboxesPath = "xboxpartner/v1/sandboxes";
@@ -132,55 +99,18 @@ internal sealed partial class XboxPartnerClient
     /// </summary>
     internal const int MaxSandboxListPages = 1000;
 
-    private static string? ReadSandboxPage(string body, JsonArray sandboxes)
+    private static void RequireSandboxId(string sandbox)
     {
-        JsonNode? page;
-        try
+        using var document = JsonDocument.Parse(sandbox);
+        var root = document.RootElement;
+        if (root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("sandboxId", out var id)
+            || id.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(id.GetString()))
         {
-            // Duplicate properties fail here; otherwise JsonObject throws ArgumentException on first access.
-            page = JsonNode.Parse(body, documentOptions: new JsonDocumentOptions { AllowDuplicateProperties = false });
+            throw new InvalidDataException(
+                "The sandbox list response contained an entry with no 'sandboxId'.");
         }
-        catch (JsonException exception)
-        {
-            throw new InvalidDataException("The sandbox list response was not valid JSON.", exception);
-        }
-
-        if (page is not JsonObject root
-            || !root.TryGetPropertyValue("sandboxes", out var items)
-            || items is not JsonArray array)
-        {
-            throw new InvalidDataException("The sandbox list response must contain a sandboxes array.");
-        }
-
-        foreach (var item in array)
-        {
-            if (item is not JsonObject sandbox
-                || !sandbox.TryGetPropertyValue("sandboxId", out var id)
-                || id is not JsonValue value
-                || !value.TryGetValue<string>(out var text)
-                || string.IsNullOrWhiteSpace(text))
-            {
-                throw new InvalidDataException(
-                    "The sandbox list response contained an entry with no 'sandboxId'.");
-            }
-
-            sandboxes.Add(sandbox.DeepClone());
-        }
-
-        if (!root.TryGetPropertyValue("continuationToken", out var next) || next is null)
-        {
-            return null;
-        }
-
-        if (next is JsonValue tokenValue
-            && tokenValue.TryGetValue<string>(out var token)
-            && !string.IsNullOrWhiteSpace(token))
-        {
-            return token;
-        }
-
-        throw new InvalidDataException(
-            "The sandbox list response contained an invalid 'continuationToken'.");
     }
 }
 

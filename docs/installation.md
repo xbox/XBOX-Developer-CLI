@@ -5,15 +5,61 @@ description: Download and install the CLI for Windows, Linux, or macOS.
 
 # Installation
 
-Install the XBOX Developer CLI from a release archive, make it available in your
-terminal, and verify which executable runs. For a source build instead, see
+Install the XBOX CLI with WinGet on Windows, with the install script on Linux or macOS, or from
+a release archive on any platform. To build it from source instead, see
 [Building from source](contributing/building-from-source.md).
+
+## Windows: install with WinGet
+
+On Windows, install the CLI with [WinGet](https://learn.microsoft.com/windows/package-manager/winget/),
+the Windows Package Manager:
+
+```powershell
+winget install Microsoft.Gaming.XBOXDeveloperCLI
+xbox --version
+```
+
+WinGet adds `xbox` to your `PATH`, and needs no administrator rights. If the terminal can't find
+`xbox` after installing, open a new terminal, or restart your IDE if you use its integrated
+terminal.
+
+To update the CLI:
+
+```powershell
+winget upgrade Microsoft.Gaming.XBOXDeveloperCLI
+```
+
+To remove it:
+
+```powershell
+winget uninstall Microsoft.Gaming.XBOXDeveloperCLI
+```
+
+Uninstalling leaves your saved settings and sign-in data in `%LOCALAPPDATA%\XboxDevCLI`. Update a
+WinGet installation only with WinGet, not with the ZIP steps on this page. Continue with
+[Next steps](#next-steps).
+
+## Linux and macOS: install with a script
+
+On Linux x64 or macOS, the install script downloads the latest release into
+`~/.local/opt/xboxdevcli`, and adds that directory to your `PATH` in your shell's startup file.
+It needs `curl` and `unzip`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/xbox/cli/main/install.sh | sh
+```
+
+The script prints the startup file it changed. Open a new terminal, and check the version with
+`xbox --version`. To update the CLI, run the script again. To remove it, delete
+`~/.local/opt/xboxdevcli` and the line the script added to that startup file.
 
 ## Download a release
 
-Download the latest release for your platform from the
-[GitHub Releases page](https://github.com/microsoft/XBOX-Developer-CLI/releases/latest).
-Choose the archive matching your operating system and CPU:
+Install from a release archive when WinGet and the install script don't fit, such as on a
+Windows PC without WinGet.
+
+Download the archive for your operating system and CPU from the
+[GitHub Releases page](https://github.com/xbox/cli/releases/latest):
 
 | Platform     | Asset                      | Binary |
 |--------------|----------------------------|--------|
@@ -22,221 +68,99 @@ Choose the archive matching your operating system and CPU:
 | macOS on Apple silicon | `xbox-osx-arm64.zip` | `xbox` |
 | macOS on Intel | `xbox-osx-x64.zip` | `xbox` |
 
-The Linux x64 binary requires glibc 2.27 or newer. The macOS binaries are signed by
-Microsoft and notarized by Apple. No separate .NET runtime installation is required to
-run a downloaded release.
+The Linux x64 binary requires glibc 2.27 or later. The macOS binaries are signed by Microsoft and
+notarized by Apple. You don't need to install .NET.
 
-Extract the **whole archive** into a new, dedicated installation directory owned
-by your user. The archive holds the executable, `LICENSE`, and `NOTICE.md`; the CLI's
-settings are built into the executable, so there's no settings file to keep beside it.
-Do not run it from inside the ZIP.
-
-If you move the installation, move the entire folder. For settings you can customize, see
-[Configuration](configuration.md).
-
-The examples assume the ZIP is in your Downloads folder. If the destination
-already contains an installation, follow [Update a ZIP installation](#update-a-zip-installation)
-instead of extracting over it.
-
-`PATH` is the list of directories your shell searches when you type `xbox`.
-Add the **directory containing the executable**, not the ZIP or the executable's
-filename. Keep all other PATH entries. The XBOX Developer CLI does not edit PATH
-or install itself.
+Extract the whole archive into a new directory of its own, and add that directory to your `PATH`,
+as the steps for your platform show. If the directory already holds an installation, follow
+[Update a ZIP installation](#update-a-zip-installation) instead.
 
 ## Windows (PowerShell)
 
-### 1. Extract the archive
+1. Extract the archive, and check the extracted executable:
 
-```powershell
-$cliDir = Join-Path $env:LOCALAPPDATA 'Programs\XboxDevCLI'
-Expand-Archive -LiteralPath "$HOME\Downloads\xbox-win-x64.zip" -DestinationPath $cliDir
-& "$cliDir\xbox.exe" --version
-```
+   ```powershell
+   $cliDir = Join-Path $env:LOCALAPPDATA 'Programs\XboxDevCLI'
+   Expand-Archive -LiteralPath "$HOME\Downloads\xbox-win-x64.zip" -DestinationPath $cliDir
+   & "$cliDir\xbox.exe" --version
+   ```
 
-### 2. Add the installation directory to PATH
+2. Add the directory to your `PATH`. From Windows Search, open **Edit environment variables for
+   your account**. Under **User variables**, edit **Path**, select **New**, and enter the
+   directory, such as `C:\Users\<you>\AppData\Local\Programs\XboxDevCLI`.
 
-Open **Edit environment variables for your account** from Windows Search. Under
-**User variables**, edit **Path**, choose **New**, and add the full directory
-printed by this command:
+3. Open a new terminal, and check the version:
 
-```powershell
-$cliDir
-```
-
-With the example above, this is normally
-`C:\Users\<you>\AppData\Local\Programs\XboxDevCLI`. Do not replace the rest of PATH.
-This user-scoped installation needs no administrator privileges.
-
-To use the installation immediately in the same PowerShell session used for
-extraction:
-
-```powershell
-$env:Path = "$cliDir;$env:Path"
-```
-
-This assignment is temporary; the Windows settings step makes PATH persistent.
-Close and reopen your terminal application to use the persistent setting.
-Restart the IDE too if you use its integrated terminal.
-
-### 3. Verify the selected executable and version
-
-In the reopened terminal, check which command your shell resolves and then check
-the version:
-
-```powershell
-Get-Command xbox -All | Select-Object CommandType, Source, Definition
-xbox --version
-```
-
-Follow [Verify the installation](#verify-the-installation) below to compare the
-version and resolve an older executable, alias, or function.
+   ```powershell
+   xbox --version
+   ```
 
 ## Linux and macOS (Bash or Zsh)
 
-### 1. Extract the archive
+1. Extract the archive, and check the extracted executable. This example uses Linux x64; on
+   macOS, use `xbox-osx-arm64.zip` on Apple silicon or `xbox-osx-x64.zip` on Intel:
 
-Download the archive for your platform from the table above. This example uses
-Linux x64; on macOS, use `xbox-osx-arm64.zip` on Apple silicon or `xbox-osx-x64.zip`
-on Intel. Keep the full extracted contents together:
+   ```bash
+   cli_dir="$HOME/.local/opt/xboxdevcli"
+   mkdir -p "$cli_dir"
+   unzip "$HOME/Downloads/xbox-linux-x64.zip" -d "$cli_dir"
+   chmod u+x "$cli_dir/xbox"
+   "$cli_dir/xbox" --version
+   ```
 
-```bash
-cli_dir="$HOME/.local/opt/xboxdevcli"
-mkdir -p "$cli_dir"
-unzip "$HOME/Downloads/xbox-linux-x64.zip" -d "$cli_dir"
-chmod u+x "$cli_dir/xbox"
-"$cli_dir/xbox" --version
-```
+2. Add the directory to your `PATH`. Add this line to `~/.zshrc` for Zsh, the default shell on
+   macOS, or to `~/.bashrc` for Bash:
 
-If the operating system blocks the downloaded executable, review the warning and
-confirm its provenance before proceeding; do not disable platform security checks.
+   ```bash
+   export PATH="$HOME/.local/opt/xboxdevcli:$PATH"
+   ```
 
-### 2. Add the installation directory to PATH
+3. Open a new terminal, and check the version:
 
-Add this line once to the startup file your shell actually reads:
-
-```bash
-export PATH="$HOME/.local/opt/xboxdevcli:$PATH"
-```
-
-Use `~/.zshrc` for interactive Zsh, the default shell on macOS, or `~/.bashrc` for
-interactive non-login Bash.
-Login Bash reads `~/.bash_profile`, `~/.bash_login`, or `~/.profile` (the first
-one that exists); put the line in that file, or ensure it sources your `~/.bashrc`.
-If you chose a different installation directory, use that path instead.
-
-To use the installation immediately in the same shell used for extraction:
-
-```bash
-export PATH="$cli_dir:$PATH"
-```
-
-This command is temporary; the startup-file edit makes PATH persistent.
-Open a new terminal to use that setting. Restart the IDE too if you use its
-integrated terminal.
-
-### 3. Verify the selected executable and version
-
-In the reopened terminal, check which command your shell resolves and then check
-the version:
-
-```bash
-type -a xbox
-xbox --version
-```
-
-Follow [Verify the installation](#verify-the-installation) below to compare the
-version and resolve an older executable, alias, or function.
+   ```bash
+   xbox --version
+   ```
 
 ## Verify the installation
 
-Confirm that the selected executable is in your chosen installation directory
-and its version matches the release you downloaded (without the tag's leading
-`v`). An explicit executable path, as in the extraction examples, lets you check the new copy
-independently of PATH.
-
-Among executable matches, the first directory in PATH wins; aliases and shell
-functions can override it. If lookup selects an older copy, alias, or function,
-resolve that conflict before treating installation as complete. Inspect both
-user and system PATH on Windows; update the appropriate shell startup file on
-Linux and macOS. Remove or rename a conflicting alias/function in the configuration
-that defines it, and keep backup installations off PATH. Do not overwrite
-package-managed files. Reopen the terminal and repeat both checks.
-
-## Sign in and get started
-
-Continue with [Getting started](getting-started.md) to sign in, select your
-Partner Center seller, and list its games. Installation does not grant service
-access; use an account with access to the intended Partner Center seller account.
-
-For a command overview:
-
-```bash
-xbox --help
-```
-
-See [Authentication](authentication.md) for sign-in details and
-[Commands](commands.md) for the full reference. `xbox info` displays
-getting-started information.
-
-For the first-run launch screen, welcome, and terminal color behavior, see
-[First run and terminal output](commands/info.md#first-run-and-terminal-output).
-See [Telemetry](telemetry.md) for the disclosure and opt-out policy.
+`xbox --version` shows the version of the release you downloaded, without the tag's leading `v`.
+If it shows an older version, another copy of `xbox` comes first on your `PATH`. Find it with
+`Get-Command xbox -All` in PowerShell or `type -a xbox` in Bash or Zsh, and remove it from your
+`PATH`.
 
 ## Check for updates
 
+`xbox upgrade` tells you whether there's a newer release, and how to install it. See
+[Upgrade](commands/upgrade.md).
+
 ```bash
 xbox upgrade
-xbox upgrade --check --output json-compact
-xbox --version
 ```
 
-`upgrade` only checks the latest public stable GitHub release and returns JSON
-with the running version, available version, release link, and manual update
-instructions. Both forms above are read-only: nothing is installed or downloaded
-beyond release metadata. There are no startup/background checks or prompts.
-
-The check can fail when no stable release is available. An HTTP 404 does not
-mean the XBOX Developer CLI is up to date. Open the releases page to check for
-releases.
-See [Upgrade](commands/upgrade.md) for output and troubleshooting details,
-including checking versions when running from source.
-
-For ZIP installations, follow the steps below. For source or package-managed
-installations, use the original build/installation mechanism instead of
-overwriting managed files.
+To update a WinGet installation, run `winget upgrade Microsoft.Gaming.XBOXDeveloperCLI`. To
+update a script installation, run the [install script](#linux-and-macos-install-with-a-script)
+again. To update a ZIP installation, follow the next section.
 
 ## Update a ZIP installation
 
-1. Open the release page returned by `xbox upgrade --check`, or the
-   [GitHub Releases page](https://github.com/microsoft/XBOX-Developer-CLI/releases/latest)
-   if the update check cannot access it. Review its notes and download the
-   ZIP for your OS and CPU. Extract the whole archive into a **new** directory,
-   separate from your current installation and user state directory.
-2. Keep the old installation as a backup. Settings come from the new release's
-   built-in defaults, `XBOX_` environment variables, and command options, so
-   there's no settings file to carry forward; keep any `XBOX_` variables you
-   set. If the old installation has an `appsettings.json` or
-   `appsettings.*.json` you customized, move those values to `XBOX_` variables;
-   see [Upgrading from a release that read appsettings.json](configuration.md#upgrading-from-a-release-that-read-appsettingsjson).
-3. **Leave saved settings and sign-in data alone.** On Windows these are in
-   `%LOCALAPPDATA%\XboxDevCLI`, separate from the recommended
-   `%LOCALAPPDATA%\Programs\XboxDevCLI` installation. Update under the same OS
-   user; do not copy, import, or reset these files. Your saved context remains
-   available, but you may need to sign in again if your session has expired.
-   See [Configuration](configuration.md#saved-context) for saved
-   settings locations on all platforms.
-4. Close running XBOX Developer CLI processes, especially on Windows. Either
-   replace your old ZIP installation directory with the prepared new one at the
-   **same path** (PATH needs no change), or keep the new directory and change
-   the old PATH entry to its location using the [Windows](#windows-powershell)
-   or [Linux and macOS](#linux-and-macos-bash-or-zsh) steps above.
-   Keep the backup outside PATH.
-5. Reopen your terminal application and IDE, if applicable. Run
-   `Get-Command xbox -All` (PowerShell) or `type -a xbox` (Bash/Zsh), confirm
-   the selected path, and compare `xbox --version` with the downloaded release.
-   `xbox context get` shows the saved context.
+Your saved settings and sign-in data are stored apart from the installation, so they carry over.
+See [Where values are saved](commands/context.md#where-values-are-saved).
 
-Moving the installation does not require moving your saved settings or sign-in
-data. If verification fails, keep the old copy and restore its PATH entry or
-installation directory. These update steps are manual; `xbox upgrade` does not
-perform them.
+1. Download the new release's archive from the release page `xbox upgrade` shows, or from the
+   [GitHub Releases page](https://github.com/xbox/cli/releases/latest), and extract it
+   into a new directory.
+2. Close any running `xbox` processes.
+3. Either replace your old installation directory with the new one, at the same path, or change
+   your `PATH` entry to the new directory as in [Windows (PowerShell)](#windows-powershell) or
+   [Linux and macOS (Bash or Zsh)](#linux-and-macos-bash-or-zsh).
+4. Open a new terminal, and check that `xbox --version` shows the new version.
+
+Keep the old directory, off your `PATH`, until the new version works. If your sign-in has expired,
+run `xbox auth login` again.
+
+## Next steps
+
+- [Getting started](getting-started.md): sign in, choose your Partner Center seller, and list its
+  games.
+- [Commands](commands.md): the full command reference.
+- [Telemetry](telemetry.md): what the CLI collects, and how to turn it off.

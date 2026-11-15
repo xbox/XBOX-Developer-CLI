@@ -1,26 +1,30 @@
 # XBOX CLI documentation
 
-The documentation source for the XBOX CLI, kept in the repository so it ships with the
-code and stays editable in the same pull request as the change it describes.
-
-These files are plain Markdown with no site generator. Read them here on GitHub, or clone
-the repository and read them locally — every link between them is a relative file path, so
-both work.
+These pages explain how to install the XBOX CLI, sign in, and use its commands to
+work with Partner Center games, playtests, XBOX services configuration, and PlayFab titles.
 
 ## Start here
 
+> [!NOTE]
+> The XBOX CLI is a technical preview. Until version 1.0, commands and output can
+> change between releases; see [Experimental commands](cli-command-lifecycle.md).
+> [Known issues](known-issues.md) lists what's unfinished in the latest release.
+
 | Page | What it covers |
 |------|----------------|
-| [Installation](installation.md) | Download and install the CLI for your platform. |
-| [Getting started](getting-started.md) | Install the XBOX Developer CLI, sign in, select a seller, and list its games. |
-| [Authentication](authentication.md) | Sign in, check status, cached credentials, service principals, and PlayFab requirements. |
+| [Installation](installation.md) | Install and update the CLI on Windows, Linux, or macOS. |
+| [Getting started](getting-started.md) | Sign in, choose a seller, and list its games. |
+| [Your first playtest](first-playtest.md) | Upload a build, then create, publish, and share a playtest of it. |
+| [Use XBOX services in a playtest](xbox-services-in-a-playtest.md) | Prepare a game's achievements, embargo, and XBOX services configuration for a playtest. |
+| [Authentication](authentication.md) | Sign in as yourself or as a service principal, check who's signed in, and get PlayFab access. |
+| [Known issues](known-issues.md) | Problems and unfinished features in the latest release, and their workarounds. |
 
 ## Reference
 
 | Page | What it covers |
 |------|----------------|
-| [Commands](commands.md) | The command reference: global options, output formats, and every command below. |
-| [PlayFab API integration](playfab-api.md) | Finding and calling PlayFab APIs from the terminal. |
+| [Commands](commands.md) | Global options, output formats, exit codes, and every command below. |
+| [PlayFab API integration](playfab-api.md) | Find and call PlayFab APIs from the terminal. |
 
 The command pages follow the command tree:
 
@@ -30,8 +34,11 @@ The command pages follow the command tree:
   - [`game`](commands/game.md): Partner Center games
   - [`seller`](commands/seller.md): Partner Center sellers
   - [`sandbox`](commands/sandbox.md): XBOX sandboxes
+  - [`audience`](commands/audience.md): a seller's audiences (Experimental)
+  - [`package`](commands/package.md): game packages (Experimental)
   - [`pc`](commands/pc.md): this PC's XBOX sandbox (Experimental)
-  - [`test-account`](commands/test-account.md): XBOX test account batches and creation jobs, and looking up an account's batch and whether its access expired
+  - [`test-account`](commands/test-account.md): XBOX test accounts and their batches
+  - [`playtest`](commands/playtest.md): XBOX game playtests
   - [`playfab`](commands/playfab.md): PlayFab services
     - [`api`](commands/playfab/api.md): call any API endpoint directly
     - [`mps`](commands/playfab/mps.md): Multiplayer Servers (Experimental)
@@ -45,6 +52,7 @@ The command pages follow the command tree:
     - [`experiment`](commands/playfab/experiment.md): experiments (Experimental)
     - [`player`](commands/playfab/player.md): player accounts (Experimental)
     - [`privacy`](commands/playfab/privacy.md): privacy exports (Experimental)
+    - [`service-principal`](commands/playfab/service-principal.md): service-principal access to a studio (Experimental)
   - [`xbl`](commands/xbl.md): XBOX services configuration (Experimental)
     - [`achievement-image`](commands/xbl/achievement-image.md): achievement images
   - [`info`](commands/info.md): version and links
@@ -56,38 +64,19 @@ The command pages follow the command tree:
 
 | Page | What it covers |
 |------|----------------|
-| [Safety and destructive operations](safety.md) | Which operations are gated, and the subtleties of how. |
-| [Configuration](configuration.md) | Layering settings from files, environment variables, and options. |
-| [Telemetry](telemetry.md) | What is collected and how to opt out. |
-| [Audit logging](audit-log.md) | Keeping a local record of mutating invocations. |
-| [Using the XBOX CLI from agents](cli-for-agents.md) | Running the CLI from AI agents: approval, targets, output, and finding APIs. |
+| [Safety and destructive operations](safety.md) | Which commands ask before they change something, and what to do when a change's outcome is unknown. |
+| [Configuration](configuration.md) | Settings, the environment variables that set them, and where saved values are kept. |
+| [Telemetry](telemetry.md) | What's collected, and how to turn it off. |
+| [Audit logging](audit-log.md) | Keep a local record of the PlayFab operations the CLI runs. |
+| [Using the XBOX CLI from agents](cli-for-agents.md) | What an AI agent must ask before a change, and how it chooses targets, reads output, and finds APIs. |
+| [Experimental commands](cli-command-lifecycle.md) | What compatibility each release promises, and what Experimental means. |
 
 ## Contributing
 
 | Page | What it covers |
 |------|----------------|
 | [Building from source](contributing/building-from-source.md) | Build and run from the repository. |
-| [Testing and coverage](contributing/testing.md) | Run tests, including the end-to-end tests, and measure coverage against the project's bar. |
+| [Testing and coverage](contributing/testing.md) | Run the tests, including the end-to-end tests, and measure coverage. |
 | [Fuzz testing](contributing/fuzzing.md) | Run and tune the property-based fuzz tests. |
 | [Code generation](contributing/code-generation.md) | Regenerate PlayFab models and API metadata. |
-| [Experimental commands](cli-command-lifecycle.md) | CLI compatibility commitments and Experimental labeling. |
-
-## Editing these docs
-
-Every command, verb, or option change updates this documentation in the same pull request.
-The pages follow the command tree, so a command's path says where it goes: `xbox <command>`
-is documented in `commands/<command>.md`, and `xbox playfab <service>` in
-`commands/playfab/<service>.md`. A new group needs its own page in the matching place, a
-row in its parent page's command table, and an entry in the tree above. Each command page
-says whether its commands accept `--output table`.
-
-Three conventions keep the source portable, because it is meant to be published elsewhere:
-
-- **Link between pages with relative file paths** — `[Commands](commands.md)`,
-  `[MPS](commands/playfab/mps.md)`. No absolute URLs, and no site-generator template syntax.
-- **Front matter carries `title` and `description`, and nothing else.** `description` is
-  one sentence saying what the page covers; the publishing target shows it under the title
-  and uses it for search. Ordering and grouping live in this index rather than in per-file
-  metadata.
-- **The page's `#` heading matches its `title`**, so the page reads the same here as it
-  does once published.
+| [Editing the docs](contributing/documentation.md) | Where a change's documentation goes, known issues, and how to write a page. |

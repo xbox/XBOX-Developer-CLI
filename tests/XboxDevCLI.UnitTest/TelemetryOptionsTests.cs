@@ -18,8 +18,6 @@ public class TelemetryOptionsTests
 
         Assert.True(options.Enabled);
         Assert.Null(options.ConnectionString);
-        Assert.True(options.DependencyTracingEnabled);
-        Assert.Equal(0.1, options.DependencyTraceSamplingRatio);
     }
 
     [Theory]
@@ -104,22 +102,6 @@ public class TelemetryOptionsTests
             embeddedConnectionString: embedded);
 
         Assert.Equal(configuredConnectionString, options.ConnectionString);
-    }
-
-    [Theory]
-    [InlineData("-1", 0)]
-    [InlineData("0.25", 0.25)]
-    [InlineData("2", 1)]
-    public void FromConfiguration_ClampsDependencySamplingRatio(
-        string configuredValue,
-        double expectedValue)
-    {
-        var configuration = CreateConfiguration(
-            ("Telemetry:DependencyTraceSamplingRatio", configuredValue));
-
-        var options = TelemetryOptions.FromConfiguration(configuration, _ => null);
-
-        Assert.Equal(expectedValue, options.DependencyTraceSamplingRatio);
     }
 
     private static IConfiguration CreateConfiguration(

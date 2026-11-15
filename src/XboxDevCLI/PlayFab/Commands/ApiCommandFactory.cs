@@ -81,10 +81,13 @@ internal static class ApiCommandFactory
         // The path is an argument, so there is no effect to state in advance. Saying so is more
         // use than saying nothing: this is the one command that can reach any operation in the
         // API, including the Delete and Shutdown paths the runtime gate gets involved in, and it
-        // is the command an agent exploring the surface is most likely to reach for.
+        // is the command an agent exploring the surface is most likely to reach for. It can reach
+        // either PlayFab endpoint; preparation narrows the warning to the one its path goes to.
+        command.Calls(ServiceEndpoints.PlayFab | ServiceEndpoints.PlayFabStudio);
         return command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.DependsOnApiPath,
-            Scope: "Any PlayFab API operation on the selected title. The CLI calls with your Entra ID "
+            Scope: "Any PlayFab API operation on the selected title, or, for /Studio/* operations, on the "
+                + "studio the request names, with no title needed. The CLI calls with your Entra ID "
                 + "credentials in place of a title secret key or title entity token, so operations "
                 + "that accept only player or game-server entity tokens aren't authorized.",
             Output: "The PlayFab response envelope ({code, status, data}) as JSON; --data-only prints only data. "

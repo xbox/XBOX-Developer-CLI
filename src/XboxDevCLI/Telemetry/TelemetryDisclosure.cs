@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 using System.Globalization;
-using XboxDevCLI.Presentation;
 using XboxDevCLI.Services;
 
 namespace XboxDevCLI.Telemetry;
@@ -17,13 +16,11 @@ internal static class TelemetryDisclosure
 {
     internal const string SentinelFileName = ".telemetry-disclosure-shown";
 
-    internal static string DisclosureText => FormatDisclosure(useAnsi: false);
-
     internal static string FormatDisclosure(bool useAnsi) =>
         string.Join(
             Environment.NewLine,
             useAnsi ? "\u001b[1mTELEMETRY\u001b[0m" : "TELEMETRY",
-            $"  {WelcomeExperience.ColorizeBrand("XBOX", useAnsi)} CLI collects anonymous usage telemetry.",
+            "  XBOX CLI collects anonymous usage telemetry.",
             $"  Learn more or opt out: {ProjectLinks.TelemetryPolicy}");
 
     /// <summary>
@@ -32,7 +29,11 @@ internal static class TelemetryDisclosure
     /// is not shown again. This is best-effort: any I/O failure is swallowed so the CLI is
     /// never broken or delayed by the disclosure.
     /// </summary>
-    internal static void WriteIfFirstRun(
+    /// <returns>
+    /// Whether the disclosure has been shown, on this run or an earlier one. Telemetry is sent only
+    /// when it has.
+    /// </returns>
+    internal static bool WriteIfFirstRun(
         string stateDirectory,
         TextWriter writer,
         bool useAnsi = false)
@@ -43,14 +44,14 @@ internal static class TelemetryDisclosure
             sentinelPath = Path.Combine(stateDirectory, SentinelFileName);
             if (File.Exists(sentinelPath))
             {
-                return;
+                return true;
             }
         }
         catch
         {
             // If we cannot even determine or probe the sentinel path, skip the disclosure
             // rather than risk throwing on the CLI's hot path.
-            return;
+            return false;
         }
 
         try
@@ -59,7 +60,7 @@ internal static class TelemetryDisclosure
         }
         catch
         {
-            return;
+            return false;
         }
 
         try
@@ -74,6 +75,8 @@ internal static class TelemetryDisclosure
             // Persisting the sentinel is best-effort. If it fails we may re-show the
             // disclosure on a later run, which is acceptable and preferable to failing.
         }
+
+        return true;
     }
 
     /// <summary>

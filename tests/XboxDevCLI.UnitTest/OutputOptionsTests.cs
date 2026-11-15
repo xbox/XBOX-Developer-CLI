@@ -3,9 +3,6 @@
 
 using System.CommandLine;
 using System.Net;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using XboxDevCLI.Services;
 using XboxDevCLI.Output;
 using Xunit;
@@ -477,37 +474,5 @@ public class OutputOptionsTests
 
         Assert.Single(download.Options, o => o.Name == "--dest");
         Assert.DoesNotContain(download.Options, o => o.Name == "--output-path");
-    }
-
-    // ---------------------------------------------------------------------------
-    // Helpers
-    // ---------------------------------------------------------------------------
-
-    private static IConfiguration CreateTestConfiguration(string titleId = "ABC123")
-    {
-        var settings = new Dictionary<string, string?>
-        {
-            ["PlayFab:TitleId"] = titleId,
-            ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-            ["AzureAd:ClientId"] = "test-client-id",
-            ["AzureAd:TenantId"] = "test-tenant-id",
-            ["AzureAd:Scopes"] = "api://test/.default",
-        };
-        return new ConfigurationBuilder().AddInMemoryCollection(settings).Build();
-    }
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken)
-    {
-        return new AuthenticationResult(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
     }
 }

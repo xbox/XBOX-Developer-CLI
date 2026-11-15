@@ -290,12 +290,18 @@ internal sealed partial class XboxPartnerClient
 
     public async Task<string> GetXboxLiveConfigurationsAsync(
         long? sellerId,
-        Guid scid,
+        Guid? scid,
         CancellationToken cancellationToken,
+        string? titleId = null,
+        Action<XboxLiveResolvedConfigurationTarget>? targetResolved = null,
         Action<int>? pageRead = null)
     {
         ValidateSellerId(sellerId);
-        ValidateRequiredGuid(scid, nameof(scid));
+        ValidateConfigurationTarget(scid, titleId);
+        long? pageSeller = sellerId;
+        Guid? pageScid = scid;
+        string? pageTitle = titleId;
+        bool firstPage = true;
         IReadOnlyList<string> configurations = await ReadEveryPageAsync(
             "configurations",
             "configuration list",
@@ -303,32 +309,53 @@ internal sealed partial class XboxPartnerClient
                 HttpMethod.Post,
                 "xboxpartner/v1/xboxlive/configurations",
                 JsonContent.Create(new XboxLiveConfigurationsRequest(
-                    sellerId,
-                    scid,
+                    pageSeller,
+                    pageScid,
                     token is null ? ListPageSize : null,
-                    token))),
+                    token,
+                    pageTitle))),
             cancellationToken,
-            pageRead: pageRead).ConfigureAwait(false);
+            pageRead: pageRead,
+            responseReceived: (response, correlationId) =>
+            {
+                var target = ReadConfigurationTarget(
+                    response, pageSeller, pageScid, pageTitle, correlationId,
+                    requireMetadata: titleId is not null);
+                if (target is not null)
+                {
+                    pageSeller = target.SellerId ?? pageSeller;
+                    pageScid = target.Scid;
+                    pageTitle = null;
+                    if (firstPage)
+                    {
+                        targetResolved?.Invoke(target);
+                    }
+                }
+                firstPage = false;
+            }).ConfigureAwait(false);
         return "[" + string.Join(',', configurations) + "]";
     }
 
     public async Task<string> GetXboxLiveConfigurationAsync(
         long? sellerId,
-        Guid scid,
+        Guid? scid,
         string sandbox,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? titleId = null,
+        Action<XboxLiveResolvedConfigurationTarget>? targetResolved = null)
     {
         ValidateSellerId(sellerId);
-        ValidateRequiredGuid(scid, nameof(scid));
+        ValidateConfigurationTarget(scid, titleId);
         string validatedSandbox = ValidateSandbox(sandbox, nameof(sandbox));
-        return await SendAsync(
-            HttpMethod.Post,
+        return (await SendConfigurationOperationAsync(
             "xboxpartner/v1/xboxlive/configurations/get",
             JsonContent.Create(new XboxLiveConfigurationRequest(
                 sellerId,
                 scid,
-                validatedSandbox)),
-            cancellationToken).ConfigureAwait(false);
+                validatedSandbox,
+                titleId)),
+            sellerId, scid, titleId, static body => body, cancellationToken, targetResolved)
+            .ConfigureAwait(false)).Body;
     }
 
     public async Task<string> GetSchemaTypesAsync(CancellationToken cancellationToken) =>
@@ -373,6 +400,8 @@ internal sealed partial class XboxPartnerClient
     {
         ValidateSellerId(sellerId);
         ArgumentNullException.ThrowIfNull(request);
+        ValidateDocumentTarget(request.DocumentType, request.Scid, request.TitleId);
+        string correlationId = Guid.NewGuid().ToString();
         using HttpResponseMessage response = await SendResponseAsync(
             HttpMethod.Post,
             "xboxpartner/v1/xboxlive/documents",
@@ -383,9 +412,14 @@ internal sealed partial class XboxPartnerClient
                 request.Sandbox,
                 request.View,
                 request.Version,
-                request.Documents)),
+                request.Documents,
+                request.TitleId)),
             "application/zip",
-            cancellationToken).ConfigureAwait(false);
+            cancellationToken,
+            correlationId).ConfigureAwait(false);
+        var target = request.Scid.HasValue || request.TitleId is not null
+            ? ReadConfigurationTarget(response, sellerId, request.Scid, request.TitleId, correlationId)
+            : null;
         using var bodyTimeout = CreateResponseBodyTimeout(cancellationToken);
         byte[] content = await ReadResponseBytesWithLimitAsync(
             response.Content,
@@ -412,18 +446,20 @@ internal sealed partial class XboxPartnerClient
                 "The document response did not contain valid metadata.");
         }
 
-        return new XboxPartnerDocumentArchive(content, eTag, version, view);
+        return new XboxPartnerDocumentArchive(content, eTag, version, view, target);
     }
 
-    public async Task<string> CommitXboxLiveDocumentsAsync(
+    internal async Task<XboxPartnerOperationResult<XboxLiveCommitResponse>> CommitXboxLiveDocumentsAsync(
         long? sellerId,
         XboxLiveCommitDocumentsRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<XboxLiveResolvedConfigurationTarget>? targetResolved = null,
+        Action<string>? onSending = null)
     {
         ValidateSellerId(sellerId);
         ArgumentNullException.ThrowIfNull(request);
-        return await SendAsync(
-            HttpMethod.Post,
+        ValidateDocumentTarget(request.DocumentType, request.Scid, request.TitleId);
+        return await SendConfigurationOperationAsync(
             "xboxpartner/v1/xboxlive/documents/commit",
             JsonContent.Create(new XboxLiveCommitDocumentsApiRequest(
                 sellerId,
@@ -434,18 +470,24 @@ internal sealed partial class XboxPartnerClient
                 request.Force,
                 request.ETag,
                 request.Message,
-                request.Documents)),
-            cancellationToken).ConfigureAwait(false);
+                request.Documents,
+                request.TitleId,
+                request.AllowSharedConfiguration)),
+            sellerId, request.Scid, request.TitleId, ParseCommitResponse, cancellationToken, targetResolved,
+            onSending)
+            .ConfigureAwait(false);
     }
 
-    public async Task<string> PublishXboxLiveConfigurationAsync(
+    internal async Task<XboxPartnerOperationResult<XboxLivePublishResponse>> PublishXboxLiveConfigurationAsync(
         long? sellerId,
         XboxLivePublishRequest request,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Action<XboxLiveResolvedConfigurationTarget>? targetResolved = null,
+        Action<string>? onSending = null)
     {
         ValidateSellerId(sellerId);
         ArgumentNullException.ThrowIfNull(request);
-        ValidateRequiredGuid(request.Scid, nameof(request.Scid));
+        ValidateConfigurationTarget(request.Scid, request.TitleId);
         ValidateSandbox(request.Sandbox, nameof(request.Sandbox));
         ValidateSandbox(request.SourceSandbox, nameof(request.SourceSandbox));
         if (request.ConfigSetVersion == 0)
@@ -455,8 +497,7 @@ internal sealed partial class XboxPartnerClient
                 "Config set version must be positive when provided.");
         }
 
-        return await SendAsync(
-            HttpMethod.Post,
+        return await SendConfigurationOperationAsync(
             "xboxpartner/v1/xboxlive/publish",
             JsonContent.Create(new XboxLivePublishApiRequest(
                 sellerId,
@@ -465,27 +506,77 @@ internal sealed partial class XboxPartnerClient
                 request.SourceSandbox,
                 request.ValidateOnly,
                 request.ConfigSetVersion,
-                request.Republish)),
-            cancellationToken).ConfigureAwait(false);
+                request.Republish,
+                request.TitleId,
+                request.AllowSharedConfiguration)),
+            sellerId, request.Scid, request.TitleId, ParsePublishResponse, cancellationToken, targetResolved,
+            onSending)
+            .ConfigureAwait(false);
     }
+
+    private static XboxLiveCommitResponse ParseCommitResponse(string response)
+    {
+        XboxLiveCommitResponse result = DeserializeOperationResponse<XboxLiveCommitResponse>(
+            response, "document save");
+        if (result.ValidationInfo.ValueKind == JsonValueKind.Undefined ||
+            !result.CanCommit.HasValue ||
+            !result.Committed.HasValue)
+        {
+            throw new InvalidDataException(
+                "The document save response was missing required fields.");
+        }
+
+        return result;
+    }
+
+    private static XboxLivePublishResponse ParsePublishResponse(string response)
+    {
+        XboxLivePublishResponse result = DeserializeOperationResponse<XboxLivePublishResponse>(
+            response, "publish");
+        if (string.IsNullOrWhiteSpace(result.Status))
+        {
+            throw new InvalidDataException("The publish response did not contain a status.");
+        }
+
+        return result;
+    }
+
+    private static T DeserializeOperationResponse<T>(string response, string resource)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(response, OperationResponseOptions)
+                ?? throw new JsonException("The response was null.");
+        }
+        catch (JsonException exception)
+        {
+            throw new InvalidDataException($"The {resource} response was not valid JSON.", exception);
+        }
+    }
+
+    private static readonly JsonSerializerOptions OperationResponseOptions =
+        new() { PropertyNameCaseInsensitive = true };
 
     public async Task<string> GetXboxLivePublishStatusAsync(
         long? sellerId,
-        Guid scid,
+        Guid? scid,
         string sandbox,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? titleId = null,
+        Action<XboxLiveResolvedConfigurationTarget>? targetResolved = null)
     {
         ValidateSellerId(sellerId);
-        ValidateRequiredGuid(scid, nameof(scid));
+        ValidateConfigurationTarget(scid, titleId);
         ValidateSandbox(sandbox, nameof(sandbox));
-        return await SendAsync(
-            HttpMethod.Post,
+        return (await SendConfigurationOperationAsync(
             "xboxpartner/v1/xboxlive/publish/status",
             JsonContent.Create(new XboxLivePublishStatusRequest(
                 sellerId,
                 scid,
-                sandbox)),
-            cancellationToken).ConfigureAwait(false);
+                sandbox,
+                titleId)),
+            sellerId, scid, titleId, static body => body, cancellationToken, targetResolved)
+            .ConfigureAwait(false)).Body;
     }
 
     private static void ValidateSellerId(long? sellerId)
@@ -633,14 +724,16 @@ internal sealed class XboxPartnerImageRegistrationRejectedException(
 
 public sealed record XboxLiveConfigurationsRequest(
     long? SellerId,
-    Guid Scid,
+    Guid? Scid,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? PageSize = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ContinuationToken = null);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? ContinuationToken = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null);
 
 public sealed record XboxLiveConfigurationRequest(
     long? SellerId,
-    Guid Scid,
-    string Sandbox);
+    Guid? Scid,
+    string Sandbox,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null);
 
 public sealed record XboxLiveConfigurationSummary(
     string Sandbox,
@@ -658,13 +751,15 @@ public sealed record XboxLiveGetDocumentsRequest(
     string? Sandbox,
     string View,
     ulong? Version,
-    IReadOnlyList<string> Documents);
+    IReadOnlyList<string> Documents,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null);
 
 public sealed record XboxPartnerDocumentArchive(
     byte[] Content,
     string ETag,
     ulong Version,
-    string View);
+    string View,
+    XboxLiveResolvedConfigurationTarget? Target = null);
 
 public sealed record XboxDocumentUpload(string Name, byte[] Content);
 
@@ -676,29 +771,36 @@ public sealed record XboxLiveCommitDocumentsRequest(
     bool Force,
     string? ETag,
     string? Message,
-    IReadOnlyList<XboxDocumentUpload> Documents);
+    IReadOnlyList<XboxDocumentUpload> Documents,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool AllowSharedConfiguration = false);
 
 public sealed record XboxLivePublishRequest(
-    Guid Scid,
+    Guid? Scid,
     string Sandbox,
     string SourceSandbox,
     bool ValidateOnly,
     ulong? ConfigSetVersion,
-    bool Republish = false);
+    bool Republish = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool AllowSharedConfiguration = false);
 
 internal sealed record XboxLivePublishApiRequest(
     long? SellerId,
-    Guid Scid,
+    Guid? Scid,
     string Sandbox,
     string SourceSandbox,
     bool ValidateOnly,
     ulong? ConfigSetVersion,
-    bool Republish);
+    bool Republish,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool AllowSharedConfiguration = false);
 
 internal sealed record XboxLivePublishStatusRequest(
     long? SellerId,
-    Guid Scid,
-    string Sandbox);
+    Guid? Scid,
+    string Sandbox,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null);
 
 internal sealed record XboxLiveGetDocumentsApiRequest(
     long? SellerId,
@@ -707,7 +809,8 @@ internal sealed record XboxLiveGetDocumentsApiRequest(
     string? Sandbox,
     string View,
     ulong? Version,
-    IReadOnlyList<string> Documents);
+    IReadOnlyList<string> Documents,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null);
 
 internal sealed record XboxLiveCommitDocumentsApiRequest(
     long? SellerId,
@@ -718,7 +821,9 @@ internal sealed record XboxLiveCommitDocumentsApiRequest(
     bool Force,
     string? ETag,
     string? Message,
-    IReadOnlyList<XboxDocumentUpload> Documents);
+    IReadOnlyList<XboxDocumentUpload> Documents,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string? TitleId = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool AllowSharedConfiguration = false);
 
 internal sealed record XboxLiveCommitResponse
 {
@@ -743,7 +848,7 @@ internal sealed record XboxLivePublishResponse
     [JsonPropertyName("Status")]
     public string? Status { get; init; }
 
-    /// <summary>XORC's working version of the source, which it sends as a string.</summary>
+    /// <summary>The service's working version of the source, which it sends as a string.</summary>
     [JsonPropertyName("SourceVersion")]
     public JsonElement? SourceVersion { get; init; }
 
@@ -752,6 +857,10 @@ internal sealed record XboxLivePublishResponse
 
     [JsonPropertyName("sourceLiveVersion")]
     public ulong? SourceLiveVersion { get; init; }
+
+    /// <summary>What a validation of a RETAIL publish would change in RETAIL's achievements.</summary>
+    [JsonPropertyName("achievementChanges")]
+    public XboxLiveAchievementChanges? AchievementChanges { get; init; }
 
     [JsonExtensionData]
     public IDictionary<string, JsonElement>? AdditionalProperties { get; init; }
@@ -764,4 +873,19 @@ internal sealed record XboxLivePublishResponse
         { ValueKind: JsonValueKind.Number } value => value.GetRawText(),
         _ => null,
     };
+
+    /// <summary>The source working version as a number, or null when it's missing or isn't a positive number.</summary>
+    [JsonIgnore]
+    public ulong? SourceVersionNumber =>
+        ulong.TryParse(
+            SourceVersionText,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture,
+            out ulong version) && version > 0
+            ? version
+            : null;
 }
+
+/// <summary>The achievement IDs a RETAIL publish would add to RETAIL.</summary>
+internal sealed record XboxLiveAchievementChanges(
+    [property: JsonPropertyName("added")] IReadOnlyList<string?>? Added);

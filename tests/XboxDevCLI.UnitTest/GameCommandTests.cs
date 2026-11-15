@@ -283,6 +283,93 @@ public class GameCommandTests
     }
 
     [Fact]
+    public async Task GameGet_SuggestsStoreIdOptionForAStoreIdShapedTitleId()
+    {
+        var client = new FakeXboxPartnerClient();
+
+        var result = await InvokeAsync(
+            client, "game", "get", "9N0000000000", "--seller-id", "1234567", "--details");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Empty(result.Stdout);
+        Assert.Contains("9N0000000000 looks like a Store ID. Did you mean:", result.Stderr, StringComparison.Ordinal);
+        Assert.Contains(
+            "  xbox game get --store-id 9N0000000000 --seller-id 1234567 --details",
+            result.Stderr,
+            StringComparison.Ordinal);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task GameGet_StoreIdSuggestionDropsTheEndOfOptionsMarker()
+    {
+        var client = new FakeXboxPartnerClient();
+
+        var result = await InvokeAsync(
+            client, "game", "get", "--seller-id", "1234567", "--", "9N0000000000");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains(
+            "  xbox game get --seller-id 1234567 --base-url http://localhost:54848 --store-id 9N0000000000" +
+            Environment.NewLine,
+            result.Stderr,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain(" -- ", result.Stderr, StringComparison.Ordinal);
+        Assert.Empty(client.Requests);
+    }
+
+    [Theory]
+    [InlineData("0x1234567890")]
+    [InlineData("0X1234567890")]
+    public async Task GameGet_TooLongHexTitleIdIsNotCalledAStoreId(string titleId)
+    {
+        var client = new FakeXboxPartnerClient();
+
+        var result = await InvokeAsync(client, "game", "get", titleId);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains(
+            "Use --store-id for a Store ID, or --keyword for a game name.",
+            result.Stderr,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("looks like a Store ID", result.Stderr, StringComparison.Ordinal);
+        Assert.Empty(client.Requests);
+    }
+
+    [Theory]
+    [InlineData("--store-id", "9N0000000001")]
+    [InlineData("--keyword", "headless")]
+    public async Task GameGet_StoreIdShapedTitleIdWithAnotherSelectorPointsAtStoreIdWithoutACommand(
+        string option,
+        string value)
+    {
+        var client = new FakeXboxPartnerClient();
+
+        var result = await InvokeAsync(client, "game", "get", "9N0000000000", option, value);
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains("looks like a Store ID; pass it with --store-id.", result.Stderr, StringComparison.Ordinal);
+        Assert.DoesNotContain("Did you mean", result.Stderr, StringComparison.Ordinal);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
+    public async Task GameGet_InvalidTitleIdNamesTheStoreIdAndKeywordOptions()
+    {
+        var client = new FakeXboxPartnerClient();
+
+        var result = await InvokeAsync(client, "game", "get", "headless");
+
+        Assert.Equal(1, result.ExitCode);
+        Assert.Contains(
+            "Use --store-id for a Store ID, or --keyword for a game name.",
+            result.Stderr,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("looks like a Store ID", result.Stderr, StringComparison.Ordinal);
+        Assert.Empty(client.Requests);
+    }
+
+    [Fact]
     public async Task GameGet_AllowsBothSelectors()
     {
         var client = new FakeXboxPartnerClient();
@@ -765,7 +852,20 @@ public class GameCommandTests
         try
         {
             var root = Program.BuildRootCommand(gameCommandFactory: () => GameCommandFactory.Create(_ => client));
-            string[] args = [.. commandArgs, "--base-url", "http://localhost:54848"];
+            // Keep --base-url ahead of any "--" end-of-options marker so it stays an option.
+            var optionsEnd = Array.IndexOf(commandArgs, "--");
+            if (optionsEnd < 0)
+            {
+                optionsEnd = commandArgs.Length;
+            }
+
+            string[] args =
+            [
+                .. commandArgs[..optionsEnd],
+                "--base-url",
+                "http://localhost:54848",
+                .. commandArgs[optionsEnd..],
+            ];
             var parseResult = await Program.ResolveContextAsync(root.Parse(args, Program.NoResponseFileConfig), args);
             var exitCode = parseResult is null ? 1 : await parseResult.InvokeAsync();
             return new CapturedInvocation(exitCode, stdout.ToString(), stderr.ToString());

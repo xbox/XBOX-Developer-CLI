@@ -99,6 +99,24 @@ public sealed class ContextCommandTests : IDisposable
     }
 
     [Fact]
+    public async Task Title_CanBeSavedReadAndUnsetWithoutNetworkRequests()
+    {
+        var saved = await InvokeAsync("context", "set", "title-id", "0x42");
+        Assert.Equal(0, saved.ExitCode);
+        Assert.Equal("0x42", await _store.GetAsync(Identity, "title-id", GatewayBaseUrl));
+
+        var read = await InvokeAsync("context", "get");
+        using var output = JsonDocument.Parse(read.Stdout);
+        Assert.Equal("0x42", output.RootElement.GetProperty("values").EnumerateArray()
+            .Single(value => value.GetProperty("key").GetString() == "title-id").GetProperty("value").GetString());
+
+        var unset = await InvokeAsync("context", "unset", "title-id");
+        Assert.Equal(0, unset.ExitCode);
+        Assert.Null(await _store.GetAsync(Identity, "title-id", GatewayBaseUrl));
+        Assert.Equal(0, _signedIn.TokenRequests);
+    }
+
+    [Fact]
     public async Task Set_SavesTheSellerForTheGatewayNamedByBaseUrl()
     {
         var result = await InvokeAsync(
@@ -161,7 +179,10 @@ public sealed class ContextCommandTests : IDisposable
     /// is ever saved and a mistake costs no lookup.
     /// </summary>
     [Theory]
-    [InlineData("Unknown context key 'title-id'. Valid keys: playfab-title-id, sandbox-id, seller-id.", "title-id", "ABC12")]
+    [InlineData("--title-id must be a hexadecimal title ID from 00000001 through 7FFFFFFF", "title-id", "NOTHEX")]
+    [InlineData("--title-id must be a hexadecimal title ID from 00000001 through 7FFFFFFF", "title-id", "0")]
+    [InlineData("--title-id must be a hexadecimal title ID from 00000001 through 7FFFFFFF", "title-id", "80000000")]
+    [InlineData("--title-id must be a hexadecimal title ID from 00000001 through 7FFFFFFF", "title-id", "0xFFFFFFFF")]
     [InlineData("seller-id must not be blank.", "seller-id", "   ")]
     [InlineData("seller-id must not be blank.", "seller-id", "")]
     [InlineData("Cannot parse argument 'abc' for option '--seller-id'", "seller-id", "abc")]
@@ -169,7 +190,7 @@ public sealed class ContextCommandTests : IDisposable
     [InlineData("Cannot parse argument '9223372036854775808' for option '--seller-id'", "seller-id", "9223372036854775808")]
     [InlineData("--playfab-title-id must contain only letters and digits.", "playfab-title-id", "ABC-12")]
     [InlineData("--sandbox-id must be non-empty and cannot contain whitespace.", "sandbox-id", "Dev 1")]
-    [InlineData("Unknown context key 'sandbox'. Valid keys: playfab-title-id, sandbox-id, seller-id.", "sandbox", "Dev.1")]
+    [InlineData("Unknown context key 'sandbox'. Valid keys: playfab-title-id, sandbox-id, seller-id, title-id.", "sandbox", "Dev.1")]
     public async Task Set_InvalidInputFailsBeforeTheSignInIsRead(string expected, string key, string value)
     {
         var result = await InvokeAsync("context", "set", key, value);
@@ -250,7 +271,7 @@ public sealed class ContextCommandTests : IDisposable
             Assert.Equal(0, set.ExitCode);
             Assert.Empty(set.Stderr);
             Assert.Equal(
-                """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"ABC12"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+                """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"ABC12"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
                 get.Stdout.TrimEnd());
         }
         finally
@@ -277,7 +298,7 @@ public sealed class ContextCommandTests : IDisposable
         Assert.Equal("tenant", account.GetProperty("tenantId").GetString());
         Assert.Equal(ContextProfiles.Default, output.RootElement.GetProperty("profile").GetString());
         var values = output.RootElement.GetProperty("values").EnumerateArray().ToArray();
-        Assert.Equal(["playfab-title-id", "sandbox-id", "seller-id"], values.Select(value => value.GetProperty("key").GetString()));
+        Assert.Equal(["playfab-title-id", "sandbox-id", "seller-id", "title-id"], values.Select(value => value.GetProperty("key").GetString()));
         Assert.All(values, value =>
         {
             Assert.Equal(["key", "value"], value.EnumerateObject().Select(property => property.Name));
@@ -294,7 +315,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"ABC12"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":"1234567"}]}""",
+            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"ABC12"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":"1234567"},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         Assert.Empty(result.Stderr);
 
@@ -318,7 +339,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"SAVED1"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":"7654321"}]}""",
+            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"SAVED1"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":"7654321"},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         Assert.Empty(result.Stderr);
     }
@@ -336,7 +357,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"account":null,"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"account":null,"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         Assert.Equal(SignInHint + Environment.NewLine, result.Stderr);
         Assert.False(File.Exists(StorePath));
@@ -358,7 +379,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"account":null,"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"account":null,"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         var lines = result.Stderr.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
         Assert.Equal(2, lines.Length);
@@ -424,7 +445,7 @@ public sealed class ContextCommandTests : IDisposable
         Assert.Equal(0, result.ExitCode);
         using var doc = JsonDocument.Parse(result.Stdout);
         Assert.Equal(
-            """{"keys":[{"name":"playfab-title-id","usedBy":"playfab"},{"name":"sandbox-id","usedBy":"xbl"},{"name":"seller-id","usedBy":"game, sandbox, test-account, xbl"}]}""",
+            """{"keys":[{"name":"playfab-title-id","usedBy":"playfab"},{"name":"sandbox-id","usedBy":"xbl"},{"name":"seller-id","usedBy":"audience, game, package, playtest, sandbox, test-account, xbl"},{"name":"title-id","usedBy":"xbl"}]}""",
             result.Stdout.TrimEnd());
         Assert.Empty(result.Stderr);
         Assert.Equal(0, _storeRequests);
@@ -437,11 +458,12 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         var lines = result.Stdout.TrimEnd().Split(Environment.NewLine);
-        Assert.Equal(5, lines.Length);
+        Assert.Equal(6, lines.Length);
         Assert.Matches(@"^KEY\s+USED BY$", lines[0]);
         Assert.Matches(@"^playfab-title-id\s+playfab$", lines[2]);
         Assert.Matches(@"^sandbox-id\s+xbl$", lines[3]);
-        Assert.Matches(@"^seller-id\s+game, sandbox, test-account, xbl$", lines[4]);
+        Assert.Matches(@"^seller-id\s+audience, game, package, playtest, sandbox, test-account, xbl$", lines[4]);
+        Assert.Matches(@"^title-id\s+xbl$", lines[5]);
     }
 
     [Fact]
@@ -453,7 +475,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         var lines = result.Stdout.TrimEnd().Split(Environment.NewLine);
-        Assert.Equal(5, lines.Length);
+        Assert.Equal(6, lines.Length);
         Assert.Matches(@"^KEY\s+VALUE$", lines[0]);
         Assert.Matches(@"^seller-id\s+1234567$", lines[4]);
 
@@ -508,7 +530,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         var line = Assert.Single(result.Stderr.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains(StorePath, line, StringComparison.Ordinal);
@@ -548,7 +570,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         var line = Assert.Single(result.Stderr.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
         Assert.Contains(StorePath, line, StringComparison.Ordinal);
@@ -596,7 +618,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"profile":"default","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         using var saved = JsonDocument.Parse(await File.ReadAllTextAsync(StorePath));
         Assert.Equal(
@@ -657,10 +679,10 @@ public sealed class ContextCommandTests : IDisposable
     }
 
     [Theory]
-    [InlineData("Name a key to remove (playfab-title-id, sandbox-id, seller-id), or pass --all.")]
+    [InlineData("Name a key to remove (playfab-title-id, sandbox-id, seller-id, title-id), or pass --all.")]
     [InlineData("Pass key names or --all, not both.", "seller-id", "--all")]
-    [InlineData("Unknown context key 'title-id'. Valid keys: playfab-title-id, sandbox-id, seller-id.", "title-id")]
-    [InlineData("Unknown context key 'title-id'. Valid keys: playfab-title-id, sandbox-id, seller-id.", "seller-id", "title-id")]
+    [InlineData("Unknown context key 'unknown-id'. Valid keys: playfab-title-id, sandbox-id, seller-id, title-id.", "unknown-id")]
+    [InlineData("Unknown context key 'unknown-id'. Valid keys: playfab-title-id, sandbox-id, seller-id, title-id.", "seller-id", "unknown-id")]
     public async Task Unset_InvalidKeysFailBeforeTheSignInIsRead(string expected, params string[] arguments)
     {
         await SaveAsync(Identity, GatewayBaseUrl, "1234567");
@@ -710,7 +732,7 @@ public sealed class ContextCommandTests : IDisposable
             """{"profile":"test","values":[{"key":"playfab-title-id","value":"TEST1"}]}""",
             set.Stdout.TrimEnd());
         Assert.Equal(
-            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"test","values":[{"key":"playfab-title-id","value":"TEST1"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"test","values":[{"key":"playfab-title-id","value":"TEST1"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             get.Stdout.TrimEnd());
         Assert.Equal(
             """{"profile":"test","values":[{"key":"playfab-title-id","value":null}]}""",
@@ -767,10 +789,10 @@ public sealed class ContextCommandTests : IDisposable
             """{"profile":"test","values":[{"key":"playfab-title-id","value":"TEST1"}]}""",
             set.Stdout.TrimEnd());
         Assert.Equal(
-            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"test","values":[{"key":"playfab-title-id","value":"TEST1"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"test","values":[{"key":"playfab-title-id","value":"TEST1"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             get.Stdout.TrimEnd());
         Assert.Equal(
-            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"ABC12"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":"1234567"}]}""",
+            """{"account":{"username":"dev@nodpublishers.com","tenantId":"tenant"},"profile":"default","values":[{"key":"playfab-title-id","value":"ABC12"},{"key":"sandbox-id","value":null},{"key":"seller-id","value":"1234567"},{"key":"title-id","value":null}]}""",
             flag.Stdout.TrimEnd());
         Assert.All(new[] { set, get, flag }, result =>
         {
@@ -843,7 +865,7 @@ public sealed class ContextCommandTests : IDisposable
 
         Assert.Equal(0, result.ExitCode);
         Assert.Equal(
-            """{"profile":"test","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null}]}""",
+            """{"profile":"test","values":[{"key":"playfab-title-id","value":null},{"key":"sandbox-id","value":null},{"key":"seller-id","value":null},{"key":"title-id","value":null}]}""",
             result.Stdout.TrimEnd());
         Assert.False(await _store.HasProfileAsync(Identity, "test"));
         Assert.Equal("1234567", await _store.GetAsync(Identity, "seller-id", GatewayBaseUrl));

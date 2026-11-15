@@ -504,4 +504,157 @@ public class TableFormatterTests
     }
 
     #endregion
+
+    #region Expanded and merged views
+
+    private static readonly TableView RoleMemberView = new(
+        "Members",
+        [
+            new TableColumn("MEMBER ID", "Members.Key.Id", 38),
+            new TableColumn("ROLE ID", "RoleId", 24),
+        ])
+    {
+        Expand = "Members",
+    };
+
+    private static readonly TableView OpportunityView = TableView.Merged(
+        "TYPE",
+        [new TableSource("Invitations", "invitation"), new TableSource("Applications", "application")],
+        [
+            new TableColumn("GROUP ID", "Group.Id", 38),
+            new TableColumn("ROLE ID", "RoleId", 24) { OnlyIn = ["Invitations"] },
+        ]);
+
+    [Fact]
+    public void ExpandedViewRendersARowPerItemWithItsRecordsFields()
+    {
+        var payload = Parse("""
+        {
+          "Members": [
+            { "RoleId": "admins", "Members": [ { "Key": { "Id": "TITLEPLAYER123" } } ] },
+            { "RoleId": "members", "Members": [ { "Key": { "Id": "TITLEPLAYER456" } }, { "Key": { "Id": "TITLEPLAYER789" } } ] }
+          ]
+        }
+        """);
+
+        var lines = TableFormatter.Format(payload, RoleMemberView).Split(Environment.NewLine);
+
+        Assert.Equal(5, lines.Length);
+        Assert.Matches(@"^TITLEPLAYER123\s+admins$", lines[2]);
+        Assert.Matches(@"^TITLEPLAYER456\s+members$", lines[3]);
+        Assert.Matches(@"^TITLEPLAYER789\s+members$", lines[4]);
+    }
+
+    /// <summary>A record whose list is empty, null, or absent keeps its row, so an empty role isn't hidden.</summary>
+    [Fact]
+    public void ExpandedViewKeepsARecordWithNoItems()
+    {
+        var payload = Parse("""
+        {
+          "Members": [
+            { "RoleId": "admins", "Members": [] },
+            { "RoleId": "members", "Members": null },
+            { "RoleId": "guests" }
+          ]
+        }
+        """);
+
+        var lines = TableFormatter.Format(payload, RoleMemberView).Split(Environment.NewLine);
+
+        Assert.Equal(5, lines.Length);
+        Assert.Matches(@"^-\s+admins$", lines[2]);
+        Assert.Matches(@"^-\s+members$", lines[3]);
+        Assert.Matches(@"^-\s+guests$", lines[4]);
+    }
+
+    /// <summary>
+    /// A list that's present but isn't one fails, rather than showing a role that has members as
+    /// one without any.
+    /// </summary>
+    [Theory]
+    [InlineData("""{ "Key": { "Id": "TITLEPLAYER123" } }""", "an object")]
+    [InlineData("42", "a number")]
+    [InlineData("true", "a boolean")]
+    [InlineData("\"TITLEPLAYER123\"", "a string")]
+    public void ExpandedViewRejectsAListThatIsNotAnArray(string members, string described)
+    {
+        var payload = Parse($$"""{ "Members": [ { "RoleId": "admins", "Members": {{members}} } ] }""");
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => TableFormatter.Format(payload, RoleMemberView));
+
+        Assert.Contains($"'Members' is {described} rather than an array", exception.Message, StringComparison.Ordinal);
+        Assert.Contains("--output json", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An item of the list that isn't a record fails like a record that isn't, rather than showing
+    /// as an empty role.
+    /// </summary>
+    [Theory]
+    [InlineData("[42]", "a number at index 0")]
+    [InlineData("[null]", "null at index 0")]
+    [InlineData("""[ { "Key": { "Id": "TITLEPLAYER123" } }, "TITLEPLAYER456" ]""", "a string at index 1")]
+    public void ExpandedViewRejectsAnItemThatIsNotAnObject(string members, string described)
+    {
+        var payload = Parse($$"""{ "Members": [ { "RoleId": "admins", "Members": {{members}} } ] }""");
+
+        var exception = Assert.Throws<InvalidDataException>(
+            () => TableFormatter.Format(payload, RoleMemberView));
+
+        Assert.Contains($"'Members.Members' contains {described} rather than an object", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Each row is labelled with its collection, and a column limited to some collections shows
+    /// "-" on the others' rows, even where the record has the field.
+    /// </summary>
+    [Fact]
+    public void MergedViewLabelsEachRowWithItsCollection()
+    {
+        var payload = Parse("""
+        {
+          "Invitations": [ { "Group": { "Id": "GROUP123" }, "RoleId": "members" } ],
+          "Applications": [ { "Group": { "Id": "GROUP456" }, "RoleId": "admins" } ]
+        }
+        """);
+
+        var lines = TableFormatter.Format(payload, OpportunityView).Split(Environment.NewLine);
+
+        Assert.Equal(4, lines.Length);
+        Assert.Matches(@"^TYPE\s+GROUP ID\s+ROLE ID$", lines[0]);
+        Assert.Matches(@"^invitation\s+GROUP123\s+members$", lines[2]);
+        Assert.Matches(@"^application\s+GROUP456\s+-$", lines[3]);
+    }
+
+    /// <summary>
+    /// A merged view's collections follow the rule for a view of one: a missing one fails, rather
+    /// than showing a renamed field as no results.
+    /// </summary>
+    [Fact]
+    public void MergedViewFailsWhenACollectionIsMissing()
+    {
+        var exception = Assert.Throws<InvalidDataException>(() => TableFormatter.Format(
+            Parse("""{ "Applications": [ { "Group": { "Id": "GROUP456" } } ] }"""),
+            OpportunityView));
+
+        Assert.Contains("does not contain the expected 'Invitations' property", exception.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A null collection counts as empty, as it does in a view of one.</summary>
+    [Fact]
+    public void MergedViewCountsANullCollectionAsEmpty()
+    {
+        var table = TableFormatter.Format(
+            Parse("""{ "Invitations": null, "Applications": [ { "Group": { "Id": "GROUP456" } } ] }"""),
+            OpportunityView);
+
+        Assert.Contains("application", table, StringComparison.Ordinal);
+        Assert.DoesNotContain("invitation", table, StringComparison.Ordinal);
+        Assert.Equal(
+            TableFormatter.EmptyNotice,
+            TableFormatter.Format(Parse("""{ "Invitations": [], "Applications": null }"""), OpportunityView));
+    }
+
+    #endregion
 }

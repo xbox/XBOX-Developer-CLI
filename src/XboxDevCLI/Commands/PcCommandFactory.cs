@@ -6,7 +6,9 @@ using System.Text;
 using System.Text.Json;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
+using XboxDevCLI.Presentation;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -199,7 +201,9 @@ internal static class PcCommandFactory
         }
         catch (Exception exception) when (IsLocalFailure(exception))
         {
-            return XboxPartnerCommandSupport.WriteLocalError(exception);
+            var exitCode = XboxPartnerCommandSupport.WriteLocalError(exception);
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.LocalTool);
+            return exitCode;
         }
     }
 
@@ -272,6 +276,7 @@ internal static class PcCommandFactory
 
             if (exitCode != 0)
             {
+                TelemetryRecorder.RecordError(TelemetryErrorTypes.LocalTool);
                 Console.Error.WriteLine(PcSandbox.DescribeToolFailure(exitCode, output.Lines));
                 return 1;
             }
@@ -287,6 +292,7 @@ internal static class PcCommandFactory
 
             if (!string.Equals(actual, target, StringComparison.OrdinalIgnoreCase))
             {
+                TelemetryRecorder.RecordError(TelemetryErrorTypes.LocalTool);
                 Console.Error.WriteLine(
                     $"{PcSandbox.ToolFileName} reported success, but this PC uses {actual} rather " +
                     $"than {target}. Run the switch again, then restart the PC if it still fails. " +
@@ -299,7 +305,9 @@ internal static class PcCommandFactory
         }
         catch (Exception exception) when (IsLocalFailure(exception))
         {
-            return XboxPartnerCommandSupport.WriteLocalError(exception);
+            var exitCode = XboxPartnerCommandSupport.WriteLocalError(exception);
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.LocalTool);
+            return exitCode;
         }
     }
 
@@ -334,6 +342,7 @@ internal static class PcCommandFactory
                 cancellationToken).ConfigureAwait(false);
             if (exitCode != 0)
             {
+                TelemetryRecorder.RecordError(TelemetryErrorTypes.LocalTool);
                 Console.Error.WriteLine(PcSandbox.DescribeToolFailure(exitCode, output.Lines));
                 return 1;
             }
@@ -343,7 +352,9 @@ internal static class PcCommandFactory
         }
         catch (Exception exception) when (IsLocalFailure(exception))
         {
-            return XboxPartnerCommandSupport.WriteLocalError(exception);
+            var exitCode = XboxPartnerCommandSupport.WriteLocalError(exception);
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.LocalTool);
+            return exitCode;
         }
     }
 
@@ -393,6 +404,7 @@ internal static class PcCommandFactory
             Console.Error.WriteLine(line);
         }
 
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.LocalTool);
         Console.Error.WriteLine(exitCode != 0
             ? PcSandbox.DescribeToolFailure(exitCode, output.Lines)
             : $"{PcSandbox.ToolFileName} /get did not report a sandbox. {PcSandbox.HelpHintAfter(output.Lines)}");
@@ -416,6 +428,7 @@ internal static class PcCommandFactory
             return true;
         }
 
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.Usage);
         Console.Error.WriteLine(
             "The PC sandbox can only be read or changed on Windows.");
         return false;
@@ -449,11 +462,11 @@ internal static class PcCommandFactory
         {
             Console.Error.WriteLine(
                 "Re-run with --confirm (--yes, -y) to proceed without an interactive prompt.");
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
             return false;
         }
 
-        Console.Error.Write("Switch the sandbox? [y/N]: ");
-        Console.Error.Flush();
+        ConfirmationPrompt.Write(Console.Error, "Switch the sandbox? [y/N]: ");
         var answer = dependencies.ReadLine()?.Trim();
         if (string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase)
             || string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase))
@@ -462,6 +475,7 @@ internal static class PcCommandFactory
         }
 
         Console.Error.WriteLine("Sandbox switch canceled.");
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
         return false;
     }
 

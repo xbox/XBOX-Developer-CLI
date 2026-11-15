@@ -1,14 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.CommandLine;
 using System.Net;
 using System.Text.Json;
 using XboxDevCLI.PlayFab.Commands;
-using XboxDevCLI.Services;
 using XboxDevCLI.Output;
 using Xunit;
 
@@ -82,8 +78,8 @@ public class PlayerCommandTests
     [Fact]
     public async Task RunGetAccountAsync_SendsPlayFabIdToGetUserAccountInfo()
     {
-        var handler = new PlayerMockHandler(Ok(OkEnvelope));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(OkEnvelope));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -94,7 +90,7 @@ public class PlayerCommandTests
         Assert.Equal(0, exitCode);
         Assert.Contains(AccountInfoPath, handler.LastRequestUri, StringComparison.Ordinal);
 
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal(PlayFabId, body.RootElement.GetProperty("PlayFabId").GetString());
         // Unset match keys must be omitted entirely, not sent as null: GetUserAccountInfo applies
         // a priority order when several are present, which would decide the match for us.
@@ -109,15 +105,15 @@ public class PlayerCommandTests
     [Fact]
     public async Task RunGetAccountAsync_TrimsTheSuppliedId()
     {
-        var handler = new PlayerMockHandler(Ok(OkEnvelope));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(OkEnvelope));
+        using var client = PlayFabTestClient.Create(handler);
 
         var exitCode = await PlayerCommandFactory.RunGetAccountAsync(
             client, $"  {PlayFabId}  ", OutputOptions.Json, new StringWriter(), new StringWriter(),
             CancellationToken.None);
 
         Assert.Equal(0, exitCode);
-        using var body = JsonDocument.Parse(handler.CapturedBody!);
+        using var body = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal(PlayFabId, body.RootElement.GetProperty("PlayFabId").GetString());
     }
 
@@ -128,8 +124,8 @@ public class PlayerCommandTests
     public async Task RunGetAccountAsync_BlankId_FailsWithoutCallingTheApi(string? playFabId)
     {
         // A blank flag value must not reach PlayFab as a real lookup key.
-        var handler = new PlayerMockHandler(Ok(OkEnvelope));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(OkEnvelope));
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exitCode = await PlayerCommandFactory.RunGetAccountAsync(
@@ -144,8 +140,8 @@ public class PlayerCommandTests
     [Fact]
     public async Task RunGetAccountAsync_DataOnly_StripsEnvelope()
     {
-        var handler = new PlayerMockHandler(Ok(OkEnvelope));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok(OkEnvelope));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exitCode = await PlayerCommandFactory.RunGetAccountAsync(
@@ -161,12 +157,12 @@ public class PlayerCommandTests
     [Fact]
     public async Task RunGetAccountAsync_ApiError_WritesToStderrAndReturnsOne()
     {
-        var handler = new PlayerMockHandler(new HttpResponseMessage(HttpStatusCode.BadRequest)
+        var handler = new MockHttpMessageHandler(new HttpResponseMessage(HttpStatusCode.BadRequest)
         {
             Content = new StringContent(
                 """{"code":400,"status":"BadRequest","error":"AccountNotFound","errorCode":1001,"errorMessage":"User not found"}"""),
         });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -191,66 +187,5 @@ public class PlayerCommandTests
     private static HttpResponseMessage Ok(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
-    private static IConfiguration CreateTestConfiguration() =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken) =>
-        new(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     #endregion
-}
-
-/// <summary>
-/// Mock handler that captures the outgoing request URI and body for assertion, then returns a
-/// fixed response.
-/// </summary>
-internal sealed class PlayerMockHandler : HttpMessageHandler
-{
-    private readonly HttpResponseMessage _response;
-
-    public PlayerMockHandler(HttpResponseMessage response) => _response = response;
-
-    public string? CapturedBody { get; private set; }
-
-    public string? LastRequestUri { get; private set; }
-
-    protected override async Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        LastRequestUri = request.RequestUri?.ToString();
-        if (request.Content != null)
-        {
-            CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
-        }
-
-        return _response;
-    }
 }

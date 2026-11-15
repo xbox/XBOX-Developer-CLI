@@ -152,7 +152,7 @@ public class WelcomeExperienceTests
                 $"{Environment.NewLine}{Environment.NewLine}",
                 StringComparison.Ordinal));
         Assert.Contains(
-            $"XBOX CLI: {CliIdentity.Tagline}",
+            $"XBOX® CLI: {CliIdentity.Tagline}",
             output,
             StringComparison.Ordinal);
         Assert.DoesNotContain(
@@ -199,7 +199,7 @@ public class WelcomeExperienceTests
             output,
             StringComparison.Ordinal);
         Assert.Contains(
-            $"\u001b[1;38;2;139;240;0mXBOX\u001b[0m CLI: {CliIdentity.Tagline}",
+            $"\u001b[1;38;2;139;240;0mXBOX®\u001b[0m CLI: {CliIdentity.Tagline}",
             output,
             StringComparison.Ordinal);
         Assert.Contains("\u001b[1mGET STARTED\u001b[0m", output, StringComparison.Ordinal);
@@ -213,15 +213,65 @@ public class WelcomeExperienceTests
     }
 
     [Fact]
-    public void WriteVersion_ColorsOnlyXboxWhenColorIsEnabled()
+    public void WriteFirstRun_MarksTheLogoAndOnlyTheFirstXbox()
     {
         using var writer = new StringWriter();
 
-        WelcomeExperience.WriteVersion(writer, "0.1.0", useColor: true);
+        WelcomeExperience.WriteFirstRun(writer, useColor: false);
+
+        var lines = writer.ToString().Split(Environment.NewLine);
+        var logoLines = WelcomeExperience.PlainLogo.Split(Environment.NewLine);
+        var logoEnd = lines[logoLines.Length];
+        Assert.Equal(
+            logoLines.Max(line => line.Length) + 1,
+            logoEnd.IndexOf('®', StringComparison.Ordinal));
+        Assert.Equal(2, writer.ToString().Count(character => character == '®'));
+    }
+
+    [Fact]
+    public void WriteFirstRun_FallsBackToParenthesizedMarkWhenEncodingLacksIt()
+    {
+        using var writer = new AsciiStringWriter();
+
+        WelcomeExperience.WriteFirstRun(writer, useColor: false);
+
+        var output = writer.ToString();
+        Assert.DoesNotContain("®", output, StringComparison.Ordinal);
+        Assert.Contains($"XBOX(R) CLI: {CliIdentity.Tagline}", output, StringComparison.Ordinal);
+        Assert.Equal(2, Regex.Matches(output, Regex.Escape("(R)")).Count);
+    }
+
+    [Fact]
+    public void LogoAnimation_EndsOnTheStaticLogoAndPlainMarkWithCursorShown()
+    {
+        using var writer = new StringWriter();
+        var finalLogo = WelcomeExperience.RenderLogo(useColor: true);
+
+        LogoAnimation.Write(writer, WelcomeExperience.PlainLogo, finalLogo, " ®", TimeSpan.Zero);
+
+        var output = writer.ToString();
+        Assert.StartsWith("\u001b[?25l", output, StringComparison.Ordinal);
+        Assert.Contains(finalLogo + " ®", output, StringComparison.Ordinal);
+        Assert.EndsWith("\u001b[1D®\u001b[?25h", output, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0, 0, true)]
+    [InlineData(-1, 0, false)]
+    [InlineData(0, -1, false)]
+    public void LogoAnimation_FitsOnlyWhenTheWholeLogoAndMarkFit(int extraWidth, int extraHeight, bool expected)
+    {
+        var lines = WelcomeExperience.PlainLogo.Split(Environment.NewLine);
+        var width = Math.Max(lines.Max(line => line.Length), lines[^1].Length + 2) + 1;
 
         Assert.Equal(
-            $"\u001b[1;38;2;139;240;0mXBOX\u001b[0m CLI version 0.1.0{Environment.NewLine}",
-            writer.ToString());
+            expected,
+            LogoAnimation.Fits(WelcomeExperience.PlainLogo, " ®", width + extraWidth, lines.Length + extraHeight));
+    }
+
+    private sealed class AsciiStringWriter : StringWriter
+    {
+        public override System.Text.Encoding Encoding => System.Text.Encoding.ASCII;
     }
 
     [Fact]
@@ -234,7 +284,9 @@ public class WelcomeExperienceTests
         var output = writer.ToString();
         var logoEnd = output.IndexOf(WelcomeExperience.PlainLogo, StringComparison.Ordinal)
             + WelcomeExperience.PlainLogo.Length;
-        var versionStart = output.IndexOf("XBOX\u001b[0m CLI version 0.1.0", StringComparison.Ordinal);
+        var versionStart = output.IndexOf(
+            "\u001b[1;38;2;139;240;0mXBOX®\u001b[0m CLI version 0.1.0",
+            StringComparison.Ordinal);
         var urlStart = output.IndexOf(ProjectLinks.Home, StringComparison.Ordinal);
         var instructionStart = output.IndexOf("Run this command to get started:", StringComparison.Ordinal);
 
@@ -306,7 +358,7 @@ public class WelcomeExperienceTests
                 useColor: false);
 
             var rendered = output.ToString();
-            var tagline = $"{CliIdentity.DisplayName}: {CliIdentity.Tagline}";
+            var tagline = $"XBOX® CLI: {CliIdentity.Tagline}";
             Assert.True(suppressRootHelp);
             Assert.StartsWith(
                 $"{Environment.NewLine}{WelcomeExperience.PlainLogo}",
@@ -366,7 +418,7 @@ public class WelcomeExperienceTests
                 width: 100);
 
             var rendered = output.ToString();
-            var tagline = $"{CliIdentity.DisplayName}: {CliIdentity.Tagline}";
+            var tagline = $"XBOX® CLI: {CliIdentity.Tagline}";
             Assert.False(suppressRootHelp);
             Assert.StartsWith(
                 $"{Environment.NewLine}{WelcomeExperience.PlainLogo}",
@@ -419,7 +471,7 @@ public class WelcomeExperienceTests
                 width: 100);
 
             var rendered = output.ToString();
-            var tagline = $"{CliIdentity.DisplayName}: {CliIdentity.Tagline}";
+            var tagline = $"XBOX® CLI: {CliIdentity.Tagline}";
             Assert.False(suppressRootHelp);
             Assert.Empty(parseResult.Errors);
             Assert.StartsWith(
@@ -500,7 +552,7 @@ public class WelcomeExperienceTests
 
             var output = writer.ToString();
             Assert.Contains(
-                $"{CliIdentity.DisplayName}: {CliIdentity.Tagline}",
+                $"XBOX® CLI: {CliIdentity.Tagline}",
                 output,
                 StringComparison.Ordinal);
             Assert.Contains("Run this command to get started:", output, StringComparison.Ordinal);

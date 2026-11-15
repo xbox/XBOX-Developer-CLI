@@ -4,9 +4,6 @@
 using System.CommandLine;
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using XboxDevCLI.Commands;
 using XboxDevCLI.Services;
 using Xunit;
@@ -278,7 +275,7 @@ public class GameCreationCommandTests
 
         Assert.NotEqual(0, result.ExitCode);
         Assert.Empty(handler.Requests);
-        auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(0, auth.TokenRequests);
     }
 
     [Theory]
@@ -301,7 +298,7 @@ public class GameCreationCommandTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains(option, result.Stderr);
         Assert.Empty(handler.Requests);
-        auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(0, auth.TokenRequests);
     }
 
     [Theory]
@@ -316,7 +313,7 @@ public class GameCreationCommandTests
             handler, [.. CreateArguments, "--confirm"], auth: auth, sellerId: sellerId);
         Assert.NotEqual(0, result.ExitCode);
         Assert.Empty(handler.Requests);
-        auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(0, auth.TokenRequests);
     }
 
     [Theory]
@@ -377,7 +374,7 @@ public class GameCreationCommandTests
             handler, [.. CreateArguments, "--confirm"], auth: auth, baseUrl: baseUrl);
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(handler.Requests);
-        auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(0, auth.TokenRequests);
     }
 
     [Fact]
@@ -641,14 +638,14 @@ public class GameCreationCommandTests
     public async Task CancelBeforeSending_SaysNoGameWasCreated()
     {
         using var cancellation = new CancellationTokenSource();
-        var auth = CreateAuth();
-        auth.Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .Returns<CancellationToken>(token =>
+        var auth = new FakeAuthenticationService(FakeAuthenticationService.CreateToken())
+        {
+            OnTokenRequest = token =>
             {
                 cancellation.Cancel();
                 token.ThrowIfCancellationRequested();
-                return Task.FromResult<AuthenticationResult?>(null);
-            });
+            },
+        };
         var handler = Handler(Accepted);
         var result = await InvokeAsync(
             handler, [.. CreateArguments, "--confirm"], auth: auth, cancellationToken: cancellation.Token);
@@ -832,8 +829,8 @@ public class GameCreationCommandTests
             Assert.Equal("2222222",
                 Assert.Single(Assert.Single(handler.Requests).Headers["X-DeveloperAccountId"]));
             Assert.StartsWith("Using --seller-id 2222222 from XBOX_SELLER_ID." + Environment.NewLine, TestEnvironment.WithoutEndpointWarnings(result.Stderr));
-            auth.Verify(service => service.GetCachedAccountAsync(It.IsAny<CancellationToken>()), Times.Never);
-            auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Once);
+            Assert.Equal(0, auth.AccountRequests);
+            Assert.Equal(1, auth.TokenRequests);
         }
         finally
         {
@@ -860,8 +857,8 @@ public class GameCreationCommandTests
             Assert.Equal("seller-1",
                 Assert.Single(Assert.Single(handler.Requests).Headers["X-DeveloperAccountId"]));
             Assert.DoesNotContain("Using --seller-id", result.Stderr);
-            auth.Verify(service => service.GetCachedAccountAsync(It.IsAny<CancellationToken>()), Times.Never);
-            auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Once);
+            Assert.Equal(0, auth.AccountRequests);
+            Assert.Equal(1, auth.TokenRequests);
         }
         finally
         {
@@ -933,7 +930,7 @@ public class GameCreationCommandTests
             Assert.Contains("Not signed in. Run 'xbox auth login' first.", result.Stderr);
             Assert.DoesNotContain("Creating the game", result.Stderr);
             Assert.Empty(handler.Requests);
-            auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+            Assert.Equal(0, auth.TokenRequests);
         }
         finally
         {
@@ -958,10 +955,14 @@ public class GameCreationCommandTests
     [InlineData(true)]
     public async Task Cancellation_DoesNotResubmitAndReportsRecovery(bool afterSubmission)
     {
-        var handler = new CancelingHandler(afterSubmission);
+        // With afterSubmission, the submission is answered; every other request is interrupted.
+        var requests = 0;
+        var handler = new RoutingHttpHandler(_ => afterSubmission && ++requests == 1
+            ? Response(Running)
+            : throw new TaskCanceledException("Simulated interrupted request."));
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
         Assert.Equal(1, result.ExitCode);
-        Assert.Equal(afterSubmission ? 2 : 1, handler.Count);
+        Assert.Equal(afterSubmission ? 2 : 1, handler.Requests.Count);
         Assert.Empty(result.Stdout);
         Assert.Contains(afterSubmission ? "game job get job-1" : "game list", result.Stderr);
         Assert.Contains(afterSubmission ? "Stopped waiting" : "Do not resubmit", result.Stderr);
@@ -982,27 +983,8 @@ public class GameCreationCommandTests
     /// identity saved sellers are looked up for; signed out when <paramref name="signedIn"/> is
     /// <c>false</c>.
     /// </summary>
-    private static Mock<AuthenticationService> CreateAuth(bool signedIn = true)
-    {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?>
-            {
-                ["AzureAd:ClientId"] = "test-client",
-                ["AzureAd:TenantId"] = "test-tenant",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            }).Build();
-        var account = Mock.Of<IAccount>(
-            account => account.HomeAccountId == new AccountId("id", "user", "test-tenant"));
-        var auth = new Mock<AuthenticationService>(configuration);
-        auth.Setup(service => service.GetCachedAccountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(signedIn ? account : null);
-        auth.Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(signedIn
-            ? new AuthenticationResult(
-                "access-token", false, "user", DateTimeOffset.UtcNow.AddHours(1),
-                DateTimeOffset.UtcNow.AddHours(1), "test-tenant", account,
-                "id-token", ["api://test/.default"], Guid.NewGuid())
-            : null);
-        return auth;
-    }
+    private static FakeAuthenticationService CreateAuth(bool signedIn = true) =>
+        new(signedIn ? FakeAuthenticationService.CreateToken(tenantId: "test-tenant") : null);
 
     /// <summary>
     /// Sets <c>XBOX_SELLER_ID</c> to <paramref name="value"/>, or unsets it, and unsets
@@ -1043,7 +1025,7 @@ public class GameCreationCommandTests
         string[] arguments,
         bool interactive = false,
         string input = "",
-        Mock<AuthenticationService>? auth = null,
+        AuthenticationService? auth = null,
         string? sellerId = "seller-1",
         string baseUrl = "https://gateway.example",
         bool addScope = true,
@@ -1065,7 +1047,7 @@ public class GameCreationCommandTests
             () => interactive);
 
         var root = Program.BuildRootCommand(gameCommandFactory: () => GameCommandFactory.Create(
-            configuration => new XboxPartnerClient(configuration, httpClient, auth.Object),
+            configuration => new XboxPartnerClient(configuration, httpClient, auth),
             dependencies));
         var args = new List<string>(arguments);
         if (addScope)
@@ -1090,7 +1072,7 @@ public class GameCreationCommandTests
             Console.SetIn(stdin);
 
             // Context values come from the state directory given, for the account auth signs in as.
-            ContextResolver.ReadIdentityAsync = _ => SignedInIdentity.FromCacheAsync(auth.Object, CancellationToken.None);
+            ContextResolver.ReadIdentityAsync = _ => SignedInIdentity.FromCacheAsync(auth, CancellationToken.None);
             if (stateDirectory is not null)
             {
                 ContextStore.DefaultDirectory = () => stateDirectory;
@@ -1128,23 +1110,6 @@ public class GameCreationCommandTests
             cancellationToken.ThrowIfCancellationRequested();
             Console.Error.Write($"[request {Count} completed]");
             return Response(Count < 3 ? Running : Succeeded);
-        }
-    }
-
-    private sealed class CancelingHandler(bool afterSubmission) : HttpMessageHandler
-    {
-        internal int Count { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Count++;
-            if (afterSubmission && Count == 1)
-            {
-                return Task.FromResult(Response(Running));
-            }
-
-            throw new TaskCanceledException("Simulated interrupted request.");
         }
     }
 }

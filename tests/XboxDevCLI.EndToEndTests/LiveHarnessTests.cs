@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.Diagnostics;
 using Xunit;
@@ -27,17 +28,21 @@ public sealed class LiveHarnessTests : IDisposable
             LiveSettings.GetSkipReason(service, _ => null));
     }
 
-    [Theory]
-    [InlineData(LiveService.PlayFab, "PlayFab")]
-    [InlineData(LiveService.XboxPartner, "XboxPartner")]
-    public void GetSkipReason_SkipsADisabledServiceWithTheReason(LiveService service, string name)
+    [Fact]
+    public void GetSkipReason_SkipsTheDisabledXboxPartnerServiceWithTheReason()
     {
         var variables = E2EProfileTests.Variables();
 
         Assert.Null(LiveSettings.GetSkipReason(LiveService.Authentication, variables));
         Assert.StartsWith(
-            $"{name} is disabled in environment 'e2e-nod-arena': ",
-            LiveSettings.GetSkipReason(service, variables));
+            "XboxPartner is disabled in environment 'e2e-nod-arena': ",
+            LiveSettings.GetSkipReason(LiveService.XboxPartner, variables));
+    }
+
+    [Fact]
+    public void GetSkipReason_RunsPlayFabWhenRequested()
+    {
+        Assert.Null(LiveSettings.GetSkipReason(LiveService.PlayFab, E2EProfileTests.Variables()));
     }
 
     [Theory]

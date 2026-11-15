@@ -34,35 +34,35 @@ internal static partial class ProjectLinks
 #endif
 
     /// <summary>
-    /// The links in released builds. Most are aka.ms links, so their targets can change without
+    /// The links in released builds. Most are go.xbox links, so their targets can change without
     /// a new release.
     /// </summary>
     internal static class Release
     {
-        internal const string Home = "https://aka.ms/xbox-cli";
-        internal const string Documentation = "https://aka.ms/xbox-cli/docs";
-        internal const string TelemetryPolicy = "https://aka.ms/xbox-cli/telemetry";
+        internal const string Home = "https://go.xbox/cli";
+        internal const string Documentation = "https://go.xbox/cli/docs";
+        internal const string TelemetryPolicy = "https://go.xbox/cli/telemetry";
 
         /// <summary>
         /// A new issue. <c>xbox feedback</c> adds the issue form's query parameters, which the
-        /// aka.ms link passes through.
+        /// go.xbox link passes through.
         /// </summary>
-        internal const string NewIssue = "https://aka.ms/xbox-cli/feedback";
+        internal const string NewIssue = "https://go.xbox/cli/feedback";
 
-        internal const string Releases = "https://aka.ms/xbox-cli/releases";
-        internal const string InstallationGuide = "https://aka.ms/xbox-cli/install";
+        internal const string Releases = "https://go.xbox/cli/releases";
+        internal const string InstallationGuide = "https://go.xbox/cli/install";
 
         /// <summary>
         /// The page of a release, followed by <c>/</c> and its tag. A redirect wouldn't carry the
         /// tag, so this links to GitHub directly.
         /// </summary>
-        internal const string ReleaseTags = "https://github.com/microsoft/XBOX-Developer-CLI/releases/tag";
+        internal const string ReleaseTags = "https://github.com/xbox/cli/releases/tag";
 
         /// <summary>
-        /// The latest release's metadata, read by <c>xbox upgrade</c>. The check refuses
-        /// redirects, so this links to GitHub directly.
+        /// The latest release's metadata, read by <c>xbox upgrade</c>. The check follows redirects
+        /// only within the GitHub API, so this links to GitHub directly.
         /// </summary>
         internal const string LatestReleaseApi =
-            "https://api.github.com/repos/microsoft/XBOX-Developer-CLI/releases/latest";
+            "https://api.github.com/repos/xbox/cli/releases/latest";
     }
 }

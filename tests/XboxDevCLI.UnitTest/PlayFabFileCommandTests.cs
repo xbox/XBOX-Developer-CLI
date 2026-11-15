@@ -3,15 +3,12 @@
 
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.PlayFab.Commands;
 using DataModels = XboxDevCLI.PlayFab.Generated.Data;
 using XboxDevCLI.Safety;
-using XboxDevCLI.Services;
 using XboxDevCLI.Output;
+using XboxDevCLI.Telemetry;
 using Xunit;
 
 namespace XboxDevCLI.UnitTest;
@@ -64,56 +61,19 @@ public class PlayFabFileCommandTests
 
     #region Integration Tests with PlayFabApiClient
 
-    private static IConfiguration CreateTestConfiguration(
-        string titleId = "TEST123",
-        string baseUrlTemplate = "https://{0}.playfabapi.com")
-    {
-        return new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = titleId,
-                ["PlayFab:BaseUrlTemplate"] = baseUrlTemplate,
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-    }
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken)
-    {
-        return new AuthenticationResult(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-    }
-
     [Fact]
     public async Task GetFiles_SendsCorrectEntityInRequest()
     {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-
         var responseJson = """{"code":200,"status":"OK","data":{"Entity":{"Id":"E1","Type":"title"},"Metadata":null,"ProfileVersion":1}}""";
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(responseJson) });
-
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        using var client = new PlayFabApiClient(config, mockAuth.Object, httpClient);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = FileCommandFactory.BuildListCall("E1", "title_player_account");
         await client.CallApiAsync<DataModels.GetFilesRequest, DataModels.GetFilesResponse>(apiPath, request, CancellationToken.None);
 
-        Assert.NotNull(handler.CapturedBody);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.NotNull(handler.LastRequestBody);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var entity = doc.RootElement.GetProperty("Entity");
         Assert.Equal("E1", entity.GetProperty("Id").GetString());
         Assert.Equal("title_player_account", entity.GetProperty("Type").GetString());
@@ -123,15 +83,9 @@ public class PlayFabFileCommandTests
     [Fact]
     public async Task DeleteFiles_WithoutConfirmation_IsBlockedByDestructiveGuard()
     {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"code":200,"status":"OK","data":{}}""") });
-
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        using var client = new PlayFabApiClient(config, mockAuth.Object, httpClient);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = FileCommandFactory.BuildDeleteCall("E1", "title_player_account", new[] { "file1.json" });
 
@@ -145,21 +99,15 @@ public class PlayFabFileCommandTests
     [Fact]
     public async Task DeleteFiles_WithConfirmation_SendsCorrectRequest()
     {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"code":200,"status":"OK","data":{}}""") });
-
-        using var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        using var client = new PlayFabApiClient(config, mockAuth.Object, httpClient);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = FileCommandFactory.BuildDeleteCall("E1", "title_player_account", new[] { "file1.json", "file2.txt" });
         await client.CallApiAsync(apiPath, JsonSerializer.Serialize(request), CancellationToken.None, confirmedDestructive: true);
 
-        Assert.NotNull(handler.CapturedBody);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.NotNull(handler.LastRequestBody);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var fileNames = doc.RootElement.GetProperty("FileNames").EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Equal(new List<string?> { "file1.json", "file2.txt" }, fileNames);
         Assert.Contains("/File/DeleteFiles", handler.LastRequestUri);
@@ -168,15 +116,6 @@ public class PlayFabFileCommandTests
     #endregion
 
     #region Run Method Tests (SetAction lambda logic)
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
 
     private static HttpResponseMessage Ok(string json) =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
@@ -192,7 +131,7 @@ public class PlayFabFileCommandTests
     public async Task RunListAsync_Success_PrettyPrintsMetadata()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"save.json":{"FileName":"save.json","Size":42}},"ProfileVersion":3}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -209,7 +148,7 @@ public class PlayFabFileCommandTests
     public async Task RunListAsync_JsonCompact_EmitsSingleLine()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"save.json":{"FileName":"save.json"}},"ProfileVersion":3}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
         var stdout = new StringWriter();
 
         var exit = await FileCommandFactory.RunListAsync(client, "E1", "title", OutputOptions.JsonCompact, stdout, new StringWriter(), CancellationToken.None);
@@ -224,7 +163,7 @@ public class PlayFabFileCommandTests
     public async Task RunListAsync_NoMetadata_PrintsEmptyObject()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"ProfileVersion":1}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
         var stdout = new StringWriter();
 
         var exit = await FileCommandFactory.RunListAsync(client, "E1", "title", OutputOptions.Json, stdout, new StringWriter(), CancellationToken.None);
@@ -237,9 +176,9 @@ public class PlayFabFileCommandTests
     public async Task RunListAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad entity"}""";
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -263,8 +202,8 @@ public class PlayFabFileCommandTests
             var blobUrl = "https://nodpublishers.blob.core.windows.net/download/save";
             var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"save.bin":{"FileName":"save.bin","DownloadUrl":"__URL__"}}}}""".Replace("__URL__", blobUrl);
 
-            using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-            var blobHandler = new RoutingMockHandler((_, _) => Ok(content));
+            using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+            var blobHandler = new RoutingHttpHandler(_ => Ok(content));
             using var blobClient = new HttpClient(blobHandler);
             var stderr = new StringWriter();
 
@@ -275,7 +214,7 @@ public class PlayFabFileCommandTests
             Assert.True(File.Exists(outputPath));
             Assert.Equal(content, await File.ReadAllTextAsync(outputPath));
             Assert.Contains($"({content.Length} bytes)", stderr.ToString());
-            Assert.Equal(blobUrl, blobHandler.Requests.Single().Uri);
+            Assert.Equal(blobUrl, blobHandler.Requests.Single().Uri.ToString());
         }
         finally
         {
@@ -292,8 +231,8 @@ public class PlayFabFileCommandTests
         {
             Directory.SetCurrentDirectory(tempDir);
             var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"data.txt":{"FileName":"data.txt","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
-            using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-            using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("payload")));
+            using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+            using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("payload")));
             var stderr = new StringWriter();
 
             var exit = await FileCommandFactory.RunDownloadAsync(
@@ -320,16 +259,14 @@ public class PlayFabFileCommandTests
         {
             Directory.SetCurrentDirectory(tempDir);
             var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"../nested/data.txt":{"FileName":"../nested/data.txt","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
-            using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-            using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("payload")));
-            var stderr = new StringWriter();
+            using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+            using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("payload")));
 
-            var exit = await FileCommandFactory.RunDownloadAsync(
-                client, blobClient, "E1", "title", "../nested/data.txt", null, ListCommand, "json", stderr, default);
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => FileCommandFactory.RunDownloadAsync(
+                client, blobClient, "E1", "title", "../nested/data.txt", null, ListCommand, "json", new StringWriter(), default));
 
-            Assert.Equal(1, exit);
-            Assert.Contains("is not a valid local file name", stderr.ToString());
-            Assert.Contains("--dest", stderr.ToString());
+            Assert.Contains("is not a valid local file name", exception.Message);
+            Assert.Contains("--dest", exception.Message);
             Assert.Empty(Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories));
         }
         finally
@@ -346,8 +283,8 @@ public class PlayFabFileCommandTests
         try
         {
             var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"../nested/data.txt":{"FileName":"../nested/data.txt","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
-            using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-            using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("payload")));
+            using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+            using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("payload")));
             var outputPath = Path.Combine(tempDir, "data.txt");
 
             var exit = await FileCommandFactory.RunDownloadAsync(
@@ -388,19 +325,16 @@ public class PlayFabFileCommandTests
     [Fact]
     public async Task RunDownloadAsync_StdoutDestination_FailsBeforeCallingPlayFab()
     {
-        var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
-        using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("x")));
-        var stderr = new StringWriter();
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
+        using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("x")));
 
-        var exit = await FileCommandFactory.RunDownloadAsync(
-            client, blobClient, "E1", "title", "save.bin", "-", ListCommand, "json", stderr, default);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => FileCommandFactory.RunDownloadAsync(
+            client, blobClient, "E1", "title", "save.bin", "-", ListCommand, "json", new StringWriter(), default));
 
-        Assert.Equal(1, exit);
         Assert.Equal(
-            "Download failed: Downloading to stdout with '--dest -' isn't implemented yet. Pass a file path to --dest."
-            + Environment.NewLine,
-            stderr.ToString());
+            "Downloading to stdout with '--dest -' isn't implemented yet. Pass a file path to --dest.",
+            exception.Message);
         Assert.Null(handler.LastRequestUri);
     }
 
@@ -472,16 +406,14 @@ public class PlayFabFileCommandTests
         {
             Directory.SetCurrentDirectory(tempDir);
             var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"data.txt":{"FileName":"data.txt","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
-            using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-            using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("payload")));
-            var stderr = new StringWriter();
+            using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+            using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("payload")));
             var outsidePath = Path.GetFullPath(Path.Combine(tempDir, "..", "escape.txt"));
 
-            var exit = await FileCommandFactory.RunDownloadAsync(
-                client, blobClient, "E1", "title", "data.txt", "../escape.txt", ListCommand, "json", stderr, default);
+            var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => FileCommandFactory.RunDownloadAsync(
+                client, blobClient, "E1", "title", "data.txt", "../escape.txt", ListCommand, "json", new StringWriter(), default));
 
-            Assert.Equal(1, exit);
-            Assert.Contains("must stay within the expected directory", stderr.ToString());
+            Assert.Contains("must stay within the expected directory", exception.Message);
             Assert.False(File.Exists(outsidePath));
         }
         finally
@@ -498,8 +430,8 @@ public class PlayFabFileCommandTests
         try
         {
             var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"data.txt":{"FileName":"data.txt","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
-            using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-            using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("payload")));
+            using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+            using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("payload")));
             var stderr = new StringWriter();
             var absolutePath = Path.Combine(tempDir, "escape.txt");
 
@@ -522,8 +454,8 @@ public class PlayFabFileCommandTests
     public async Task RunDownloadAsync_NoMetadata_ReturnsOne()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"ProfileVersion":1}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-        using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("x")));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+        using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("x")));
         var stderr = new StringWriter();
 
         var exit = await FileCommandFactory.RunDownloadAsync(
@@ -537,8 +469,8 @@ public class PlayFabFileCommandTests
     public async Task RunDownloadAsync_FileNotFound_SuggestsFileListWithoutNamingOtherFiles()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"other.bin":{"FileName":"other.bin","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-        using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("x")));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+        using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("x")));
         var stderr = new StringWriter();
 
         var exit = await FileCommandFactory.RunDownloadAsync(
@@ -581,8 +513,8 @@ public class PlayFabFileCommandTests
     public async Task RunDownloadAsync_MissingDownloadUrl_ReturnsOne()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"save.bin":{"FileName":"save.bin"}}}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-        using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("x")));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+        using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("x")));
         var stderr = new StringWriter();
 
         var exit = await FileCommandFactory.RunDownloadAsync(
@@ -596,32 +528,87 @@ public class PlayFabFileCommandTests
     public async Task RunDownloadAsync_BlobHttpFailure_ReturnsOne()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"save.bin":{"FileName":"save.bin","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-        using var blobClient = new HttpClient(new RoutingMockHandler(
-            (_, _) => new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("denied") }));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+        using var blobClient = new HttpClient(new RoutingHttpHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("denied") }));
+        var stderr = new StringWriter();
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            var exit = await FileCommandFactory.RunDownloadAsync(
+                client, blobClient, "E1", "title", "save.bin", "out.bin", ListCommand, "json", stderr, default);
+
+            Assert.Equal(1, exit);
+            Assert.Contains("Download failed with HTTP 403", stderr.ToString());
+            Assert.Equal(403, recorded.HttpStatusCode);
+            Assert.Equal("service_rejected", recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
+    }
+
+    /// <summary>
+    /// A transfer that times out is a failed download. Ctrl-C isn't a failure: it stops the
+    /// command with nothing reported.
+    /// </summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RunDownloadAsync_ReportsATransferTimeoutButNotCtrlC(bool ctrlC)
+    {
+        var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"save.bin":{"FileName":"save.bin","DownloadUrl":"https://nodpublishers.blob.core.windows.net/d"}}}}""";
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+        using var cancellation = new CancellationTokenSource();
+        using var blobClient = new HttpClient(new MockHttpMessageHandler(Ok("x"))
+        {
+            OnSend = token =>
+            {
+                if (ctrlC)
+                {
+                    cancellation.Cancel();
+                }
+
+                // Waits for the timeout or Ctrl-C to cancel the transfer.
+                token.WaitHandle.WaitOne(TimeSpan.FromSeconds(10));
+                token.ThrowIfCancellationRequested();
+            },
+        })
+        {
+            Timeout = TimeSpan.FromMilliseconds(50),
+        };
         var stderr = new StringWriter();
 
-        var exit = await FileCommandFactory.RunDownloadAsync(
-            client, blobClient, "E1", "title", "save.bin", "out.bin", ListCommand, "json", stderr, default);
+        var download = FileCommandFactory.RunDownloadAsync(
+            client, blobClient, "E1", "title", "save.bin", "out.bin", ListCommand, "json", stderr, cancellation.Token);
 
-        Assert.Equal(1, exit);
-        Assert.Contains("Download failed with HTTP 403", stderr.ToString());
+        if (ctrlC)
+        {
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => download);
+            Assert.Empty(stderr.ToString());
+        }
+        else
+        {
+            Assert.Equal(1, await download);
+            Assert.StartsWith("Download failed: ", stderr.ToString(), StringComparison.Ordinal);
+            Assert.Contains("HttpClient.Timeout", stderr.ToString(), StringComparison.Ordinal);
+        }
     }
 
     [Fact]
-    public async Task RunDownloadAsync_NonAzureBlobHost_ReturnsOneWithoutBlobRequest()
+    public async Task RunDownloadAsync_NonAzureBlobHost_FailsWithoutBlobRequest()
     {
         var responseJson = """{"code":200,"status":"OK","data":{"Metadata":{"save.bin":{"FileName":"save.bin","DownloadUrl":"https://attacker.example.com/d"}}}}""";
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok(responseJson)));
-        var blobHandler = new RoutingMockHandler((_, _) => Ok("x"));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok(responseJson)));
+        var blobHandler = new RoutingHttpHandler(_ => Ok("x"));
         using var blobClient = new HttpClient(blobHandler);
-        var stderr = new StringWriter();
 
-        var exit = await FileCommandFactory.RunDownloadAsync(
-            client, blobClient, "E1", "title", "save.bin", "out.bin", ListCommand, "json", stderr, default);
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => FileCommandFactory.RunDownloadAsync(
+            client, blobClient, "E1", "title", "save.bin", "out.bin", ListCommand, "json", new StringWriter(), default));
 
-        Assert.Equal(1, exit);
-        Assert.Contains("Rejected download URL host", stderr.ToString());
+        Assert.Contains("Rejected download URL host", exception.Message);
         Assert.Empty(blobHandler.Requests);
     }
 
@@ -629,10 +616,10 @@ public class PlayFabFileCommandTests
     public async Task RunDownloadAsync_ApiError_ReturnsOne()
     {
         var errorJson = """{"code":403,"status":"Forbidden","error":"NotAuthorized","errorCode":1100,"errorMessage":"no"}""";
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
-        using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("x")));
+        using var client = PlayFabTestClient.Create(handler);
+        using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("x")));
         var stderr = new StringWriter();
 
         var exit = await FileCommandFactory.RunDownloadAsync(
@@ -653,9 +640,9 @@ public class PlayFabFileCommandTests
         {
             Directory.SetCurrentDirectory(tempDir);
             await File.WriteAllTextAsync("-", "x");
-            var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-            using var client = CreateClientWithHandler(handler);
-            using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("x")));
+            var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+            using var client = PlayFabTestClient.Create(handler);
+            using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("x")));
             var stderr = new StringWriter();
 
             var exit = await FileCommandFactory.RunUploadAsync(
@@ -678,8 +665,8 @@ public class PlayFabFileCommandTests
     [Fact]
     public async Task RunUploadAsync_LocalFileMissing_ReturnsOne()
     {
-        using var client = CreateClientWithHandler(new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}""")));
-        using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("x")));
+        using var client = PlayFabTestClient.Create(new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}""")));
+        using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("x")));
         var stderr = new StringWriter();
         var missing = Path.Combine(Path.GetTempPath(), $"does-not-exist-{Guid.NewGuid():N}.bin");
 
@@ -700,13 +687,13 @@ public class PlayFabFileCommandTests
             var initiateJson = """{"code":200,"status":"OK","data":{"ProfileVersion":7,"UploadDetails":[{"FileName":"remote.bin","UploadUrl":"https://nodpublishers.blob.core.windows.net/put"}]}}""";
             var finalizeJson = """{"code":200,"status":"OK","data":{"ProfileVersion":8}}""";
 
-            var apiHandler = new RoutingMockHandler((req, _) =>
-                req.RequestUri!.ToString().Contains("Initiate", StringComparison.OrdinalIgnoreCase)
+            var apiHandler = new RoutingHttpHandler(request =>
+                request.Uri.ToString().Contains("Initiate", StringComparison.OrdinalIgnoreCase)
                     ? Ok(initiateJson)
                     : Ok(finalizeJson));
-            using var client = CreateClientWithHandler(apiHandler);
+            using var client = PlayFabTestClient.Create(apiHandler);
 
-            var blobHandler = new RoutingMockHandler((_, _) => Ok(""));
+            var blobHandler = new RoutingHttpHandler(_ => Ok(""));
             using var blobClient = new HttpClient(blobHandler);
             var stderr = new StringWriter();
             var relativeSegmentPath = Path.Combine(Path.GetDirectoryName(tempFile)!, ".", Path.GetFileName(tempFile));
@@ -717,12 +704,12 @@ public class PlayFabFileCommandTests
             Assert.Equal(0, exit);
             Assert.Contains("Uploaded 'remote.bin'", stderr.ToString());
             Assert.Contains($"Uploading source file: {Path.GetFullPath(relativeSegmentPath)}", stderr.ToString());
-            Assert.Contains(apiHandler.Requests, r => r.Uri.Contains("InitiateFileUploads"));
-            Assert.Contains(apiHandler.Requests, r => r.Uri.Contains("FinalizeFileUploads"));
-            Assert.DoesNotContain(apiHandler.Requests, r => r.Uri.Contains("AbortFileUploads"));
+            Assert.Contains(apiHandler.Requests, r => r.Uri.ToString().Contains("InitiateFileUploads"));
+            Assert.Contains(apiHandler.Requests, r => r.Uri.ToString().Contains("FinalizeFileUploads"));
+            Assert.DoesNotContain(apiHandler.Requests, r => r.Uri.ToString().Contains("AbortFileUploads"));
             var put = Assert.Single(blobHandler.Requests);
-            Assert.Equal("PUT", put.Method);
-            Assert.Equal("https://nodpublishers.blob.core.windows.net/put", put.Uri);
+            Assert.Equal(HttpMethod.Put, put.Method);
+            Assert.Equal("https://nodpublishers.blob.core.windows.net/put", put.Uri.ToString());
         }
         finally
         {
@@ -740,12 +727,12 @@ public class PlayFabFileCommandTests
             await File.WriteAllTextAsync(tempFile, "abc");
             var initiateJson = """{"code":200,"status":"OK","data":{"ProfileVersion":1,"UploadDetails":[{"FileName":"local-name.dat","UploadUrl":"https://nodpublishers.blob.core.windows.net/put"}]}}""";
 
-            var apiHandler = new RoutingMockHandler((req, _) =>
-                req.RequestUri!.ToString().Contains("Initiate", StringComparison.OrdinalIgnoreCase)
+            var apiHandler = new RoutingHttpHandler(request =>
+                request.Uri.ToString().Contains("Initiate", StringComparison.OrdinalIgnoreCase)
                     ? Ok(initiateJson)
                     : Ok("""{"code":200,"status":"OK","data":{"ProfileVersion":2}}"""));
-            using var client = CreateClientWithHandler(apiHandler);
-            using var blobClient = new HttpClient(new RoutingMockHandler((_, _) => Ok("")));
+            using var client = PlayFabTestClient.Create(apiHandler);
+            using var blobClient = new HttpClient(new RoutingHttpHandler(_ => Ok("")));
             var stderr = new StringWriter();
 
             var exit = await FileCommandFactory.RunUploadAsync(
@@ -753,7 +740,7 @@ public class PlayFabFileCommandTests
 
             Assert.Equal(0, exit);
             Assert.Contains("Uploaded 'local-name.dat'", stderr.ToString());
-            var initiateBody = apiHandler.Requests.First(r => r.Uri.Contains("Initiate")).Body!;
+            var initiateBody = apiHandler.Requests.First(r => r.Uri.ToString().Contains("Initiate")).Text;
             Assert.Contains("local-name.dat", initiateBody);
         }
         finally
@@ -814,7 +801,7 @@ public class PlayFabFileCommandTests
                     ? finalize?.Invoke(request, token) ?? OkAsync(ProfileVersionOkJson)
                     : abort?.Invoke(request, token) ?? OkAsync(ProfileVersionOkJson);
             });
-            using var client = CreateClientWithHandler(api);
+            using var client = PlayFabTestClient.Create(api);
             var blob = new AsyncRoutingHandler(put ?? ((_, _) => OkAsync(string.Empty)));
             using var blobClient = new HttpClient(blob) { Timeout = blobTimeout ?? TimeSpan.FromSeconds(100) };
             var stderr = new StringWriter();
@@ -1067,8 +1054,8 @@ public class PlayFabFileCommandTests
     [Fact]
     public async Task RunDeleteAsync_NotConfirmed_ReturnsOneWithoutCallingApi()
     {
-        var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await FileCommandFactory.RunDeleteAsync(
             client, "E1", "title", new[] { "f.bin" }, confirmedDestructive: false, "json", new StringWriter(), cancellationToken: CancellationToken.None);
@@ -1080,8 +1067,8 @@ public class PlayFabFileCommandTests
     [Fact]
     public async Task RunDeleteAsync_Confirmed_SingleFile_UsesSingularMessage()
     {
-        var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await FileCommandFactory.RunDeleteAsync(
@@ -1095,8 +1082,8 @@ public class PlayFabFileCommandTests
     [Fact]
     public async Task RunDeleteAsync_Confirmed_MultipleFiles_UsesPluralMessage()
     {
-        var handler = new FileCommandMockHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await FileCommandFactory.RunDeleteAsync(
@@ -1104,8 +1091,8 @@ public class PlayFabFileCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("Deleted files: 'a.bin', 'b.bin'", stderr.ToString());
-        Assert.NotNull(handler.CapturedBody);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        Assert.NotNull(handler.LastRequestBody);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var fileNames = doc.RootElement.GetProperty("FileNames").EnumerateArray().Select(e => e.GetString()).ToList();
         Assert.Equal(new List<string?> { "a.bin", "b.bin" }, fileNames);
     }
@@ -1114,9 +1101,9 @@ public class PlayFabFileCommandTests
     public async Task RunDeleteAsync_ApiError_ReturnsOne()
     {
         var errorJson = """{"code":500,"status":"InternalServerError","error":"Internal","errorCode":1,"errorMessage":"boom"}""";
-        var handler = new FileCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await FileCommandFactory.RunDeleteAsync(
@@ -1127,62 +1114,6 @@ public class PlayFabFileCommandTests
     }
 
     #endregion
-}
-
-/// <summary>
-/// Mock handler that records each request (method, URI, body) and returns a
-/// response produced by a caller-supplied responder. Supports multi-call flows
-/// such as upload (initiate + finalize) and routing by request URI.
-/// </summary>
-internal sealed class RoutingMockHandler : HttpMessageHandler
-{
-    private readonly Func<HttpRequestMessage, string, HttpResponseMessage> _responder;
-
-    public List<(string Method, string Uri, string? Body)> Requests { get; } = new();
-
-    public RoutingMockHandler(Func<HttpRequestMessage, string, HttpResponseMessage> responder)
-    {
-        _responder = responder;
-    }
-
-    protected override async Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken)
-    {
-        var body = request.Content != null
-            ? await request.Content.ReadAsStringAsync(cancellationToken)
-            : null;
-        Requests.Add((request.Method.Method, request.RequestUri?.ToString() ?? string.Empty, body));
-        return _responder(request, body ?? string.Empty);
-    }
-}
-
-/// <summary>
-/// Mock handler that captures the request body and URI for assertion.
-/// </summary>
-internal class FileCommandMockHandler : HttpMessageHandler
-{
-    private readonly HttpResponseMessage _response;
-    public string? CapturedBody { get; private set; }
-    public string? LastRequestUri { get; private set; }
-
-    public FileCommandMockHandler(HttpResponseMessage response)
-    {
-        _response = response;
-    }
-
-    protected override async Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken)
-    {
-        LastRequestUri = request.RequestUri?.ToString();
-        if (request.Content != null)
-        {
-            CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
-        }
-
-        return _response;
-    }
 }
 
 /// <summary>

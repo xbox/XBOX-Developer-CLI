@@ -5,56 +5,39 @@ description: Open a GitHub bug-report draft with CLI environment information.
 
 # Feedback
 
+`xbox feedback` shows a summary of your environment, warns that GitHub issues are public, and
+asks whether to open a bug-report draft in your browser. Enter `Y` to open it, or `N` or nothing to
+cancel.
+
 ```bash
 xbox feedback
 ```
 
-Shows an environment summary, warns that GitHub issues are public, and asks whether
-to open a bug-report draft in your default browser. Enter `Y` or `yes` to proceed;
-`N`, `no`, `q`, an empty answer, or end-of-input cancels without opening a browser.
-Ctrl-C cancels the command.
-
-The draft opens under <https://github.com/microsoft/XBOX-Developer-CLI/issues>,
-using the repository's bug-report form with **Environment Summary** prefilled.
-Describe the problem, reproduction steps, expected behavior, and errors in the form,
-and review everything before submitting. The CLI never creates or submits an issue.
-For feature requests and documentation problems, use the other templates in the
-repository's issue chooser.
+The draft opens in the [XBOX CLI's GitHub issues](https://github.com/xbox/cli/issues),
+with the environment summary filled in. Describe the problem in the form, review everything, and
+submit it yourself; the CLI never submits an issue. For feature requests and documentation
+problems, choose another template in the issue chooser.
 
 ## Options
 
 | Option | Description |
 | --- | --- |
-| `--no-browser` | Print the environment summary and prefilled issue URL without prompting or opening a browser. Works in scripts and headless terminals. |
+| `--no-browser` | Print the environment summary and the draft's URL without asking or opening a browser. Use it in scripts and on headless machines. |
 
-```bash
-xbox feedback --no-browser
-```
+Without `--no-browser`, the command needs an interactive terminal, and otherwise fails and
+suggests `--no-browser`. If no browser opens, open the printed URL yourself.
 
-Without `--no-browser`, stdin and stderr must both be interactive terminals.
-Otherwise the command exits 1 with guidance to use `--no-browser`. Declining the
-prompt exits 0; Ctrl-C exits nonzero. If the OS cannot launch a browser, the command
-prints a warning and leaves the URL available for manual use, exiting 0 because
-the draft link is still usable. The URL is always printed when a draft is requested,
-even when a browser opens.
+## What the draft includes
 
-## Environment information and privacy
+The summary has only the CLI version, the OS and its architecture, the process architecture, and
+the .NET runtime version. It doesn't include command history, logs, settings, saved context,
+credentials, or account details, and the command doesn't sign in or call any service. Opening the
+draft sends the summary to GitHub in the URL.
 
-The form includes only the CLI version, OS description, OS architecture, process
-architecture, and .NET runtime version. It does not read command history, logs,
-request bodies, configuration values, saved context, credentials, account details,
-or environment variables. No PlayFab or Partner Center API is called, and no
-sign-in or title ID is required.
+## Output
 
-The environment summary is displayed before consent. Opening the draft sends that
-summary to GitHub in the URL; `--no-browser` only prints it locally. Review it and
-anything you add for sensitive information before submitting the public report.
+The summary and URL are text on stdout, whatever `--output` is, and `--output table` is refused.
+Prompts, warnings, and errors go to stderr. The command exits `0` when it opens or prints the
+draft or you decline, and nonzero if it fails or you press Ctrl+C.
 
-## Output and compatibility
-
-This is an informational command: the summary and URL are human-readable stdout,
-including with `--output json` or `--output json-compact`. Prompts, warnings, and
-errors go to stderr. It does not accept `--output table`.
-
-[`report-issue`](report-issue.md) remains a hidden alias with identical behavior.
-It does not appear in root Help or command suggestions.
+`xbox report-issue` is a hidden alias for this command; see [Report issue](report-issue.md).

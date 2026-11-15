@@ -27,7 +27,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Help_DescribesTheSellerScope()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(["test-account", "batch", "delete", "--help"], handler);
 
@@ -41,7 +41,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_NoWaitSendsOneDeleteAndPrintsTheAnswer()
     {
-        var handler = new ScriptedHandler(Deletion(retryAfterSeconds: 30));
+        var handler = new XboxPartnerHttpMessageHandler(Deletion(retryAfterSeconds: 30));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm", "--no-wait"), handler);
 
@@ -61,7 +61,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_AllowNotMineSendsTheQueryFlag()
     {
-        var handler = new ScriptedHandler(Deletion());
+        var handler = new XboxPartnerHttpMessageHandler(Deletion());
 
         Invocation result = await InvokeAsync(DeleteArgs("--yes", "--no-wait", "--allow-not-mine"), handler);
 
@@ -72,7 +72,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_WaitsUntilTheBatchIsGone()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Deletion(),
             Batch(jobId: "del-1"),
             Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
@@ -94,7 +94,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_TableOutputShowsTheDeletedRow()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Deletion(),
             Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
 
@@ -110,7 +110,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_BatchLeftWithoutAJobExitsTwo()
     {
-        var handler = new ScriptedHandler(Deletion(), Batch(jobId: null), Batch(jobId: null));
+        var handler = new XboxPartnerHttpMessageHandler(Deletion(), Batch(jobId: null), Batch(jobId: null));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
 
@@ -124,7 +124,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_OneReadWithoutAJobIsNotTakenAsStopped()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Deletion(),
             Batch(jobId: null),
             Batch(jobId: "del-1"),
@@ -140,7 +140,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_NotDeletedAtTheTimeoutReportsTheLastRead()
     {
-        var handler = new ScriptedHandler(Deletion(retryAfterSeconds: 6), Batch("del-1", progress: "2/5"));
+        var handler = new XboxPartnerHttpMessageHandler(Deletion(retryAfterSeconds: 6), Batch("del-1", progress: "2/5"));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm", "--timeout", "10s"), handler);
 
@@ -158,7 +158,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_TransientReadFailureKeepsWaiting()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Deletion(),
             Problem(HttpStatusCode.GatewayTimeout, code: null),
             Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
@@ -172,7 +172,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_LastingReadFailureExitsFourWithTheWayToCheck()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Deletion(),
             Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
 
@@ -186,7 +186,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_CodelessNotFoundWhileWaitingIsNotTreatedAsDeleted()
     {
-        var handler = new ScriptedHandler(Deletion(), Problem(HttpStatusCode.NotFound, code: null));
+        var handler = new XboxPartnerHttpMessageHandler(Deletion(), Problem(HttpStatusCode.NotFound, code: null));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
 
@@ -206,7 +206,7 @@ public class TestAccountDeleteCommandTests : IDisposable
                 return Task.CompletedTask;
             },
         };
-        var handler = new ScriptedHandler(Deletion());
+        var handler = new XboxPartnerHttpMessageHandler(Deletion());
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler, cancellation.Token);
 
@@ -223,7 +223,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [InlineData(HttpStatusCode.NotFound, null, "Deleting test account batches may be unavailable.")]
     public async Task Delete_RefusalExitsOneWithAHint(HttpStatusCode status, string? code, string hint)
     {
-        var handler = new ScriptedHandler(Problem(status, code));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(status, code));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
 
@@ -240,7 +240,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [InlineData(HttpStatusCode.GatewayTimeout, null)]
     public async Task Delete_ServerFailureIsAnUnknownOutcome(HttpStatusCode status, string? code)
     {
-        var handler = new ScriptedHandler(Problem(status, code));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(status, code));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
 
@@ -250,7 +250,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_UnreadableAnswerIsAnUnknownOutcome()
     {
-        var handler = new ScriptedHandler(Respond(HttpStatusCode.Accepted, "not json"));
+        var handler = new XboxPartnerHttpMessageHandler(Respond(HttpStatusCode.Accepted, "not json"));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
 
@@ -261,7 +261,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_ConnectionDroppedAfterSendingIsAnUnknownOutcome()
     {
-        var handler = new ScriptedHandler(() => throw new HttpRequestException("reset"));
+        var handler = new XboxPartnerHttpMessageHandler(() => throw new HttpRequestException("reset"));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
 
@@ -272,7 +272,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_AccessDeniedWithAllowNotMineNamesTheServiceRefusal()
     {
-        var handler = new ScriptedHandler(Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm", "--allow-not-mine"), handler);
 
@@ -284,7 +284,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_CanceledBeforeSendingMeansNothingWasDeleted()
     {
-        var handler = new ScriptedHandler(Deletion());
+        var handler = new XboxPartnerHttpMessageHandler(Deletion());
         using var cancellation = new CancellationTokenSource();
         await cancellation.CancelAsync();
 
@@ -298,7 +298,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_TimeoutAfterSendingIsAnUnknownOutcome()
     {
-        var handler = new ScriptedHandler(() => throw new TaskCanceledException("timed out"));
+        var handler = new XboxPartnerHttpMessageHandler(() => throw new TaskCanceledException("timed out"));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
 
@@ -309,7 +309,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_NameResolutionFailureMeansNothingWasDeleted()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             () => throw new HttpRequestException(HttpRequestError.NameResolutionError, "no such host"));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm"), handler);
@@ -321,7 +321,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_RefusesWithoutConfirmationOutsideATerminal()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(DeleteArgs(), handler);
 
@@ -336,7 +336,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     {
         TestAccountCommandFactory.Dependencies =
             TestAccountSecretReaderTests.Dependencies(interactive: true, confirmation: () => " yes ");
-        var handler = new ScriptedHandler(Batch(jobId: null), Deletion());
+        var handler = new XboxPartnerHttpMessageHandler(Batch(jobId: null), Deletion());
 
         Invocation result = await InvokeAsync(DeleteArgs("--no-wait"), handler);
 
@@ -355,7 +355,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     {
         TestAccountCommandFactory.Dependencies =
             TestAccountSecretReaderTests.Dependencies(interactive: true, confirmation: () => "n");
-        var handler = new ScriptedHandler(Batch(jobId: "create-1"));
+        var handler = new XboxPartnerHttpMessageHandler(Batch(jobId: "create-1"));
 
         Invocation result = await InvokeAsync(DeleteArgs(), handler);
 
@@ -369,7 +369,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     public async Task Delete_PromptDoesNotDeleteABatchItCannotRead()
     {
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(interactive: true);
-        var handler = new ScriptedHandler(Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
 
         Invocation result = await InvokeAsync(DeleteArgs(), handler);
 
@@ -381,7 +381,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_RejectsNoWaitWithTimeout()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm", "--no-wait", "--timeout", "1m"), handler);
 
@@ -397,7 +397,7 @@ public class TestAccountDeleteCommandTests : IDisposable
         DateTimeOffset now = DateTimeOffset.UnixEpoch;
         int reads = 0;
 
-        TestAccountBatchDeletionWait wait = await TestAccountBatchDeletionWaiter.WaitAsync(
+        TestAccountBatchWait wait = await TestAccountBatchWaiter.WaitAsync(
             TimeSpan.FromSeconds(20),
             _ => ++reads == 1
                 ? Task.FromResult("""{"batch":{"id":42,"jobId":"del-1"},"accounts":[]}""")
@@ -406,6 +406,7 @@ public class TestAccountDeleteCommandTests : IDisposable
                     "Not Found",
                     """{"code":"test_account_batch_not_found"}""",
                     new Uri("https://example.test/batches/42")),
+            deleting: true,
             TimeSpan.FromMinutes(5),
             (delay, _) =>
             {
@@ -416,14 +417,14 @@ public class TestAccountDeleteCommandTests : IDisposable
             () => now,
             CancellationToken.None);
 
-        Assert.Equal(TestAccountBatchDeletionOutcome.Deleted, wait.Outcome);
+        Assert.Equal(TestAccountBatchWaitOutcome.Deleted, wait.Outcome);
         Assert.Equal([TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20)], delays);
     }
 
     private static string[] DeleteArgs(params string[] extra) =>
         ["test-account", "batch", "delete", "42", "--seller-id", "1234567", .. extra];
 
-    private static void AssertOutcomeUnknown(Invocation result, ScriptedHandler handler)
+    private static void AssertOutcomeUnknown(Invocation result, XboxPartnerHttpMessageHandler handler)
     {
         Assert.Equal(TestAccountCommandFactory.OutcomeUnknownExitCode, result.ExitCode);
         Assert.Single(handler.Requests);
@@ -439,7 +440,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_WithoutASellerExplainsTheDefaultInThePrompt()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(["test-account", "batch", "delete", "42"], handler);
 
@@ -452,7 +453,7 @@ public class TestAccountDeleteCommandTests : IDisposable
     [Fact]
     public async Task Delete_VerbosePollingDoesNotExposeInternalServices()
     {
-        var handler = new ScriptedHandler(Deletion(), Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
+        var handler = new XboxPartnerHttpMessageHandler(Deletion(), Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
 
         Invocation result = await InvokeAsync(DeleteArgs("--confirm", "--verbose"), handler);
 
@@ -545,45 +546,4 @@ public class TestAccountDeleteCommandTests : IDisposable
     }
 
     private sealed record Invocation(int ExitCode, string Stdout, string Stderr);
-
-    /// <summary>Returns scripted responses in order, or throws, and records every request.</summary>
-    private sealed class ScriptedHandler : HttpMessageHandler
-    {
-        private readonly Queue<Func<HttpResponseMessage>> _responses;
-
-        public ScriptedHandler(params HttpResponseMessage[] responses)
-        {
-            _responses = new Queue<Func<HttpResponseMessage>>(
-                responses.Select(response => (Func<HttpResponseMessage>)(() => response)));
-        }
-
-        public ScriptedHandler(Func<HttpResponseMessage> response)
-        {
-            _responses = new Queue<Func<HttpResponseMessage>>([response]);
-        }
-
-        public List<CapturedHttpRequest> Requests { get; } = [];
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            string? body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new CapturedHttpRequest(
-                request.Method,
-                request.RequestUri,
-                body,
-                request.Content?.Headers.ContentType?.MediaType,
-                request.Headers.ToDictionary(
-                    header => header.Key,
-                    header => header.Value.ToArray(),
-                    StringComparer.OrdinalIgnoreCase)));
-            if (_responses.Count == 0)
-            {
-                throw new InvalidOperationException("No scripted response remains for this request.");
-            }
-
-            return _responses.Dequeue()();
-        }
-    }
 }

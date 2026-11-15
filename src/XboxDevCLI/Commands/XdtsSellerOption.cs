@@ -12,7 +12,7 @@ internal sealed class XdtsSellerOption
 {
     private readonly Option<long?> _sellerIdOption = CreatePositiveLongOption(
         "--seller-id",
-        "Optional XBOX seller account ID. Must be authorized for the signed-in developer.")
+        "Partner Center seller ID. Overrides XBOX_SELLER_ID and the seller saved by context set. Must be a seller you're authorized for.")
         .AsContextValue(ContextEndpoint.XboxPartner);
 
     public void AddTo(Command command) => command.Options.Add(_sellerIdOption);
@@ -35,6 +35,7 @@ internal sealed class XdtsSellerOption
         var option = new Option<long?>(name)
         {
             Description = description,
+            HelpName = "id",
         };
         option.Validators.Add(result =>
         {

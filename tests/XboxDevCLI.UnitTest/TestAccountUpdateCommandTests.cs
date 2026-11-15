@@ -27,7 +27,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_NoWaitSendsOnePatchWithOnlyTheRequestedFields()
     {
-        var handler = new ScriptedHandler(Update(retryAfterSeconds: 30));
+        var handler = new XboxPartnerHttpMessageHandler(Update(retryAfterSeconds: 30));
 
         Invocation result = await InvokeAsync(
             UpdateArgs("--confirm", "--no-wait", "--tag", " nightly ", "--tag", "regression"), handler);
@@ -53,7 +53,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_SendsSandboxAndExpiryChangesWithAllowNotMine()
     {
-        var handler = new ScriptedHandler(Update());
+        var handler = new XboxPartnerHttpMessageHandler(Update());
 
         Invocation result = await InvokeAsync(
             UpdateArgs(
@@ -81,7 +81,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_ClearTagsReplacesWithAnEmptyKeywordList()
     {
-        var handler = new ScriptedHandler(Update(keywords: []));
+        var handler = new XboxPartnerHttpMessageHandler(Update(keywords: []));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--no-wait", "--clear-tags"), handler);
 
@@ -92,7 +92,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_ReplaceTagsSendsReplaceKeywords()
     {
-        var handler = new ScriptedHandler(Update());
+        var handler = new XboxPartnerHttpMessageHandler(Update());
 
         Invocation result = await InvokeAsync(
             UpdateArgs("--confirm", "--no-wait", "--tag", "nightly", "--replace-tags"), handler);
@@ -104,7 +104,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_AddedTagsLandEvenWhenTheBatchKeepsOtherTags()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(keywords: ["old", "nightly", "CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["old", "Nightly", "other", "CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["old", "Nightly", "other", "CreatedWithXboxDevCLI"]));
@@ -119,7 +119,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_ReplacedTagsMustMatchExactly()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(),
             Batch(jobId: null, keywords: ["old", "nightly", "CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["old", "nightly", "CreatedWithXboxDevCLI"]));
@@ -134,7 +134,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_ReplacedTagsCompareWithCase()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(keywords: ["Smoke", "CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["smoke", "CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["smoke", "CreatedWithXboxDevCLI"]));
@@ -149,7 +149,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_TrimsTrailingWhitespaceFromTags()
     {
-        var handler = new ScriptedHandler(Update());
+        var handler = new XboxPartnerHttpMessageHandler(Update());
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--no-wait", "--tag", "nightly\n"), handler);
 
@@ -160,7 +160,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_UnchangedAnswerExitsZeroWithoutWaiting()
     {
-        var handler = new ScriptedHandler(Update(state: "unchanged", jobId: null, status: HttpStatusCode.OK));
+        var handler = new XboxPartnerHttpMessageHandler(Update(state: "unchanged", jobId: null, status: HttpStatusCode.OK));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--tag", "nightly"), handler);
 
@@ -174,7 +174,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_WaitsUntilTheJobClearsAndTheBatchShowsTheChange()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(),
             Batch(jobId: "upd-1", keywords: ["old"]),
             Batch(jobId: null, keywords: ["nightly", "CreatedWithXboxDevCLI"]),
@@ -194,7 +194,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_JobClearedWithoutTheChangeExitsTwo()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(),
             Batch(jobId: null, keywords: ["old"]),
             Batch(jobId: null, keywords: ["old"]));
@@ -209,7 +209,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_TimeoutWithTheJobStillSetExitsFour()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(),
             Batch(jobId: "upd-1"),
             Batch(jobId: "upd-1"),
@@ -229,7 +229,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     public async Task Update_ReplaceWhoseCaseChangeNeverLandedExitsTwo()
     {
         // The answer and the batch agree on the old casing, so only the request shows the change is missing.
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(keywords: ["smoke", "CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["smoke", "CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["smoke", "CreatedWithXboxDevCLI"]));
@@ -244,7 +244,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_WaitsForSandboxAndExpiryChanges()
     {
-        var handler = new ScriptedHandler(Update(), Batch(jobId: null), Batch(jobId: null));
+        var handler = new XboxPartnerHttpMessageHandler(Update(), Batch(jobId: null), Batch(jobId: null));
 
         Invocation result = await InvokeAsync(
             UpdateArgs("--confirm", "--add-sandbox-id", "abcd.1", "--access-expiration", "2030-01-15"), handler);
@@ -257,7 +257,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     public async Task Update_AnswerThatKeepsARemovedSandboxIsNotConfirmed()
     {
         // The answer and the batch agree, but both still show the sandbox the request removed.
-        var handler = new ScriptedHandler(Update(), Batch(jobId: null), Batch(jobId: null));
+        var handler = new XboxPartnerHttpMessageHandler(Update(), Batch(jobId: null), Batch(jobId: null));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--remove-sandbox-id", "ABCD.1"), handler);
 
@@ -269,7 +269,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_ThreeFailedReadsWhileWaitingExitFour()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(),
             Problem(HttpStatusCode.BadGateway, null),
             Problem(HttpStatusCode.BadGateway, null),
@@ -287,7 +287,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_OneFailedReadWhileWaitingIsTolerated()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(),
             Problem(HttpStatusCode.BadGateway, null),
             Batch(jobId: null, keywords: ["nightly"]),
@@ -302,7 +302,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_ReadThatCannotSucceedWhileWaitingExitsFour()
     {
-        var handler = new ScriptedHandler(Update(), Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
+        var handler = new XboxPartnerHttpMessageHandler(Update(), Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--tag", "nightly"), handler);
 
@@ -324,7 +324,7 @@ public class TestAccountUpdateCommandTests : IDisposable
                 token.ThrowIfCancellationRequested();
             },
         };
-        var handler = new ScriptedHandler(Update());
+        var handler = new XboxPartnerHttpMessageHandler(Update());
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--tag", "nightly"), handler, cancellation.Token);
 
@@ -342,9 +342,10 @@ public class TestAccountUpdateCommandTests : IDisposable
         var delays = new List<TimeSpan>();
         DateTimeOffset now = DateTimeOffset.UnixEpoch;
 
-        TestAccountBatchUpdateWait wait = await TestAccountBatchUpdateWaiter.WaitAsync(
+        TestAccountBatchWait wait = await TestAccountBatchWaiter.WaitAsync(
             TimeSpan.FromSeconds(retryAfterSeconds),
             _ => Task.FromResult(BatchJson(jobId: null)),
+            deleting: false,
             TimeSpan.FromMinutes(5),
             (delay, _) =>
             {
@@ -355,8 +356,68 @@ public class TestAccountUpdateCommandTests : IDisposable
             () => now,
             CancellationToken.None);
 
-        Assert.Equal(TestAccountBatchUpdateOutcome.Finished, wait.Outcome);
+        Assert.Equal(TestAccountBatchWaitOutcome.JobEnded, wait.Outcome);
         Assert.Equal([TimeSpan.FromSeconds(expectedSeconds), TimeSpan.FromSeconds(expectedSeconds)], delays);
+    }
+
+    [Fact]
+    public async Task WaitAsync_AbandonsAReadThatOutlastsTheDeadline()
+    {
+        DateTimeOffset now = DateTimeOffset.UnixEpoch;
+        var never = new TaskCompletionSource<string>();
+        int reads = 0;
+
+        TestAccountBatchWait wait = await TestAccountBatchWaiter.WaitAsync(
+            retryAfter: null,
+            _ => ++reads == 1 ? Task.FromResult(BatchJson(jobId: "upd-1")) : never.Task,
+            deleting: false,
+            TimeSpan.FromSeconds(20) + TimeSpan.FromMilliseconds(50),
+            (delay, _) =>
+            {
+                now += delay;
+                return Task.CompletedTask;
+            },
+            () => now,
+            CancellationToken.None);
+
+        Assert.Equal(TestAccountBatchWaitOutcome.TimedOut, wait.Outcome);
+        Assert.Equal("upd-1", wait.LastBatch?.JobId);
+        Assert.Equal(2, reads);
+    }
+
+    [Fact]
+    public async Task WaitAsync_WaitsAsAFailedReadAsksThenAsTheUpdateAsked()
+    {
+        var delays = new List<TimeSpan>();
+        DateTimeOffset now = DateTimeOffset.UnixEpoch;
+        var batchUri = new Uri("https://example.test/batches/42");
+        var reads = new Queue<Func<string>>(
+        [
+            () => throw new XboxPartnerApiException(
+                HttpStatusCode.TooManyRequests, null, string.Empty, batchUri, retryAfter: TimeSpan.FromSeconds(60)),
+            () => throw new XboxPartnerApiException(HttpStatusCode.BadGateway, null, string.Empty, batchUri),
+            () => BatchJson(jobId: null),
+            () => BatchJson(jobId: null),
+        ]);
+
+        TestAccountBatchWait wait = await TestAccountBatchWaiter.WaitAsync(
+            TimeSpan.FromSeconds(30),
+            _ => Task.FromResult(reads.Dequeue()()),
+            deleting: false,
+            TimeSpan.FromMinutes(5),
+            (delay, _) =>
+            {
+                delays.Add(delay);
+                now += delay;
+                return Task.CompletedTask;
+            },
+            () => now,
+            CancellationToken.None);
+
+        Assert.Equal(TestAccountBatchWaitOutcome.JobEnded, wait.Outcome);
+        Assert.Equal(
+            [TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30)],
+            delays);
     }
 
     [Theory]
@@ -364,7 +425,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [InlineData(false, "lacks the Partner Center role")]
     public async Task Update_AccessDeniedHintDependsOnAllowNotMine(bool allowNotMine, string hint)
     {
-        var handler = new ScriptedHandler(Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(HttpStatusCode.Forbidden, "test_account_access_denied"));
         string[] extra = allowNotMine ? ["--allow-not-mine"] : [];
 
         Invocation result = await InvokeAsync(UpdateArgs(["--confirm", "--tag", "nightly", .. extra]), handler);
@@ -378,7 +439,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     public async Task Update_PromptReadFailureChangesNothing()
     {
         TestAccountCommandFactory.Dependencies = TestAccountSecretReaderTests.Dependencies(interactive: true);
-        var handler = new ScriptedHandler(Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(HttpStatusCode.NotFound, "test_account_batch_not_found"));
 
         Invocation result = await InvokeAsync(UpdateArgs("--tag", "nightly"), handler);
 
@@ -392,7 +453,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_TableOutputShowsOneRowWithListNotes()
     {
-        var handler = new ScriptedHandler(Update());
+        var handler = new XboxPartnerHttpMessageHandler(Update());
 
         Invocation result = await InvokeAsync(
             UpdateArgs("--confirm", "--no-wait", "--tag", "nightly", "--output", "table"), handler);
@@ -415,7 +476,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [InlineData(HttpStatusCode.MethodNotAllowed, null, "Updating test account batches may be unavailable.")]
     public async Task Update_RefusalExitsOneWithAHint(HttpStatusCode status, string? code, string hint)
     {
-        var handler = new ScriptedHandler(Problem(status, code));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(status, code));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--tag", "nightly"), handler);
 
@@ -430,7 +491,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [InlineData(HttpStatusCode.GatewayTimeout, null)]
     public async Task Update_ServerFailureIsAnUnknownOutcome(HttpStatusCode status, string? code)
     {
-        var handler = new ScriptedHandler(Problem(status, code));
+        var handler = new XboxPartnerHttpMessageHandler(Problem(status, code));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--tag", "nightly"), handler);
 
@@ -445,7 +506,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_CanceledBeforeSendingChangesNothing()
     {
-        var handler = new ScriptedHandler(Update());
+        var handler = new XboxPartnerHttpMessageHandler(Update());
         using var cancellation = new CancellationTokenSource();
         await cancellation.CancelAsync();
 
@@ -460,7 +521,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_WithoutASellerExplainsTheDefaultInThePrompt()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(["test-account", "batch", "update", "42", "--tag", "nightly"], handler);
 
@@ -473,7 +534,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_VerbosePollingDoesNotExposeInternalServices()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Update(), Batch(jobId: null, keywords: ["nightly"]), Batch(jobId: null, keywords: ["nightly"]));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--verbose", "--tag", "nightly"), handler);
@@ -490,7 +551,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [InlineData("dropped", "The connection failed while waiting for the service to answer the update")]
     public async Task Update_FailureAfterSendingIsAnUnknownOutcomeAndNotRetried(string failure, string message)
     {
-        var handler = new ScriptedHandler(() => failure == "timeout"
+        var handler = new XboxPartnerHttpMessageHandler(() => failure == "timeout"
             ? throw new TaskCanceledException("timed out")
             : throw new HttpRequestException(HttpRequestError.ResponseEnded, "response ended"));
 
@@ -507,7 +568,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_NameResolutionFailureChangesNothing()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             () => throw new HttpRequestException(HttpRequestError.NameResolutionError, "no such host"));
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--tag", "nightly"), handler);
@@ -521,7 +582,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_RefusesWithoutConfirmationOutsideATerminal()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(UpdateArgs("--add-sandbox-id", "ABCD.1"), handler);
 
@@ -537,7 +598,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     {
         TestAccountCommandFactory.Dependencies =
             TestAccountSecretReaderTests.Dependencies(interactive: true, confirmation: () => "y");
-        var handler = new ScriptedHandler(Batch(jobId: null, keywords: ["old"]), Update());
+        var handler = new XboxPartnerHttpMessageHandler(Batch(jobId: null, keywords: ["old"]), Update());
 
         Invocation result = await InvokeAsync(UpdateArgs("--no-wait", "--tag", "nightly"), handler);
 
@@ -553,7 +614,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     {
         TestAccountCommandFactory.Dependencies =
             TestAccountSecretReaderTests.Dependencies(interactive: true, confirmation: () => "n");
-        var handler = new ScriptedHandler(Batch(jobId: "create-1"));
+        var handler = new XboxPartnerHttpMessageHandler(Batch(jobId: "create-1"));
 
         Invocation result = await InvokeAsync(UpdateArgs("--clear-tags"), handler);
 
@@ -567,7 +628,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_RejectsTagsOverOneHundredCharacters()
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(UpdateArgs("--confirm", "--tag", new string('a', 101)), handler);
 
@@ -586,7 +647,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [InlineData("--access-expiration must be a date", "--access-expiration", "soon")]
     public async Task Update_RejectsInvalidOptionsBeforeSending(string error, params string[] extra)
     {
-        var handler = new ScriptedHandler();
+        var handler = new XboxPartnerHttpMessageHandler();
 
         Invocation result = await InvokeAsync(UpdateArgs(["--confirm", .. extra]), handler);
 
@@ -598,7 +659,7 @@ public class TestAccountUpdateCommandTests : IDisposable
     [Fact]
     public async Task Update_PartialResponseIsAnUnknownOutcome()
     {
-        var handler = new ScriptedHandler(
+        var handler = new XboxPartnerHttpMessageHandler(
             Respond(HttpStatusCode.Accepted, """{"batchId":42,"jobId":"upd-1","state":"updating"}"""),
             Batch(jobId: null, keywords: ["CreatedWithXboxDevCLI"]),
             Batch(jobId: null, keywords: ["CreatedWithXboxDevCLI"]));
@@ -627,8 +688,8 @@ public class TestAccountUpdateCommandTests : IDisposable
 
         Assert.Equal(
             ["sandboxes", "access expiration", "keywords"],
-            TestAccountBatchUpdateWaiter.FindMismatches(request, expected, batch));
-        Assert.Empty(TestAccountBatchUpdateWaiter.FindMismatches(
+            TestAccountBatchWaiter.FindMismatches(request, expected, batch));
+        Assert.Empty(TestAccountBatchWaiter.FindMismatches(
             new UpdateTestAccountBatchRequest { Keywords = ["nightly"] }, expected, batch));
     }
 
@@ -644,8 +705,8 @@ public class TestAccountUpdateCommandTests : IDisposable
         var expected = new TestAccountBatchUpdate(42, "upd-1", "updating", [], null, []);
         var batch = new TestAccountBatch(42, "t", 5, 1, null, null, null, null, null, null, true, null, null);
 
-        Assert.Equal(["sandboxes", "keywords"], TestAccountBatchUpdateWaiter.FindMismatches(request, expected, batch));
-        Assert.Empty(TestAccountBatchUpdateWaiter.FindMismatches(
+        Assert.Equal(["sandboxes", "keywords"], TestAccountBatchWaiter.FindMismatches(request, expected, batch));
+        Assert.Empty(TestAccountBatchWaiter.FindMismatches(
             request, expected, batch with { SandboxAccess = [], Keywords = [] }));
     }
 
@@ -657,27 +718,27 @@ public class TestAccountUpdateCommandTests : IDisposable
         var batch = new TestAccountBatch(
             42, "t", 5, 1, null, null, expiry, null, null, ["abcd.1", "ABCD.2"], true, null, null);
 
-        Assert.Empty(TestAccountBatchUpdateWaiter.FindMismatches(
+        Assert.Empty(TestAccountBatchWaiter.FindMismatches(
             new UpdateTestAccountBatchRequest { AddSandboxes = ["abcd.2"], AccessExpirationDate = expiry }, expected, batch));
         Assert.Equal(
             ["sandboxes"],
-            TestAccountBatchUpdateWaiter.FindMismatches(
+            TestAccountBatchWaiter.FindMismatches(
                 new UpdateTestAccountBatchRequest { AddSandboxes = ["ABCD.3"] }, expected, batch));
         Assert.Equal(
             ["sandboxes"],
-            TestAccountBatchUpdateWaiter.FindMismatches(
+            TestAccountBatchWaiter.FindMismatches(
                 new UpdateTestAccountBatchRequest { RemoveSandboxes = ["ABCD.2"] }, expected, batch));
         Assert.Equal(
             ["sandboxes"],
-            TestAccountBatchUpdateWaiter.FindMismatches(
+            TestAccountBatchWaiter.FindMismatches(
                 new UpdateTestAccountBatchRequest { AddSandboxes = ["ABCD.2"] }, expected, batch with { SandboxAccess = ["ABCD.2"] }));
         Assert.Equal(
             ["access expiration"],
-            TestAccountBatchUpdateWaiter.FindMismatches(
+            TestAccountBatchWaiter.FindMismatches(
                 new UpdateTestAccountBatchRequest { AccessExpirationDate = expiry.AddDays(1) }, expected, batch));
         Assert.Equal(
             ["access expiration"],
-            TestAccountBatchUpdateWaiter.FindMismatches(
+            TestAccountBatchWaiter.FindMismatches(
                 new UpdateTestAccountBatchRequest { AccessExpirationDate = expiry },
                 expected,
                 batch with { AccessExpirationDate = expiry.AddDays(1) }));
@@ -696,10 +757,10 @@ public class TestAccountUpdateCommandTests : IDisposable
             42, "t", 5, 1, null, null, new DateTimeOffset(2030, 1, 15, 23, 0, 0, TimeSpan.Zero),
             null, ["other"], ["OTHER.1"], true, null, null);
 
-        Assert.Empty(TestAccountBatchUpdateWaiter.FindMismatches(request, expected, batch));
+        Assert.Empty(TestAccountBatchWaiter.FindMismatches(request, expected, batch));
         Assert.Equal(
             ["access expiration"],
-            TestAccountBatchUpdateWaiter.FindMismatches(request, expected, batch with { AccessExpirationDate = null }));
+            TestAccountBatchWaiter.FindMismatches(request, expected, batch with { AccessExpirationDate = null }));
     }
 
     private static string[] UpdateArgs(params string[] extra) =>
@@ -796,42 +857,4 @@ public class TestAccountUpdateCommandTests : IDisposable
     }
 
     private sealed record Invocation(int ExitCode, string Stdout, string Stderr);
-
-    /// <summary>Returns scripted responses in order, or throws, and records every request.</summary>
-    private sealed class ScriptedHandler : HttpMessageHandler
-    {
-        private readonly Queue<Func<HttpResponseMessage>> _responses;
-
-        public ScriptedHandler(params HttpResponseMessage[] responses)
-        {
-            _responses = new Queue<Func<HttpResponseMessage>>(
-                responses.Select(response => (Func<HttpResponseMessage>)(() => response)));
-        }
-
-        public ScriptedHandler(Func<HttpResponseMessage> response)
-        {
-            _responses = new Queue<Func<HttpResponseMessage>>([response]);
-        }
-
-        public List<CapturedHttpRequest> Requests { get; } = [];
-
-        protected override async Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request,
-            CancellationToken cancellationToken)
-        {
-            string? body = request.Content is null ? null : await request.Content.ReadAsStringAsync(cancellationToken);
-            Requests.Add(new CapturedHttpRequest(
-                request.Method,
-                request.RequestUri,
-                body,
-                request.Content?.Headers.ContentType?.MediaType,
-                request.Headers.ToDictionary(
-                    header => header.Key,
-                    header => header.Value.ToArray(),
-                    StringComparer.OrdinalIgnoreCase)));
-            return _responses.Count == 0
-                ? throw new InvalidOperationException("No scripted response remains for this request.")
-                : _responses.Dequeue()();
-        }
-    }
 }

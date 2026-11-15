@@ -1,9 +1,6 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.CommandLine;
 using System.Net;
 using System.Text.Json;
@@ -245,8 +242,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunListAsync_SendsRequestToCorrectPathAndBody()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunListAsync(
             client, "E1", "title_player_account", "coll1", 25, "tok", "type eq 'currency'",
@@ -256,7 +253,7 @@ public class EconomyInventoryCommandTests
         Assert.Equal(0, exit);
         Assert.Contains(EconomyCommandFactory.GetInventoryItemsPath, handler.LastRequestUri);
 
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var root = doc.RootElement;
         Assert.Equal("E1", root.GetProperty("Entity").GetProperty("Id").GetString());
         Assert.Equal("title_player_account", root.GetProperty("Entity").GetProperty("Type").GetString());
@@ -269,8 +266,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunListAsync_OmitsEntityAndDefaultsCount()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunListAsync(
             client, null, null, null, null, null, null,
@@ -278,7 +275,7 @@ public class EconomyInventoryCommandTests
             CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var root = doc.RootElement;
         Assert.False(root.TryGetProperty("Entity", out _));
         Assert.False(root.TryGetProperty("CollectionId", out _));
@@ -289,8 +286,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunListAsync_HalfEntity_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunListAsync(
@@ -306,8 +303,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunListAsync_NonPositiveCount_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunListAsync(
@@ -324,9 +321,9 @@ public class EconomyInventoryCommandTests
     public async Task RunListAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad entity"}""";
-        var handler = new EconomyMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -343,13 +340,13 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunListAsync_DataOnly_StripsEnvelope()
     {
-        var handler = new EconomyMockHandler(Ok("""{"code":200,"status":"OK","data":{"Items":[],"ContinuationToken":"c"}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Items":[],"ContinuationToken":"c"}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunListAsync(
             client, null, null, null, null, null, null,
-            OutputOptions.JsonDataOnly, stdout, new StringWriter(),
+            new OutputOptions("json", DataOnly: true), stdout, new StringWriter(),
             CancellationToken.None);
 
         Assert.Equal(0, exit);
@@ -365,8 +362,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunCollectionsAsync_SendsRequestToCorrectPath()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunCollectionsAsync(
             client, "E1", "title_player_account", 5, "tok",
@@ -375,7 +372,7 @@ public class EconomyInventoryCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains(EconomyCommandFactory.GetInventoryCollectionIdsPath, handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal(5, doc.RootElement.GetProperty("Count").GetDouble());
         Assert.Equal("tok", doc.RootElement.GetProperty("ContinuationToken").GetString());
     }
@@ -387,8 +384,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunHistoryAsync_SendsFilterAndOrderBy()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunHistoryAsync(
             client, "E1", "title_player_account", "coll1", 15, null,
@@ -398,38 +395,21 @@ public class EconomyInventoryCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains(EconomyCommandFactory.GetTransactionHistoryPath, handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var root = doc.RootElement;
         Assert.Equal("apiname eq 'AddInventoryItems'", root.GetProperty("Filter").GetString());
         Assert.Equal("timestamp desc", root.GetProperty("OrderBy").GetString());
         Assert.Equal("coll1", root.GetProperty("CollectionId").GetString());
     }
 
-    [Fact]
-    public async Task RunHistoryAsync_WithoutCollectionId_SendsDefaultCollection()
-    {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
-
-        var exit = await EconomyCommandFactory.RunHistoryAsync(
-            client, "E1", "title_player_account", null, null, null, null, null,
-            OutputOptions.Json, new StringWriter(), new StringWriter(),
-            CancellationToken.None);
-
-        Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
-        Assert.Equal(
-            EconomyCommandFactory.DefaultCollectionId,
-            doc.RootElement.GetProperty("CollectionId").GetString());
-    }
-
     [Theory]
+    [InlineData(null)]
     [InlineData("")]
     [InlineData("   ")]
-    public async Task RunHistoryAsync_BlankCollectionId_SendsDefaultCollection(string collectionId)
+    public async Task RunHistoryAsync_WithoutCollectionId_OmitsCollectionId(string? collectionId)
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunHistoryAsync(
             client, "E1", "title_player_account", collectionId, null, null, null, null,
@@ -437,10 +417,8 @@ public class EconomyInventoryCommandTests
             CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
-        Assert.Equal(
-            EconomyCommandFactory.DefaultCollectionId,
-            doc.RootElement.GetProperty("CollectionId").GetString());
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
+        Assert.False(doc.RootElement.TryGetProperty("CollectionId", out _));
     }
 
     #endregion
@@ -450,8 +428,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunAddAsync_ItemIdAndAmount_SendsItemReference()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunAddAsync(
             client, "E1", "title_player_account", "coll1", "sword", null, "stack7", 3, "idem1",
@@ -460,7 +438,7 @@ public class EconomyInventoryCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains(EconomyCommandFactory.AddInventoryItemsPath, handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var root = doc.RootElement;
         Assert.Equal("sword", root.GetProperty("Item").GetProperty("Id").GetString());
         Assert.Equal("stack7", root.GetProperty("Item").GetProperty("StackId").GetString());
@@ -472,8 +450,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunAddAsync_ItemJson_SendsParsedReference()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunAddAsync(
             client, null, null, null, null, """{"Id":"potion","StackId":"s1"}""", null, null, null,
@@ -481,7 +459,7 @@ public class EconomyInventoryCommandTests
             CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("potion", doc.RootElement.GetProperty("Item").GetProperty("Id").GetString());
         Assert.False(doc.RootElement.TryGetProperty("Amount", out _));
     }
@@ -489,8 +467,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunAddAsync_MalformedItemJson_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunAddAsync(
@@ -506,8 +484,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunAddAsync_NoItem_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunAddAsync(
@@ -527,8 +505,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunOpsAsync_InlineOperations_SendsBatch()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var json = """[{"Add":{"Item":{"Id":"sword"},"Amount":1}},{"Subtract":{"Item":{"Id":"gold"},"Amount":5}}]""";
 
         var exit = await EconomyCommandFactory.RunOpsAsync(
@@ -538,7 +516,7 @@ public class EconomyInventoryCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains(EconomyCommandFactory.ExecuteInventoryOperationsPath, handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var ops = doc.RootElement.GetProperty("Operations");
         Assert.Equal(2, ops.GetArrayLength());
         Assert.Equal("sword", ops[0].GetProperty("Add").GetProperty("Item").GetProperty("Id").GetString());
@@ -548,8 +526,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunOpsAsync_OperationsFile_ReadsAndSendsBatch()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         // Write to the process working directory and delete it in the finally below, so no file
         // is left behind wherever the test host happens to run.
@@ -563,7 +541,7 @@ public class EconomyInventoryCommandTests
                 CancellationToken.None);
 
             Assert.Equal(0, exit);
-            using var doc = JsonDocument.Parse(handler.CapturedBody!);
+            using var doc = JsonDocument.Parse(handler.LastRequestBody!);
             Assert.Equal(1, doc.RootElement.GetProperty("Operations").GetArrayLength());
         }
         finally
@@ -575,8 +553,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunOpsAsync_BothSources_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunOpsAsync(
@@ -592,8 +570,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunOpsAsync_NeitherSource_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunOpsAsync(
@@ -609,8 +587,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunOpsAsync_MalformedInlineJson_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunOpsAsync(
@@ -626,8 +604,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunOpsAsync_MissingFile_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
         var missing = Path.Combine(Directory.GetCurrentDirectory(), $"missing-{Guid.NewGuid():N}.json");
 
@@ -647,8 +625,8 @@ public class EconomyInventoryCommandTests
         // ExecuteInventoryOperations is not a Delete*/Shutdown* path, so the name-based guard in
         // PlayFabApiClient never fires for it. A Delete carried inside the batch must still be
         // confirmed, otherwise deleting via a batch would be easier than via a dedicated verb.
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
         var json = """[{"Delete":{"Item":{"Id":"sword"}}}]""";
 
@@ -665,8 +643,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunOpsAsync_DeleteOperationWithConfirm_Proceeds()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var json = """[{"Delete":{"Item":{"Id":"sword"}}}]""";
 
         var exit = await EconomyCommandFactory.RunOpsAsync(
@@ -682,8 +660,8 @@ public class EconomyInventoryCommandTests
     public async Task RunOpsAsync_DeleteMixedIntoBatch_IsAlsoRefused()
     {
         // The guard must inspect every operation, not just the first one.
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
         var json = """[{"Add":{"Item":{"Id":"gold"},"Amount":1}},{"Delete":{"Item":{"Id":"sword"}}}]""";
 
@@ -700,8 +678,8 @@ public class EconomyInventoryCommandTests
     public async Task RunOpsAsync_NonDeleteBatch_DoesNotRequireConfirm()
     {
         // Only Delete is gated; ordinary batches must not regress into needing --confirm.
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var json = """[{"Add":{"Item":{"Id":"sword"},"Amount":1}},{"Subtract":{"Item":{"Id":"gold"},"Amount":5}}]""";
 
         var exit = await EconomyCommandFactory.RunOpsAsync(
@@ -720,8 +698,8 @@ public class EconomyInventoryCommandTests
     [Fact]
     public async Task RunStatusAsync_SendsOperationToken()
     {
-        var handler = new EconomyMockHandler(Ok("""{"code":200,"status":"OK","data":{"OperationStatus":"Completed"}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"OperationStatus":"Completed"}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunStatusAsync(
@@ -731,7 +709,7 @@ public class EconomyInventoryCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains(EconomyCommandFactory.GetInventoryOperationStatusPath, handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("op-token-123", doc.RootElement.GetProperty("OperationToken").GetString());
         Assert.Equal("coll1", doc.RootElement.GetProperty("CollectionId").GetString());
         Assert.Contains("OperationStatus", stdout.ToString());
@@ -743,8 +721,8 @@ public class EconomyInventoryCommandTests
     [InlineData("   ")]
     public async Task RunStatusAsync_WithoutCollectionId_OmitsCollectionId(string? collectionId)
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
 
         var exit = await EconomyCommandFactory.RunStatusAsync(
             client, "E1", "title_player_account", collectionId, "op-token-123",
@@ -752,15 +730,15 @@ public class EconomyInventoryCommandTests
             CancellationToken.None);
 
         Assert.Equal(0, exit);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.False(doc.RootElement.TryGetProperty("CollectionId", out _));
     }
 
     [Fact]
     public async Task RunStatusAsync_BlankToken_ReturnsOneWithoutCalling()
     {
-        var handler = new EconomyMockHandler(Ok());
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok());
+        using var client = PlayFabTestClient.Create(handler);
         var stderr = new StringWriter();
 
         var exit = await EconomyCommandFactory.RunStatusAsync(
@@ -784,8 +762,8 @@ public class EconomyInventoryCommandTests
 
         async Task Capture(Func<PlayFabApiClient, Task<int>> run)
         {
-            var handler = new EconomyMockHandler(Ok());
-            using var client = CreateClientWithHandler(handler);
+            var handler = new MockHttpMessageHandler(Ok());
+            using var client = PlayFabTestClient.Create(handler);
             var exit = await run(client);
             Assert.Equal(0, exit);
             paths.Add(new Uri(handler.LastRequestUri!).AbsolutePath);
@@ -817,65 +795,5 @@ public class EconomyInventoryCommandTests
     private static HttpResponseMessage Ok(string json = """{"code":200,"status":"OK","data":{"ok":true}}""") =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
-    private static IConfiguration CreateTestConfiguration() =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken) =>
-        new(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     #endregion
-}
-
-/// <summary>
-/// Mock handler that captures the outgoing request URI and body for assertion, then returns a
-/// fixed response.
-/// </summary>
-internal sealed class EconomyMockHandler : HttpMessageHandler
-{
-    private readonly HttpResponseMessage _response;
-
-    public EconomyMockHandler(HttpResponseMessage response) => _response = response;
-
-    public string? CapturedBody { get; private set; }
-
-    public string? LastRequestUri { get; private set; }
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        LastRequestUri = request.RequestUri?.ToString();
-        if (request.Content != null)
-        {
-            CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
-        }
-
-        return _response;
-    }
 }

@@ -50,7 +50,7 @@ public sealed partial class DocumentedCommandsTests
     [InlineData("xbox --playfab-title-id <TITLE_ID> playfab api /Admin/GetTitleData", null)]
     [InlineData("xbox game list --output table --verbose", null)]
     [InlineData("xbox playfab <service> --help", null)]
-    [InlineData("xbox xbl document download --type account --dest out --document a.xml b.xml", null)]
+    [InlineData("xbox xbl config download --type account --view draft --dest out --document a.xml b.xml", null)]
     [InlineData("xbox playfab mps build get --body-file -", null)]
     [InlineData("xbox playfab api -- /Admin/GetTitleData", null)]
     [InlineData("xbox playfab api -- --not-an-option", null)]

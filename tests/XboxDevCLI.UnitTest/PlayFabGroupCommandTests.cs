@@ -1,14 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.Net;
 using System.Text.Json;
 using XboxDevCLI.PlayFab.Commands;
 using XboxDevCLI.Safety;
-using XboxDevCLI.Services;
 using Xunit;
 
 namespace XboxDevCLI.UnitTest;
@@ -174,40 +170,6 @@ public class PlayFabGroupCommandTests
 
     #region Integration tests with PlayFabApiClient
 
-    private static IConfiguration CreateTestConfiguration() =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken) =>
-        new(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     private static readonly JsonSerializerOptions IgnoreNulls = new()
     {
         DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
@@ -216,30 +178,30 @@ public class PlayFabGroupCommandTests
     [Fact]
     public async Task ListGroupMembers_Read_SendsGroupAndCorrectPath()
     {
-        var handler = new GroupCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"code":200,"status":"OK","data":{"Members":[]}}""") });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = GroupCommandFactory.BuildListGroupMembersCall("G1");
         await client.CallApiAsync(apiPath, JsonSerializer.Serialize(request, IgnoreNulls), CancellationToken.None);
 
         Assert.Contains("/Group/ListGroupMembers", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("G1", doc.RootElement.GetProperty("Group").GetProperty("Id").GetString());
     }
 
     [Fact]
     public async Task CreateGroup_Write_SendsGroupNameAndOmitsCustomTags()
     {
-        var handler = new GroupCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"code":200,"status":"OK","data":{"GroupName":"Guild"}}""") });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = GroupCommandFactory.BuildCreateGroupCall("Guild", null, null);
         await client.CallApiAsync(apiPath, JsonSerializer.Serialize(request, IgnoreNulls), CancellationToken.None);
 
         Assert.Contains("/Group/CreateGroup", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("Guild", doc.RootElement.GetProperty("GroupName").GetString());
         Assert.False(doc.RootElement.TryGetProperty("CustomTags", out _));
         Assert.False(doc.RootElement.TryGetProperty("Entity", out _));
@@ -248,14 +210,14 @@ public class PlayFabGroupCommandTests
     [Fact]
     public async Task AddMembers_Write_SendsMembersArrayWithSharedType()
     {
-        var handler = new GroupCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"code":200,"status":"OK","data":{}}""") });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = GroupCommandFactory.BuildAddMembersCall("G1", "a,b", "title_player_account", null);
         await client.CallApiAsync(apiPath, JsonSerializer.Serialize(request, IgnoreNulls), CancellationToken.None);
 
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var members = doc.RootElement.GetProperty("Members").EnumerateArray().ToList();
         Assert.Equal(2, members.Count);
         Assert.Equal("a", members[0].GetProperty("Id").GetString());
@@ -266,9 +228,9 @@ public class PlayFabGroupCommandTests
     [Fact]
     public async Task DeleteGroup_WithoutConfirmation_IsBlockedByDestructiveGuard()
     {
-        var handler = new GroupCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"code":200,"status":"OK","data":{}}""") });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = GroupCommandFactory.BuildDeleteGroupCall("G1");
 
@@ -280,49 +242,17 @@ public class PlayFabGroupCommandTests
     [Fact]
     public async Task DeleteGroup_WithConfirmation_SendsDeleteRequest()
     {
-        var handler = new GroupCommandMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("""{"code":200,"status":"OK","data":{}}""") });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
 
         var (apiPath, request) = GroupCommandFactory.BuildDeleteGroupCall("G1");
         await client.CallApiAsync(apiPath, JsonSerializer.Serialize(request, IgnoreNulls), CancellationToken.None, confirmedDestructive: true);
 
         Assert.Contains("/Group/DeleteGroup", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("G1", doc.RootElement.GetProperty("Group").GetProperty("Id").GetString());
     }
 
     #endregion
-}
-
-/// <summary>
-/// Mock handler for the group command tests that captures the outgoing request URI and body
-/// for assertion, then returns a fixed response. Owned by this test file so it stays decoupled
-/// from other command tests' helpers.
-/// </summary>
-internal sealed class GroupCommandMockHandler : HttpMessageHandler
-{
-    private readonly HttpResponseMessage _response;
-
-    public GroupCommandMockHandler(HttpResponseMessage response)
-    {
-        _response = response;
-    }
-
-    public string? CapturedBody { get; private set; }
-
-    public string? LastRequestUri { get; private set; }
-
-    protected override async Task<HttpResponseMessage> SendAsync(
-        HttpRequestMessage request,
-        CancellationToken cancellationToken)
-    {
-        LastRequestUri = request.RequestUri?.ToString();
-        if (request.Content != null)
-        {
-            CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
-        }
-
-        return _response;
-    }
 }

@@ -338,6 +338,23 @@ public class XboxPartnerCommandTests
     }
 
     /// <summary>
+    /// A recovery command repeats <c>--base-url</c> only when it was given, not the built-in URL.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData(" --base-url https://gateway.example")]
+    public void BuildRecoveryCommand_KeepsTheBaseUrlOnlyWhenGiven(string baseUrlOption)
+    {
+        var result = Program.BuildRootCommand().Parse(
+            $"playtest get 11111111-2222-3333-4444-555555555555 --store-id 9N0000000000{baseUrlOption}",
+            Program.NoResponseFileConfig);
+
+        Assert.Equal(
+            $"xbox playtest list --store-id 9N0000000000 --seller-id 1234567{baseUrlOption}",
+            XboxPartnerCommandSupport.BuildRecoveryCommand(result, "playtest list --store-id 9N0000000000", "1234567"));
+    }
+
+    /// <summary>
     /// The gateway URL the commands under test resolve to, read from the built-in settings
     /// rather than hardcoded, so these tests stay aligned with whatever configuration ships.
     /// </summary>

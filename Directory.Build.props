@@ -15,8 +15,8 @@
   <PropertyGroup>
     <Authors>Microsoft</Authors>
     <Copyright>© Microsoft Corporation.</Copyright>
-    <PackageProjectUrl>https://github.com/microsoft/XBOX-Developer-CLI</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/microsoft/XBOX-Developer-CLI</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/xbox/cli</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/xbox/cli</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
   </PropertyGroup>
 

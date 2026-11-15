@@ -1,84 +1,51 @@
 ---
 title: Experimental commands
-description: Understand pre-1.0 compatibility, GA guarantees, and Experimental command labels.
+description: How much commands can change before and after the 1.0 release, and what the Experimental label means.
 ---
 
 # Experimental commands
 
-## Purpose
-
-Compatibility commitments depend on the CLI release version and command
-status. Help labels commands explicitly designated Experimental.
+How much a command can change between releases depends on the CLI's version and on whether
+Help labels the command `[Experimental]`. A label on a command group applies to every command
+in it.
 
 ## Before 1.0
 
-Before the first stable 1.0 release, the XBOX CLI is in preview and does not
-provide a backward-compatibility guarantee. Commands may change or be removed
-between releases, including their paths, arguments, options, defaults,
-structured output, and exit behavior.
+Until the 1.0 release, the XBOX CLI is in preview, and any command might change or be
+removed between releases, whether or not it's labeled Experimental. That includes its paths,
+arguments, options, defaults, structured output, and exit codes. For automation, pin a tested
+CLI version and test your workflows before you upgrade.
 
-This applies to all commands, whether or not Help labels them Experimental.
-An unlabeled command is not a GA compatibility commitment during preview.
-For automation, pin a tested CLI version and validate your workflows before
-upgrading.
+## From 1.0
 
-## GA / Stable
-
-Starting with the stable 1.0 release, commands not labeled Experimental carry
-a backward-compatibility promise for their documented CLI contract. Changes
-that break existing automation must be treated as an explicitly signaled
-breaking release. Existing commitments remain binding.
-
-The contract includes:
+From the 1.0 release, commands that aren't labeled Experimental keep their documented
+contract. A change that breaks automation comes only in a release that says it's breaking.
+The contract covers:
 
 - Command and subcommand paths.
 - Argument and option names and meanings.
-- Required versus optional inputs.
+- Which inputs are required.
 - Documented defaults.
-- Documented CLI-owned machine-readable output, including JSON field names
-  and semantics.
-- Documented exit behavior.
+- Documented JSON output, including field names and meanings.
+- Documented exit codes.
 
-Compatible additions, such as new commands or optional functionality, are
-allowed. JSON objects are extensible: consumers must ignore unknown properties.
-Adding properties is compatible when existing documented field names, types,
-semantics, presence guarantees, and response shapes remain unchanged.
-
-Human-readable presentation and implementation details are outside this contract
-unless explicitly documented as machine-readable behavior.
+New commands, options, and JSON properties can appear in any release, so your scripts must
+ignore JSON properties they don't recognize. Output written for people, such as text and
+tables, isn't part of the contract.
 
 ### API passthrough
 
-When a command passes through an API response, as `xbox playfab api`
-does, the service-owned payload follows that API's compatibility contract.
-The CLI does not add a separate backward-compatibility guarantee for the
-payload's field names, types, meanings, or response shape.
-
-The CLI's documented command paths, inputs, defaults, response formatting
-and projections (such as `--data-only`), stream routing, and exit behavior
-remain covered. Output fields and envelopes defined by the CLI remain
-covered, even when their data comes from an API.
+When a command returns a service's response as it is, as `xbox playfab api` does, that
+response follows the service's own compatibility contract, not the CLI's. The CLI's inputs,
+exit codes, and the output it adds, such as the response envelope that `--data-only`
+removes, are still covered.
 
 ## Experimental
 
-Experimental commands are explicitly designated for interface feedback. They
-must be functional, tested, and safe to ship. Their CLI contract is outside
-the GA backward-compatibility promise, including from 1.0 onward:
+Experimental commands are released for feedback on their interface. Even after 1.0, their
+paths, options, defaults, output, and behavior might change, or the commands might be removed,
+so don't rely on automation that uses them staying compatible.
 
-- Paths, arguments/options, defaults, structured output, and behavior may
-  change based on feedback.
-- Commands may be removed.
-- Users must not assume existing automation will remain compatible.
-
-Quality, security, authentication, authorization, and safety requirements apply
-to every command at every release stage, including production approval and
-destructive confirmation. Incomplete, broken, mock, and developer-only
-functionality must not ship.
-Help must clearly label Experimental commands and explain their compatibility
-boundary.
-
-## Availability
-
-All shipped commands must be available through normal discovery and invocation.
-Experimental metadata affects Help labeling only. Debug, Release, local, and
-published builds use the same command surface.
+Experimental commands are finished and tested, and follow the same security and safety rules
+as every other command, including confirmation before destructive operations. They run like
+any other command; you don't need to turn them on.

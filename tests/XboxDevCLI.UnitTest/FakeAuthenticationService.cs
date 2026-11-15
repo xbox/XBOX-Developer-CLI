@@ -51,11 +51,15 @@ internal sealed class FakeAuthenticationService : AuthenticationService
     /// <summary>Thrown when a token is requested, as a failed or canceled refresh would.</summary>
     public Exception? TokenRequestException { get; init; }
 
+    /// <summary>Runs as each token request arrives, before the token is returned.</summary>
+    public Action<CancellationToken>? OnTokenRequest { get; init; }
+
     public override Task<AuthenticationResult?> AcquireTokenSilentAsync(
         CancellationToken cancellationToken)
     {
         TokenRequests++;
         TokenRequestCancellationToken = cancellationToken;
+        OnTokenRequest?.Invoke(cancellationToken);
         return TokenRequestException is null
             ? Task.FromResult(_token)
             : Task.FromException<AuthenticationResult?>(TokenRequestException);

@@ -8,7 +8,9 @@ using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
+using XboxDevCLI.Presentation;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -201,7 +203,7 @@ internal static class SandboxCommandFactory
 
                     cancellationToken.ThrowIfCancellationRequested();
                     var recovery = XboxPartnerCommandSupport.BuildRecoveryCommand(
-                        result, $"sandbox get {ShellQuoting.Quote(id)}", sellerId, url);
+                        result, $"sandbox get {ShellQuoting.Quote(id)}", sellerId);
                     Program.WriteVerbose(result.GetValue(Program.VerboseOption),
                         () => $"Submitting sandbox creation for seller {sellerId}.");
                     XboxPartnerSandboxCreationJob job;
@@ -216,7 +218,12 @@ internal static class SandboxCommandFactory
                             cancellationToken,
                             onSending: () => sent = true);
                     }
-                    catch (Exception exception) when (sent && IsUncertainSubmission(exception))
+                    catch (OperationCanceledException) when (!sent && cancellationToken.IsCancellationRequested)
+                    {
+                        Console.Error.WriteLine("Canceled before the request was sent, so no sandbox was created.");
+                        return 1;
+                    }
+                    catch (Exception exception) when (sent && XboxPartnerCommandSupport.IsUncertainSubmission(exception))
                     {
                         Console.Error.WriteLine(
                             "Sandbox creation was interrupted or its response could not be verified; " +
@@ -403,23 +410,13 @@ internal static class SandboxCommandFactory
                 .WaitAsync(cancellationToken);
             return await action(client, baseUrl, sellerId);
         }
-        catch (Exception exception) when (XboxPartnerCommandSupport.IsRequestError(exception))
+        catch (Exception exception) when (XboxPartnerCommandSupport.IsRequestError(exception)
+            && !XboxPartnerCommandSupport.IsCallerCancellation(exception, cancellationToken))
         {
             XboxPartnerCommandSupport.WriteRequestError(exception, result, cancellationToken);
             return 1;
         }
     }
-
-    /// <summary>
-    /// Whether a failure after the request was sent leaves the outcome unknown. Only a client error
-    /// (4xx other than 408) from the gateway is a definite rejection; transport failures, timeouts,
-    /// unreadable responses, unfollowed redirects, and server errors are all uncertain. Failures
-    /// before sending, such as a missing sign-in, are never uncertain and are not passed here.
-    /// </summary>
-    private static bool IsUncertainSubmission(Exception exception) =>
-        exception is not XboxPartnerApiException api
-            || (int)api.StatusCode is < 400 or >= 500
-            || api.StatusCode == HttpStatusCode.RequestTimeout;
 
     private static void WriteSandbox(string json, OutputOptions output)
     {
@@ -453,11 +450,11 @@ internal static class SandboxCommandFactory
         {
             Console.Error.WriteLine(
                 "Re-run with --confirm (--yes, -y) to proceed without an interactive prompt.");
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
             return false;
         }
 
-        Console.Error.Write("Create this sandbox? [y/N]: ");
-        Console.Error.Flush();
+        ConfirmationPrompt.Write(Console.Error, "Create this sandbox? [y/N]: ");
         var answer = Console.ReadLine()?.Trim();
         if (string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase)
             || string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase))
@@ -466,6 +463,7 @@ internal static class SandboxCommandFactory
         }
 
         Console.Error.WriteLine("Sandbox creation canceled.");
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
         return false;
     }
 }

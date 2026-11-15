@@ -5,177 +5,103 @@ description: List a seller's Partner Center games, look one up, create a game, a
 
 # Games
 
-Partner Center game operations: list a seller's games, look one up by Store ID, XBOX
-title ID, or name keyword, create a game, and inspect the resulting creation job.
+The `game` commands list a seller's Partner Center games, look one up by Store ID, XBOX title ID,
+or name, create a game, and check on its creation job.
 
-Like [Seller](seller.md), these commands sit at the top
-level rather than under `playfab`, because they don't call a PlayFab API.
-They do not read `--playfab-title-id`.
+Each command acts on one seller, from `--seller-id` or your saved seller; see
+[Context](context.md). If you belong to several sellers, see
+[this known issue](../known-issues.md#xbox-game-commands-ignore---seller-id): these commands can
+use another seller.
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
-| `game list` | List every game for the seller, reading every page. |
-| `game get` | Get games by Store ID, XBOX title ID, or case-insensitive name keyword. |
-| `game create` | Create one game, then wait for its creation job. **Mutates production state.** |
+| `game list` | List every game for the seller. |
+| `game get` | Get games by Store ID, XBOX title ID, or name keyword. |
+| `game create` | Create a game, then wait for its creation job. |
 | `game job get` | Read the current state of a game-creation job. |
-
-`game list`, `game get`, and `game job get` are read-only. `game create` creates
-production state that cannot be undone from the CLI — see
-[Safety and destructive operations](../safety.md).
-
-## Seller scope
-
-Every game command runs against one Partner Center seller, resolved in this order:
-
-1. `--seller-id <id>` on the command.
-2. The `XBOX_SELLER_ID` environment variable.
-3. The seller saved by [`xbox context set seller-id <id>`](context.md), in the selected
-   profile.
-
-With none of these, the command fails with
-`No seller-id is set. Pass --seller-id, set XBOX_SELLER_ID, or run 'xbox context set seller-id <value>'.`
-Signed out, it asks you to sign in instead.
 
 ## Arguments
 
 | Argument | Command | Description |
 | --- | --- | --- |
-| `[title-id]` | `get` | Optional one-to-eight-digit hexadecimal XBOX title ID, with an optional `0x` prefix. It need not be zero-padded, so `42` means `0x00000042`. A non-hexadecimal value fails with `title-id must be one to eight hexadecimal digits, with an optional 0x prefix.` |
-| `<job-id>` | `job get` | Required game-creation job ID, as returned by `game create`. This is not a game, Store, XBOX title, or PlayFab title ID. |
+| `[title-id]` | `get` | An XBOX title ID: one to eight hexadecimal digits, with an optional `0x` prefix, such as `1234ABCD`. `42` means `0x00000042`. |
+| `<job-id>` | `job get` | The creation job ID that `game create` prints. |
 
 ## Options
 
 | Option | Commands | Description |
 | --- | --- | --- |
-| `--seller-id <id>` | all | Partner Center seller ID, overriding `XBOX_SELLER_ID` and the seller saved by `context set`. |
+| `--seller-id <id>` | all | Partner Center seller ID. |
 | `--base-url <url>` | all | Base URL for requests, overriding the `XboxPartner:BaseUrl` configuration key. |
-| `--store-id <id>` | `get` | Microsoft Store ID of the game to retrieve. Usable alone, or with the positional title ID to disambiguate. |
-| `--keyword <text>` | `get` | Case-insensitive substring search over game names. Cannot be combined with `title-id` or `--store-id`. |
-| `-d`, `--details` | `list`, `get` | Show a multiline human-readable view. Cannot be combined with `--output`. |
-| `--name <name>` | `create` | Required primary game name. |
-| `--supported-device <device>` | `create` | Required supported device family: `xbox` or `desktop`. Repeat the option for both. |
-| `--sandbox-id <id>` | `create` | Optional primary development sandbox ID. It must be an existing Shared sandbox; [`sandbox get`](sandbox.md) shows its type. |
-| `--confirm`, `--yes`, `-y` | `create` | Confirm production game creation without prompting. |
-| `--output <format>` | all | `json` (default) or `json-compact` everywhere; `table` on `list` and `get` only. |
+| `--store-id <id>` | `get` | Microsoft Store ID of the game, such as `9N0000000000`. Can be combined with `title-id` to narrow the result. |
+| `--keyword <text>` | `get` | Find games whose name contains this text, ignoring case. Can't be combined with `title-id` or `--store-id`. |
+| `-d`, `--details` | `list`, `get` | Show one block of text per game. Can't be combined with `--output`. |
+| `--name <name>` | `create` | Required. The game's name. |
+| `--supported-device <device>` | `create` | Required. `xbox` or `desktop`; repeat the option for both. |
+| `--sandbox-id <id>` | `create` | The game's development sandbox. It must be an existing Shared sandbox; [`sandbox get`](sandbox.md) shows a sandbox's type. |
+| `--confirm`, `--yes`, `-y` | `create` | Create the game without the confirmation prompt. |
+| `--output <format>` | all | `json` (default) or `json-compact`; `table` on `list` and `get` only. |
 
-`--data-only` is accepted as a global option but does nothing here. The response
-carries no PlayFab response envelope, so there is no wrapper to remove.
+`game get` needs at least one of `title-id`, `--store-id`, or `--keyword`. The positional value is
+always an XBOX title ID; when it looks like a Store ID, the error suggests the same command with
+`--store-id`:
 
-Setting `--base-url` to anything other than the shipped default writes a warning to stderr,
-because every request carries a Microsoft Entra access token. For the same reason, the URL
-must use HTTPS; plain HTTP is accepted only for a loopback address.
-
-### Selector rules for `game get`
-
-At least one of `title-id`, `--store-id`, or `--keyword` is required; omitting all three
-fails with `At least one of title-id, --store-id, or --keyword is required.` `--keyword`
-is exclusive: combining it with either of the others fails with `--keyword cannot be
-combined with title-id or --store-id.` A single title ID can identify multiple games, so
-`--store-id` can be supplied alongside it to narrow the result.
-
-## Output
-
-JSON is the default: one `games` collection, with each game exactly as returned,
-including `productId`, `storeId`, `xboxTitleId`, `name`,
-`SCID`, `primaryDevelopmentSandbox`, `deviceFamilies`, `packageIdentityName`, `packageIdentityPublisher`,
-`packageFamilyName`, and `msaAppId`.
-
-`xboxTitleId` is a string containing eight uppercase hexadecimal digits, zero-padded
-without a `0x` prefix (for example, `"1234ABCD"`). `SCID` (exactly that casing) is
-`00000000-0000-0000-0000-0000{titleIdHex}`, for example
-`"00000000-0000-0000-0000-00001234ABCD"`. Both are null when the title ID is unavailable
-or invalid. `primaryDevelopmentSandbox` is a nullable string projected from Partner
-Center's `xboxLive.primaryDevelopmentSandbox`, and is null when absent.
-
-`deviceFamilies` is a nullable string array projected from Partner Center's
-`deviceFamilies.selections[].deviceFamily`, for example `["xbox", "desktop"]`.
-Returned names and order are preserved without normalization or filtering. Absent
-selections produce null; empty selections produce `[]`.
-
-The same game summary fields appear in creation and job-polling responses. The job
-envelope is unchanged, and `game` remains omitted until product detail is available.
-JSON output preserves these null and omitted fields as returned by the service.
-
-### Table output
-
-`list` and `get` declare a table view with these columns. MSA stands for
-Microsoft account.
-
-| Column |
-| --- |
-| `TITLE ID` |
-| `STORE IDS` |
-| `PRODUCT NAME` |
-| `MSA APP ID` |
-| `PACKAGE FAMILY NAME` |
-
-Rows are grouped by XBOX title ID, so every related Store ID, product name, package
-family name, and MSA app ID appears on the same row. Long grouped values are truncated to
-keep rows bounded.
-
-`create` and `job get` do not declare a table view. Asking for one fails with `Output
-format 'table' is not available for this command, because it does not declare a table
-view.`, because the job object's shape is controlled by the backend.
-
-Table output is a human convenience, not a stability contract: columns may change without
-a breaking-change bump. Use `--output json-compact` for anything parsed by a script.
-
-### Details view
-
-`-d`/`--details` is a separate human-readable view that prints one indented block per
-game instead of a row, including SCID and primary development sandbox. Missing or null
-values display as `-`. It cannot be combined with `--output`; doing so fails with
-`--details cannot be combined with --output.`
-
-Each title ID is followed by the matching games' Store IDs, package identity
-names and publishers, package family names, and MSA app IDs. Multiple games
-under one title are numbered; a single game is not. Use JSON or this details
-view when a table truncates grouped values or you need the full association
-between a game and its identifiers.
-
-For both human-readable views, the result count and query duration are written to stderr,
-so stdout holds only the table or detail blocks. For example, stderr may report
-`42 results found in 1.234s`.
+```text
+title-id must be one to eight hexadecimal digits, with an optional 0x prefix. 9N0000000000 looks like a Store ID. Did you mean:
+  xbox game get --store-id 9N0000000000 --seller-id 1234567
+```
 
 ## Listing and lookup
 
 ```bash
-xbox game list --seller-id 1234567
-xbox game list --seller-id 1234567 --output table
-xbox game list --seller-id 1234567 --details
-
-xbox game get --store-id 9N0000000000 --seller-id 1234567
-xbox game get 1234ABCD --seller-id 1234567
-xbox game get 42 --store-id 9N0000000000 --seller-id 1234567
-xbox game get --keyword headless --seller-id 1234567
-xbox game get 1234ABCD --details --seller-id 1234567
+xbox game list --output table
+xbox game get --store-id 9N0000000000
+xbox game get 1234ABCD --details
+xbox game get --keyword "nod arena" --output table
 ```
 
-`game list` and `game get` read the catalog 100 games at a time, following every page, and
-print one complete list. A large catalog can take a few minutes to read, so the CLI shows
-its [progress](../commands.md#progress) on stderr while it reads. Partner Center can't search by
-title ID, Store ID, or name, but the
-service reads a game by its Store ID or title ID directly, so a lookup usually
-takes one request. When it can't, and for `--keyword`, the CLI reads every page,
-except that a Store ID lookup stops at its first match. These
-commands deliberately have no `--limit`, `--all`, or `--continuation-token` options: the
-table groups a title's games across the whole catalog, and you can page the output with
-`less` or `more`. If a request fails, the CLI prints no partial results, doesn't retry, and
-writes the `x-ms-correlation-id` shared by every page of the listing to stderr. Each
-request times out after two minutes by default; change it with the
-`XboxPartner:TimeoutSeconds` configuration value.
+`game list` returns the seller's whole catalog, and `game get` with `--keyword` searches all of
+it. A large catalog can take a few minutes to read, and the command shows its
+[progress](../commands.md#progress) on stderr. There's no paging option; page the output with
+`less` or `more`. If a request fails, the command prints no partial results, and writes the
+correlation ID to stderr. Each request times out after two minutes; to change it, set
+`XboxPartner:TimeoutSeconds` (see [Configuration](../configuration.md)).
 
-Authentication and other execution failures in `game list` and `game get` print an
-error message to stderr without a stack trace and exit with code 1, leaving stdout empty.
+## Output
+
+JSON output is one `games` array. Each game has these fields:
+
+| Field | Description |
+| --- | --- |
+| `productId` | The Partner Center product ID. |
+| `storeId` | The Microsoft Store ID. |
+| `xboxTitleId` | The XBOX title ID: eight uppercase hexadecimal digits, without `0x`, such as `"1234ABCD"`. `null` when the game has no valid title ID. |
+| `SCID` | The service configuration identifier (SCID), such as `"00000000-0000-0000-0000-00001234ABCD"`. The key is upper case. `null` when `xboxTitleId` is. |
+| `name` | The game's name. |
+| `primaryDevelopmentSandbox` | The game's development sandbox, or `null`. |
+| `deviceFamilies` | The supported devices, such as `["xbox", "desktop"]`. `null` or `[]` when none are listed. |
+| `packageIdentityName`, `packageIdentityPublisher`, `packageFamilyName` | The game's package identity. |
+| `msaAppId` | The Microsoft account (MSA) app ID. |
+
+`game create` and `game job get` write the creation job. Its `game` field, with the same fields,
+appears once the game exists.
+
+### Table output
+
+`list` and `get` accept `--output table`, with one row per XBOX title ID and these columns:
+`TITLE ID`, `STORE IDS`, `PRODUCT NAME`, `MSA APP ID`, and `PACKAGE FAMILY NAME`. A title's
+Store IDs and other values share its row, and long values are truncated. `create` and `job get`
+refuse `--output table`.
+
+### Details view
+
+`--details` prints one block per title ID, with every game under it and all of its identifiers,
+including the SCID and development sandbox, without truncating. Missing values show as `-`. With
+`--details` or `--output table`, the result count and duration go to stderr.
 
 ## Creating a game
-
-`game create` writes to production and cannot be undone from the CLI. It requires
-`--confirm` (`--yes`, `-y`) or a confirmation prompt at a terminal, and fails closed
-otherwise. Agents additionally need explicit user approval — see
-[Safety and destructive operations](../safety.md).
 
 ```bash
 xbox game create --name "Nod Arena" \
@@ -183,57 +109,48 @@ xbox game create --name "Nod Arena" \
   --sandbox-id TESTSB.42 --seller-id 1234567 --confirm
 ```
 
-When the seller doesn't come from `--seller-id`, the command names it and where it came from
-on stderr before it submits, even with `--confirm`:
+`game create` asks before it creates the game; without a terminal, it needs `--confirm`. The CLI
+can't delete a game. If you belong to several sellers, check
+[the known issue](../known-issues.md#xbox-game-commands-ignore---seller-id) first: the game can be
+created in another seller.
 
-```text
-Using --seller-id 1234567 from saved context.
-```
+The command sends the request once, waits up to two minutes for the creation job, and writes the
+job to stdout. The job ID, correlation ID, and commands to check on the job go to stderr. If the
+wait ends first, the job keeps running: check it with `game job get`, and don't create the game
+again.
 
-After submitting, the command waits up to 120 seconds for the creation job, polling every
-5 seconds unless the service supplies a `Retry-After` header, and never more than once a
-second. The job object is written to stdout as JSON; submission progress, the job
-ID, the correlation ID, and recovery commands go to stderr. Recovery commands are quoted for
-PowerShell on Windows and for a POSIX shell such as bash or zsh elsewhere, so they can be
-pasted as they are.
+If the request fails, stderr says whether a game might have been created:
 
-Submission is never retried. If it fails, the command says on stderr whether a game could have
-been created:
-
-- **No game was created** if the request failed before it was sent, such as with no cached
-  sign-in, or if the service refused it: any `4xx` status code except `408`, such as `400` for a
-  sandbox a new game can't use, or a `504` that says the sandbox couldn't be checked in time.
-  It's safe to fix the problem and run the create again.
-- **The outcome is unknown** after any other failure, such as a server error, a timeout, a
-  redirect, or a dropped connection, because Partner Center may have taken the job. Check
-  `game list` with the command printed to stderr before trying again.
-
-A wait timeout does not cancel the job — check it with `game job get` instead of submitting
-again. If the job ID the service returned contains characters that can't be printed safely,
-inspect `game list` instead. **Do not resubmit an uncertain creation.**
+- **No game was created** when the request wasn't sent, or the service refused it, such as with a
+  `400` for a sandbox the game can't use. Fix the problem and run the command again.
+- **The outcome is unknown** after a server error, a timeout, or a lost connection. Check
+  `game list` with the command printed on stderr before you try again.
 
 ## Checking a creation job
 
 ```bash
-xbox game job get JOB_ID --seller-id 1234567 --output json-compact
+xbox game job get 11111111-2222-3333-4444-555555555555 --output json-compact
 ```
 
-`job get` is read-only and never resubmits a creation, so it is safe to poll.
+`job get` only reads, so you can run it as often as you like. A job that succeeded can still
+report problems in its `errors` field.
 
-### Exit codes
+## Exit codes
 
 | Exit code | Meaning |
 | --- | --- |
-| `0` | The job is running or succeeded. A `create` wait timeout also exits `0` with the accepted job. |
-| `2` | The job reached a terminal failure. |
-| `1` | The request, polling, or the command itself failed. |
+| `0` | The job succeeded or is still running. `create` also exits `0` when its wait ends, so `0` doesn't guarantee the game exists. |
+| `1` | The command failed. For `create`, stderr says whether a game might have been created. |
+| `2` | The job ended without creating the game. See its `errors` field. |
+| `130` | You pressed Ctrl+C while the command was reading, or while `create` waited for an answer to its request. For `create`, stderr says the outcome is unknown. |
 
-A succeeded job can still report errors, so inspect the `errors` field on the returned
-job object.
+Don't decide whether to run `create` again from its exit code. If stderr says no game was
+created, fix the error and run it again; otherwise check with the `game job get` or `game list`
+command it printed.
 
 ## End-to-end example
 
-Save a seller once, create a game, then follow its job to completion:
+Save a seller once, then create a game, which uses it:
 
 ```bash
 xbox context set seller-id 1234567
@@ -241,15 +158,17 @@ xbox context set seller-id 1234567
 xbox game create --name "Nod Arena" \
   --supported-device xbox --supported-device desktop \
   --sandbox-id TESTSB.42 --confirm
-
-# If the wait timed out, poll the job ID printed to stderr instead of re-creating.
-xbox game job get JOB_ID --output json-compact
-
-# Confirm the game is in the catalog and note its XBOX title ID.
-xbox game get --keyword "Nod Arena" --output table
 ```
 
-See [Commands](../commands.md) for the global options that apply across
-the CLI, [Seller](seller.md) for listing sellers, [Context](context.md) for saving the
-default seller, and [Configuration](../configuration.md) for how to set
-`XboxPartner:TimeoutSeconds`.
+If the wait ends before the job does, check the job instead of creating the game again. Use the job
+ID that `game create` printed on stderr:
+
+```bash
+xbox game job get 11111111-2222-3333-4444-555555555555 --output json-compact
+```
+
+Once the job succeeds, find the game:
+
+```bash
+xbox game get --keyword "Nod Arena" --output table
+```

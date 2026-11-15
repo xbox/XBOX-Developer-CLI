@@ -3,9 +3,7 @@
 
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Identity.Client;
-using Moq;
 using XboxDevCLI.Commands;
 using XboxDevCLI.Output;
 using XboxDevCLI.Services;
@@ -153,14 +151,6 @@ public class SandboxCommandTests
     public async Task List_AcquiresATokenForEveryPage()
     {
         var auth = CreateAuth();
-        var account = Mock.Of<IAccount>(
-            account => account.HomeAccountId == new AccountId("id", "user", "test-tenant"));
-        var tokens = 0;
-        auth.Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ReturnsAsync(() => new AuthenticationResult(
-                $"token-{++tokens}", false, "user", DateTimeOffset.UtcNow.AddHours(1),
-                DateTimeOffset.UtcNow.AddHours(1), "test-tenant", account,
-                "id-token", ["api://test/.default"], Guid.NewGuid()));
         var handler = Handler(
             """{"sandboxes":[{"sandboxId":"A1"}],"continuationToken":"t1"}""",
             """{"sandboxes":[{"sandboxId":"A2"}]}""");
@@ -169,7 +159,7 @@ public class SandboxCommandTests
         Assert.Equal(0, result.ExitCode);
         var authorizations = handler.Requests.Select(request => Assert.Single(request.Headers["Authorization"])).ToArray();
         Assert.Equal(2, authorizations.Length);
-        Assert.Equal(2, authorizations.Distinct().Count());
+        Assert.Equal(2, auth.TokenRequests);
         Assert.Single(handler.Requests.Select(request => Assert.Single(request.Headers["x-ms-correlation-id"])).Distinct());
     }
 
@@ -255,16 +245,37 @@ public class SandboxCommandTests
         Assert.Equal(0, result.ExitCode);
         Assert.Equal("""{"sandboxes":[{"sandboxId":"A1"}]}""", result.Stdout.Trim());
     }
+
     [Theory]
-    [InlineData("""[]""", "must contain a sandboxes array")]
-    [InlineData("""{"sandboxes":null}""", "must contain a sandboxes array")]
+    [InlineData("json-compact", """{"sandboxes":[{"sandboxId":"ABCDEF.1","type":"Shared","description":"Nod Aréna <beta> / \"QA\""}]}""")]
+    [InlineData("json", """
+        {
+          "sandboxes": [
+            {
+              "sandboxId": "ABCDEF.1",
+              "type": "Shared",
+              "description": "Nod Aréna <beta> / \"QA\""
+            }
+          ]
+        }
+        """)]
+    public async Task List_PrintsTheSameJsonHoweverTheGatewaySpacesOrEscapesIt(string format, string expected)
+    {
+        var handler = Handler(
+            """{"sandboxes":[ { "sandboxId" : "ABCDEF.1", "type" : "Shared", "description" : "Nod Ar\u00e9na <beta> \/ \"QA\"" } ]}""");
+        var result = await InvokeAsync(handler, ["sandbox", "list", "--output", format]);
+
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(expected.ReplaceLineEndings(), result.Stdout.TrimEnd().ReplaceLineEndings());
+    }
+
+    [Theory]
+    [InlineData("""[]""", "must contain the sandboxes array")]
+    [InlineData("""{"sandboxes":null}""", "must contain the sandboxes array")]
     [InlineData("""{"sandboxes":[{"type":"Shared"}]}""", "no 'sandboxId'")]
     [InlineData("""{"sandboxes":["RETAIL"]}""", "no 'sandboxId'")]
-    [InlineData("""{"sandboxes":[],"continuationToken":""}""", "invalid 'continuationToken'")]
-    [InlineData("""{"sandboxes":[],"continuationToken":5}""", "invalid 'continuationToken'")]
+    [InlineData("""{"sandboxes":[],"continuationToken":5}""", "continuationToken that was not a string")]
     [InlineData("<html></html>", "not valid JSON")]
-    [InlineData("""{"sandboxes":[],"sandboxes":[]}""", "not valid JSON")]
-    [InlineData("""{"sandboxes":[{"sandboxId":"A","sandboxId":"B"}]}""", "not valid JSON")]
     public async Task List_RejectsAMalformedPage(string body, string message)
     {
         var result = await InvokeAsync(Handler(body), ["sandbox", "list"]);
@@ -381,7 +392,7 @@ public class SandboxCommandTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains($"Invalid sandbox ID '{sandboxId}'", result.Stderr);
         Assert.Empty(handler.Requests);
-        auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(0, auth.TokenRequests);
     }
 
     [Fact]
@@ -396,7 +407,7 @@ public class SandboxCommandTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("4 to 60 letters or digits", result.Stderr);
         Assert.Empty(handler.Requests);
-        auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(0, auth.TokenRequests);
     }
 
     [Fact]
@@ -422,7 +433,7 @@ public class SandboxCommandTests
         Assert.NotEqual(0, result.ExitCode);
         Assert.Contains("at most 64 characters", result.Stderr);
         Assert.Empty(handler.Requests);
-        auth.Verify(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()), Times.Never);
+        Assert.Equal(0, auth.TokenRequests);
     }
 
     [Theory]
@@ -597,8 +608,7 @@ public class SandboxCommandTests
     public async Task Create_NotSignedInIsADefiniteFailure()
     {
         var handler = Handler(Accepted);
-        var auth = CreateAuth();
-        auth.Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync((AuthenticationResult?)null);
+        var auth = new FakeAuthenticationService(token: null);
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"], auth: auth);
 
         Assert.Equal(1, result.ExitCode);
@@ -613,9 +623,10 @@ public class SandboxCommandTests
     public async Task Create_MsalFailureIsADefiniteFailure()
     {
         var handler = Handler(Accepted);
-        var auth = CreateAuth();
-        auth.Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new MsalUiRequiredException("invalid_grant", "Interactive sign-in is required."));
+        var auth = new FakeAuthenticationService(FakeAuthenticationService.CreateToken())
+        {
+            TokenRequestException = new MsalUiRequiredException("invalid_grant", "Interactive sign-in is required."),
+        };
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"], auth: auth);
 
         Assert.Equal(1, result.ExitCode);
@@ -627,12 +638,14 @@ public class SandboxCommandTests
     public async Task Create_InvalidSellerHeaderIsADefiniteFailure()
     {
         var handler = Handler(Accepted);
-        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"], sellerId: "seller\n1");
+        var auth = CreateAuth();
+        var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"], sellerId: "seller\n1", auth: auth);
 
         Assert.Equal(1, result.ExitCode);
         Assert.Empty(handler.Requests);
         Assert.Contains("must not contain line breaks", result.Stderr);
         Assert.DoesNotContain("Do not resubmit", result.Stderr);
+        Assert.Equal(0, auth.TokenRequests);
     }
     [Fact]
     public async Task Create_NonAsciiSellerIsADefiniteFailure()
@@ -796,11 +809,11 @@ public class SandboxCommandTests
     [Fact]
     public async Task Create_TransportFailureAfterSendingIsUnknown()
     {
-        var handler = new ThrowingHandler(new HttpRequestException("The connection was reset."));
+        var handler = new RoutingHttpHandler(_ => throw new HttpRequestException("The connection was reset."));
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
 
         Assert.Equal(SandboxCommandFactory.OutcomeUnknownExitCode, result.ExitCode);
-        Assert.Equal(1, handler.Count);
+        Assert.Single(handler.Requests);
         Assert.Empty(result.Stdout);
         Assert.Contains("it is unknown whether sandbox ABCDEF.1 was created. Do not resubmit.", result.Stderr);
     }
@@ -808,11 +821,11 @@ public class SandboxCommandTests
     [Fact]
     public async Task Create_CancellationAfterSendingIsUnknown()
     {
-        var handler = new ThrowingHandler(new OperationCanceledException("Simulated Ctrl+C after sending."));
+        var handler = new RoutingHttpHandler(_ => throw new OperationCanceledException("Simulated Ctrl+C after sending."));
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
 
         Assert.Equal(SandboxCommandFactory.OutcomeUnknownExitCode, result.ExitCode);
-        Assert.Equal(1, handler.Count);
+        Assert.Single(handler.Requests);
         Assert.Empty(result.Stdout);
         Assert.Contains("it is unknown whether sandbox ABCDEF.1 was created. Do not resubmit.", result.Stderr);
     }
@@ -982,11 +995,15 @@ public class SandboxCommandTests
     [Fact]
     public async Task Create_CancellationWhileWaitingStopsWithoutResubmitting()
     {
-        var handler = new CancelingHandler();
+        // The submission is answered; every later request is interrupted.
+        var requests = 0;
+        var handler = new RoutingHttpHandler(_ => ++requests == 1
+            ? Response(Running)
+            : throw new OperationCanceledException("Simulated cancellation."));
         var result = await InvokeAsync(handler, [.. CreateArguments, "--confirm"]);
 
         Assert.Equal(SandboxCommandFactory.WaitEndedExitCode, result.ExitCode);
-        Assert.Equal(2, handler.Count);
+        Assert.Equal(2, handler.Requests.Count);
         Assert.Empty(result.Stdout);
         Assert.Contains("Stopped waiting for job a1b2c3d4-0000-4000-8000-000000000001", result.Stderr);
     }
@@ -1113,32 +1130,19 @@ public class SandboxCommandTests
         return response;
     }
 
-    private static Mock<AuthenticationService> CreateAuth()
-    {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
-            new Dictionary<string, string?>
-            {
-                ["AzureAd:ClientId"] = "test-client",
-                ["AzureAd:TenantId"] = "test-tenant",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            }).Build();
-        var account = Mock.Of<IAccount>(
-            account => account.HomeAccountId == new AccountId("id", "user", "test-tenant"));
-        var auth = new Mock<AuthenticationService>(configuration);
-        auth.Setup(service => service.GetCachedAccountAsync(It.IsAny<CancellationToken>())).ReturnsAsync(account);
-        auth.Setup(service => service.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new AuthenticationResult(
-            "access-token", false, "user", DateTimeOffset.UtcNow.AddHours(1),
-            DateTimeOffset.UtcNow.AddHours(1), "test-tenant", account,
-            "id-token", ["api://test/.default"], Guid.NewGuid()));
-        return auth;
-    }
+    /// <summary>
+    /// A sign-in as tenant <c>test-tenant</c>, user <c>user</c>, the identity saved sellers are
+    /// looked up for.
+    /// </summary>
+    private static FakeAuthenticationService CreateAuth() =>
+        new(FakeAuthenticationService.CreateToken(tenantId: "test-tenant"));
 
     private static async Task<CapturedInvocation> InvokeAsync(
         HttpMessageHandler handler,
         string[] arguments,
         bool interactive = false,
         string input = "",
-        Mock<AuthenticationService>? auth = null,
+        AuthenticationService? auth = null,
         string? sellerId = "seller-1",
         bool addScope = true,
         bool throughMain = false,
@@ -1158,7 +1162,7 @@ public class SandboxCommandTests
             () => clock,
             () => interactive);
         var root = Program.BuildRootCommand(sandboxCommandFactory: () => SandboxCommandFactory.Create(
-            configuration => new XboxPartnerClient(configuration, httpClient, auth.Object),
+            configuration => new XboxPartnerClient(configuration, httpClient, auth),
             dependencies));
         var args = new List<string>(arguments);
         if (addScope)
@@ -1183,7 +1187,7 @@ public class SandboxCommandTests
             Console.SetIn(stdin);
 
             // Context values come from the state directory given, for the account auth signs in as.
-            ContextResolver.ReadIdentityAsync = _ => SignedInIdentity.FromCacheAsync(auth.Object, CancellationToken.None);
+            ContextResolver.ReadIdentityAsync = _ => SignedInIdentity.FromCacheAsync(auth, CancellationToken.None);
             ContextStore.DefaultDirectory = () =>
                 stateDirectory ?? Path.Combine(Path.GetTempPath(), $"sandbox-tests-{Guid.NewGuid():N}");
 
@@ -1205,34 +1209,4 @@ public class SandboxCommandTests
     }
 
     private sealed record CapturedInvocation(int ExitCode, string Stdout, string Stderr);
-
-    /// <summary>Throws <paramref name="exception"/> once the request reaches the network.</summary>
-    private sealed class ThrowingHandler(Exception exception) : HttpMessageHandler
-    {
-        internal int Count { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Count++;
-            throw exception;
-        }
-    }
-
-    private sealed class CancelingHandler : HttpMessageHandler
-    {
-        internal int Count { get; private set; }
-
-        protected override Task<HttpResponseMessage> SendAsync(
-            HttpRequestMessage request, CancellationToken cancellationToken)
-        {
-            Count++;
-            if (Count == 1)
-            {
-                return Task.FromResult(Response(Running));
-            }
-
-            throw new OperationCanceledException("Simulated cancellation.");
-        }
-    }
 }

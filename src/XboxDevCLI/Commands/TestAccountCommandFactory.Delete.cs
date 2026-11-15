@@ -8,7 +8,9 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Output;
+using XboxDevCLI.Presentation;
 using XboxDevCLI.Services;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Commands;
 
@@ -58,7 +60,7 @@ internal static partial class TestAccountCommandFactory
             LearnMore:
             [
                 "Reads the batch while waiting, until the service reports " +
-                    $"404 {TestAccountBatchDeletionWaiter.BatchNotFoundCode}.",
+                    $"404 {TestAccountBatchWaiter.BatchNotFoundCode}.",
                 "Waits up to 5 minutes by default, polling as the service's Retry-After asks. Exit codes: 0 " +
                 "deleted or accepted with --no-wait; 1 nothing was deleted; 2 the delete stopped and the " +
                 "batch still exists; 3 the outcome is unknown, so read the batch before deleting again; 4 " +
@@ -152,14 +154,12 @@ internal static partial class TestAccountCommandFactory
         }
         catch (XboxPartnerApiException exception) when (IsOutcomeUnknown(exception))
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(exception.CorrelationId, stderr);
             stderr.WriteLine(FormatError(exception, output.IsCompact));
             WriteDeleteOutcomeUnknown(id, getBatch, stderr);
             return OutcomeUnknownExitCode;
         }
         catch (XboxPartnerApiException exception)
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(exception.CorrelationId, stderr);
             stderr.WriteLine(FormatError(
                 exception,
                 output.IsCompact,
@@ -206,7 +206,7 @@ internal static partial class TestAccountCommandFactory
         stderr.WriteLine($"Test account batch delete accepted: batch {id}, job {jobId}.");
         string checkBatch =
             $"Check it with: {getBatch} " +
-            $"It answers {TestAccountBatchDeletionWaiter.BatchNotFoundCode} once the batch is gone.";
+            $"It answers {TestAccountBatchWaiter.BatchNotFoundCode} once the batch is gone.";
         string stillDeleting = $"Deletion may still be running on the service. {checkBatch}";
         if (noWait)
         {
@@ -218,24 +218,25 @@ internal static partial class TestAccountCommandFactory
         stderr.WriteLine($"Waiting up to {FormatDuration(timeout)} for batch {id} to be deleted...");
         try
         {
-            TestAccountBatchDeletionWait wait = await TestAccountBatchDeletionWaiter.WaitAsync(
+            TestAccountBatchWait wait = await TestAccountBatchWaiter.WaitAsync(
                 accepted.RetryAfter,
                 token =>
                 {
                     Program.WriteVerbose(verbose, () => $"Reading test account batch {id}");
                     return client.GetTestAccountBatchAsync(sellerId, batchId, token);
                 },
+                deleting: true,
                 timeout,
                 dependencies.DelayAsync,
                 dependencies.GetUtcNow,
                 cancellationToken).ConfigureAwait(false);
             switch (wait.Outcome)
             {
-                case TestAccountBatchDeletionOutcome.Deleted:
+                case TestAccountBatchWaitOutcome.Deleted:
                     WriteDeletion(accepted, DeletedState, output, stdout, stderr);
                     stderr.WriteLine($"Batch {id} deleted.");
                     return 0;
-                case TestAccountBatchDeletionOutcome.Stopped:
+                case TestAccountBatchWaitOutcome.JobEnded:
                     stderr.WriteLine(
                         $"Delete job {jobId} stopped, but batch {id} still exists. Inspect it with: {getBatch}");
                     stderr.WriteLine("Then delete it again.");
@@ -288,6 +289,7 @@ internal static partial class TestAccountCommandFactory
         {
             stderr.WriteLine($"This deletes test account batch {id} for {seller}. {effect}");
             stderr.WriteLine("Run again with --confirm (--yes, -y) to proceed without an interactive prompt.");
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
             return false;
         }
 
@@ -295,7 +297,7 @@ internal static partial class TestAccountCommandFactory
         try
         {
             string body = await client.GetTestAccountBatchAsync(sellerId, batchId, cancellationToken).ConfigureAwait(false);
-            batch = TestAccountBatchDeletionWaiter.ReadBatch(body);
+            batch = TestAccountBatchWaiter.ReadBatch(body);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -321,8 +323,7 @@ internal static partial class TestAccountCommandFactory
                 $"  A job is running on this batch ({Clean(batch.JobId)}); the service refuses the delete until it stops.");
         }
 
-        stderr.Write("Delete this batch? [y/N]: ");
-        stderr.Flush();
+        ConfirmationPrompt.Write(stderr, "Delete this batch? [y/N]: ");
         string? answer = dependencies.ReadConfirmation()?.Trim();
         if (string.Equals(answer, "y", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(answer, "yes", StringComparison.OrdinalIgnoreCase))
@@ -331,6 +332,7 @@ internal static partial class TestAccountCommandFactory
         }
 
         stderr.WriteLine("Test account batch deletion canceled.");
+        TelemetryRecorder.RecordError(TelemetryErrorTypes.NotConfirmed);
         return false;
     }
 
@@ -358,7 +360,7 @@ internal static partial class TestAccountCommandFactory
         stderr.WriteLine(
             $"The delete may have reached the service, so it is unknown whether batch {batchId} is being deleted.");
         stderr.WriteLine($"To find out, run: {getBatch}");
-        stderr.WriteLine($"  404 {TestAccountBatchDeletionWaiter.BatchNotFoundCode}: the batch was deleted.");
+        stderr.WriteLine($"  404 {TestAccountBatchWaiter.BatchNotFoundCode}: the batch was deleted.");
         stderr.WriteLine("  jobId set: a job, likely the delete, is still running; check again later.");
         stderr.WriteLine(
             "  jobId null: the delete may not have started yet; wait a minute and check again. " +
@@ -411,7 +413,7 @@ internal static partial class TestAccountCommandFactory
                 "A job is running on this batch, possibly a delete that is already in progress. Read the batch " +
                 "with 'xbox test-account batch get'; once its jobId is null, try again. If the jobId never " +
                 "clears, the job may have stalled.",
-            TestAccountBatchDeletionWaiter.BatchNotFoundCode =>
+            TestAccountBatchWaiter.BatchNotFoundCode =>
                 "No such batch for this seller. Check the batch ID and --seller-id. A batch that was already " +
                 "deleted is not found either.",
             AccessDeniedCode =>

@@ -19,7 +19,7 @@ public class CommitDocumentsCommandTests
     public void Command_ReportsAnScidThatIsntAGuidAsAParseError()
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            ["xbl", "document", "commit", "--scid", "notaguid", "--sandbox-id", "XDKS.1", "--file", "a.json"],
+            ["xbl", "config", "save", "--scid", "notaguid", "--sandbox-id", "XDKS.1", "--file", "a.json"],
             Program.NoResponseFileConfig);
 
         Assert.Contains(result.Errors, error => error.Message.Contains("notaguid", StringComparison.Ordinal));
@@ -30,7 +30,7 @@ public class CommitDocumentsCommandTests
     {
         string[] paths = ["folder with spaces/nsal.xml", "title,priv.xml", "config/*.xml"];
         ParseResult result = Program.BuildRootCommand().Parse(
-            ["xbl", "document", "commit", "--type", "account",
+            ["xbl", "config", "save", "--type", "account",
                 "--file", paths[0], "--file", paths[1], "--file", paths[2]],
             Program.NoResponseFileConfig);
 
@@ -52,7 +52,7 @@ public class CommitDocumentsCommandTests
     public void Command_RejectsMissingFileValuesAndLegacySyntax(params string[] arguments)
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            ["xbl", "document", "commit", "--type", "account", .. arguments],
+            ["xbl", "config", "save", "--type", "account", .. arguments],
             Program.NoResponseFileConfig);
 
         Assert.NotEmpty(result.Errors);
@@ -62,7 +62,7 @@ public class CommitDocumentsCommandTests
     public void Command_AcceptsRepeatedFileOptionsWithEqualsSyntax()
     {
         ParseResult result = Program.BuildRootCommand().Parse(
-            ["xbl", "document", "commit", "--type", "account",
+            ["xbl", "config", "save", "--type", "account",
                 "--file=nsal.xml", "--file=titlepriv.xml"],
             Program.NoResponseFileConfig);
 
@@ -76,41 +76,50 @@ public class CommitDocumentsCommandTests
     public void Command_ValidatesScopeSpecificOptionsAndFiles()
     {
         ParseResult validSandbox = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1 " +
             "--file nsal.xml --file titlepriv.xml --validate-only");
         ParseResult validAccount = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--type account --file accountconfig.xml");
         ParseResult missingFiles = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id XDKS.1");
         ParseResult missingScid = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--sandbox-id XDKS.1 --file nsal.xml");
         ParseResult mixedScope = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--type account --sandbox-id XDKS.1 --file accountconfig.xml");
         ParseResult unsafeSandbox = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id ../outside " +
             "--file nsal.xml");
         ParseResult removedAccountId = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--type account --account-id 11111111-2222-3333-4444-555555555555 " +
             "--file accountconfig.xml");
+        ParseResult force = Program.BuildRootCommand().Parse(
+            "xbl config save --type account --file accountconfig.xml --force");
+        ParseResult removedOverwrite = Program.BuildRootCommand().Parse(
+            "xbl config save --type account --file accountconfig.xml --overwrite");
+        ParseResult removedAlias = Program.BuildRootCommand().Parse(
+            "xbl config save --type account -f accountconfig.xml");
         ParseResult invalidEtagFileName = Program.BuildRootCommand().Parse(
-            "xbl document commit --seller-id 2 " +
+            "xbl config save --seller-id 2 " +
             "--scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --sandbox-id CON " +
             "--file nsal.xml");
 
         Assert.Empty(validSandbox.Errors);
         Assert.Empty(validAccount.Errors);
         Assert.NotEmpty(missingFiles.Errors);
-        Assert.NotEmpty(missingScid.Errors);
+        Assert.Empty(missingScid.Errors); // Title context is filled after parsing.
         Assert.NotEmpty(mixedScope.Errors);
         Assert.NotEmpty(unsafeSandbox.Errors);
         Assert.NotEmpty(removedAccountId.Errors);
+        Assert.Empty(force.Errors);
+        Assert.NotEmpty(removedOverwrite.Errors);
+        Assert.NotEmpty(removedAlias.Errors);
         if (OperatingSystem.IsWindows())
         {
             Assert.NotEmpty(invalidEtagFileName.Errors);
@@ -204,7 +213,7 @@ public class CommitDocumentsCommandTests
             await File.WriteAllTextAsync(firstPath, "<TitlePrivileges />");
             await File.WriteAllTextAsync(secondPath, "<ServiceNsal />");
             ParseResult parsed = Program.BuildRootCommand().Parse(
-                ["xbl", "document", "commit", "--type", "account",
+                ["xbl", "config", "save", "--type", "account",
                     "--file", firstPath, "--file", secondPath, "--validate-only"],
                 Program.NoResponseFileConfig);
             Assert.Empty(parsed.Errors);
@@ -434,7 +443,7 @@ public class CommitDocumentsCommandTests
     }
 
     [Fact]
-    public async Task RunAsync_ExplainsHowToIsolateInvalidXconDocumentName()
+    public async Task RunAsync_ExplainsHowToIsolateInvalidDocumentName()
     {
         string directory = CreateTemporaryDirectory();
         try
@@ -447,8 +456,8 @@ public class CommitDocumentsCommandTests
                 """
                 {
                   "status": 400,
-                  "title": "Xbox downstream request failed.",
-                  "detail": "XCon returned HTTP 400: Invalid Document Name."
+                  "title": "Request failed.",
+                  "detail": "XBOX services returned HTTP 400: Invalid Document Name."
                 }
                 """,
                 HttpStatusCode.BadRequest);
@@ -475,6 +484,7 @@ public class CommitDocumentsCommandTests
             Assert.Equal(1, exitCode);
             Assert.Empty(stdout.ToString());
             using JsonDocument error = JsonDocument.Parse(stderr.ToString());
+            Assert.True(Guid.TryParse(error.RootElement.GetProperty("correlationId").GetString(), out _));
             string detail = error.RootElement.GetProperty("detail").GetString()!;
             Assert.Contains("'accesspolicies.xml'", detail, StringComparison.Ordinal);
             Assert.Contains("'achievements2017.xml'", detail, StringComparison.Ordinal);
@@ -525,6 +535,7 @@ public class CommitDocumentsCommandTests
 
             Assert.Equal(1, exitCode);
             using JsonDocument error = JsonDocument.Parse(stderr.ToString());
+            Assert.True(Guid.TryParse(error.RootElement.GetProperty("correlationId").GetString(), out _));
             string detail = error.RootElement.GetProperty("detail").GetString()!;
             Assert.Contains(
                 "The selected document name 'accesspolicies.xml' was rejected.",
@@ -727,8 +738,8 @@ public class CommitDocumentsCommandTests
     }
 
     [Theory]
-    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","DocumentName":"achievements2017.xml","Error":"NamespaceDocTypeMismatch","Message":"The root namespace doesn't match the document type."},{"Severity":"Warning","Message":"Check the title."}],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents:")]
-    [InlineData(false, """{"validationInfo":[{"severity":"Error","documentName":"achievements2017.xml","error":"NamespaceDocTypeMismatch","message":"The root namespace doesn't match the document type."},{"severity":"Warning","message":"Check the title."}],"canCommit":false,"committed":false}""", "XBOX services didn't commit these documents:")]
+    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","DocumentName":"achievements2017.xml","Error":"NamespaceDocTypeMismatch","Message":"The root namespace doesn't match the document type."},{"Severity":"Warning","Message":"Check the title."}],"CanCommit":false,"Committed":false}""", "XBOX services can't save these documents:")]
+    [InlineData(false, """{"validationInfo":[{"severity":"Error","documentName":"achievements2017.xml","error":"NamespaceDocTypeMismatch","message":"The root namespace doesn't match the document type."},{"severity":"Warning","message":"Check the title."}],"canCommit":false,"committed":false}""", "XBOX services didn't save these documents:")]
     public async Task RunAsync_WritesValidationMessagesToStderrAndFails_WhenXconRefusesTheDocuments(
         bool validateOnly,
         string responseBody,
@@ -819,12 +830,12 @@ public class CommitDocumentsCommandTests
     }
 
     [Theory]
-    [InlineData(true, """{"ValidationInfo":[],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents.")]
-    [InlineData(false, """{"ValidationInfo":[],"CanCommit":true,"Committed":false}""", "XBOX services didn't commit these documents.")]
-    [InlineData(false, """{"ValidationInfo":[{"Severity":"Error","Error":"FilesNotChangedCommit","Message":"Unchanged."}],"CanCommit":false,"Committed":false}""", "XBOX services didn't commit these documents:")]
-    [InlineData(false, """{"ValidationInfo":[{"Severity":"Warning","Error":"FilesNotChangedCommit","Message":"No files changed."},{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX services didn't commit these documents:")]
-    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents:\nError: SchemaError")]
-    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Message":" "}],"CanCommit":false,"Committed":false}""", "XBOX services can't commit these documents.")]
+    [InlineData(true, """{"ValidationInfo":[],"CanCommit":false,"Committed":false}""", "XBOX services can't save these documents.")]
+    [InlineData(false, """{"ValidationInfo":[],"CanCommit":true,"Committed":false}""", "XBOX services didn't save these documents.")]
+    [InlineData(false, """{"ValidationInfo":[{"Severity":"Error","Error":"FilesNotChangedCommit","Message":"Unchanged."}],"CanCommit":false,"Committed":false}""", "XBOX services didn't save these documents:")]
+    [InlineData(false, """{"ValidationInfo":[{"Severity":"Warning","Error":"FilesNotChangedCommit","Message":"No files changed."},{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX services didn't save these documents:")]
+    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Error":"SchemaError"}],"CanCommit":false,"Committed":false}""", "XBOX services can't save these documents:\nError: SchemaError")]
+    [InlineData(true, """{"ValidationInfo":[{"Severity":"Error","Message":" "}],"CanCommit":false,"Committed":false}""", "XBOX services can't save these documents.")]
     public async Task RunAsync_FailsWithASummary_WhenXconRefusesTheDocumentsWithoutAnError(
         bool validateOnly,
         string responseBody,
@@ -895,7 +906,7 @@ public class CommitDocumentsCommandTests
             Assert.Equal(1, exitCode);
             Assert.Equal(
                 [
-                    "XBOX services can't commit these documents:",
+                    "XBOX services can't save these documents:",
                     "Error: nsal [2J.xml: Line one  Warning: forged line (Bad Key)",
                 ],
                 stderr.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries));
@@ -945,6 +956,171 @@ public class CommitDocumentsCommandTests
         {
             Directory.Delete(directory, recursive: true);
         }
+    }
+
+    [Fact]
+    public async Task RunAsync_CanceledAfterSending_SaysTheOutcomeIsUnknown()
+    {
+        using var cancellation = new CancellationTokenSource();
+        (int exitCode, string stdout, string stderr) = await RunCommitAsync(
+            () =>
+            {
+                cancellation.Cancel();
+                throw new OperationCanceledException(cancellation.Token);
+            },
+            cancellationToken: cancellation.Token);
+
+        Assert.Equal(CommitDocumentsCommandFactory.OutcomeUnknownExitCode, exitCode);
+        Assert.Empty(stdout);
+        Assert.Matches(
+            "^x-ms-correlation-id: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" + Environment.NewLine +
+            "It is unknown whether the documents were saved\\. Don't resubmit them\\." + Environment.NewLine +
+            "Check with: xbox xbl config download --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --seller-id 12345 " +
+            "--sandbox-id XDKS\\.1 --view draft --dest <directory>" + Environment.NewLine + "$",
+            stderr);
+    }
+
+    [Fact]
+    public async Task RunAsync_ValidateOnlyCanceled_StopsWithoutAnUnknownOutcome()
+    {
+        using var cancellation = new CancellationTokenSource();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => RunCommitAsync(
+            () =>
+            {
+                cancellation.Cancel();
+                throw new OperationCanceledException(cancellation.Token);
+            },
+            validateOnly: true,
+            cancellationToken: cancellation.Token));
+    }
+
+    [Fact]
+    public async Task RunAsync_CanceledAfterTheCommitIsAccepted_SavesTheEtagAndWritesTheResult()
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            string documentPath = Path.Combine(directory, "nsal.xml");
+            string eTagPath = Path.Combine(directory, "XDKS.1.etag");
+            await File.WriteAllTextAsync(documentPath, "<ServiceNsal />");
+            await File.WriteAllTextAsync(eTagPath, "\"old-etag\"");
+            using var cancellation = new CancellationTokenSource();
+            using var client = CreateClient(new RespondingHandler(() => new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new CancelOnDisposeContent(
+                    """{"ValidationInfo":[],"ETag":"\"new-etag\"","CanCommit":true,"Committed":true}""",
+                    cancellation),
+            }));
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+
+            int exitCode = await CommitDocumentsCommandFactory.RunAsync(
+                client,
+                12345,
+                "sandbox",
+                Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                "XDKS.1",
+                [documentPath],
+                validateOnly: false,
+                force: false,
+                eTag: null,
+                message: null,
+                OutputOptions.JsonCompact,
+                stdout,
+                stderr,
+                cancellation.Token);
+
+            Assert.True(cancellation.IsCancellationRequested);
+            Assert.Equal(0, exitCode);
+            Assert.Empty(stderr.ToString());
+            using JsonDocument output = JsonDocument.Parse(stdout.ToString());
+            Assert.True(output.RootElement.GetProperty("result").GetProperty("Committed").GetBoolean());
+            Assert.Equal(eTagPath, output.RootElement.GetProperty("etagFile").GetString());
+            Assert.Equal("\"new-etag\"", await File.ReadAllTextAsync(eTagPath));
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class CancelOnDisposeContent(string body, CancellationTokenSource cancellation)
+        : StringContent(body)
+    {
+        protected override void Dispose(bool disposing)
+        {
+            cancellation.Cancel();
+            base.Dispose(disposing);
+        }
+    }
+
+    [Fact]
+    public void FormatDownloadCheck_ForAccountDocuments_NeedsNoScidOrSandbox()
+    {
+        Assert.Equal(
+            "xbox xbl config download --type account --view draft --dest <directory>",
+            CommitDocumentsCommandFactory.FormatDownloadCheck(" Account ", null, null));
+    }
+
+    [Fact]
+    public void FormatDownloadCheck_ForAccountDocuments_KeepsTheSeller()
+    {
+        Assert.Equal(
+            "xbox xbl config download --type account --seller-id 1234567 --view draft --dest <directory>",
+            CommitDocumentsCommandFactory.FormatDownloadCheck("account", null, null, sellerId: 1234567));
+    }
+
+    [Fact]
+    public void FormatDownloadCheck_ForATitleId_NamesTheTitleAndSeller()
+    {
+        Assert.Equal(
+            "xbox xbl config download --title-id 1234ABCD --seller-id 1234567 --sandbox-id XDKS.1 --view draft --dest <directory>",
+            CommitDocumentsCommandFactory.FormatDownloadCheck("sandbox", null, "XDKS.1", sellerId: 1234567, titleId: "1234ABCD"));
+    }
+
+    private static async Task<(int ExitCode, string Stdout, string Stderr)> RunCommitAsync(
+        Func<HttpResponseMessage> respond,
+        bool validateOnly = false,
+        CancellationToken cancellationToken = default)
+    {
+        string directory = CreateTemporaryDirectory();
+        try
+        {
+            string documentPath = Path.Combine(directory, "nsal.xml");
+            await File.WriteAllTextAsync(documentPath, "<ServiceNsal />", CancellationToken.None);
+            using var client = CreateClient(new RespondingHandler(respond));
+            using var stdout = new StringWriter();
+            using var stderr = new StringWriter();
+
+            int exitCode = await CommitDocumentsCommandFactory.RunAsync(
+                client,
+                12345,
+                "sandbox",
+                Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"),
+                "XDKS.1",
+                [documentPath],
+                validateOnly,
+                force: true,
+                eTag: null,
+                message: null,
+                OutputOptions.Json,
+                stdout,
+                stderr,
+                cancellationToken);
+            return (exitCode, stdout.ToString(), stderr.ToString());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private sealed class RespondingHandler(Func<HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) => Task.FromResult(respond());
     }
 
     private static XboxPartnerClient CreateClient(HttpMessageHandler handler) =>

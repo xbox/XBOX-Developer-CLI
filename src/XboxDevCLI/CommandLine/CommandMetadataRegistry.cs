@@ -4,6 +4,7 @@
 using System.CommandLine;
 using System.Runtime.CompilerServices;
 using XboxDevCLI.Safety;
+using XboxDevCLI.Services;
 
 namespace XboxDevCLI.CommandLine;
 
@@ -147,16 +148,23 @@ internal static class CommandMetadataRegistry
     }
 
     /// <summary>
-    /// Returns whether <paramref name="command"/> calls PlayFab: it records the PlayFab paths it
-    /// calls, or takes one at run time. <c>CommandSafetyMetadataTests</c> makes every command that
-    /// does work record its paths, or list why it can't, as <c>context get</c> does.
+    /// Returns whether <paramref name="command"/> calls PlayFab for a title: it records a PlayFab
+    /// path it calls, or takes one at run time, that isn't a studio API (<c>/Studio/*</c>), which
+    /// isn't sent for a title. <paramref name="apiPath"/> is the path for a command that takes it at
+    /// run time. <c>CommandSafetyMetadataTests</c> makes every command that does work record its
+    /// paths, or list why it can't, as <c>context get</c> does.
     /// </summary>
-    internal static bool CallsPlayFab(Command command)
+    internal static bool CallsPlayFabTitle(Command command, string? apiPath = null)
     {
         ArgumentNullException.ThrowIfNull(command);
 
         var metadata = GetMetadata(command);
-        return metadata.ApiPaths is { Count: > 0 } || metadata.Safety == CommandSafety.DependsOnApiPath;
+        if (metadata.Safety == CommandSafety.DependsOnApiPath)
+        {
+            return apiPath is null || !PlayFabApiClient.IsStudioPath(apiPath);
+        }
+
+        return (metadata.ApiPaths ?? []).Any(path => !PlayFabApiClient.IsStudioPath(path));
     }
 
     /// <summary>

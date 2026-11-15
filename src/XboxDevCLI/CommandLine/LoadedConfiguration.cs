@@ -153,6 +153,11 @@ internal sealed class LoadedConfiguration
             warnings[ServiceEndpoints.PlayFab] = playFab;
         }
 
+        if (EndpointOverrideWarning.GetStudioWarning(configuration[EndpointOverrideWarning.StudioConfigurationKey]) is { } studio)
+        {
+            warnings[ServiceEndpoints.PlayFabStudio] = studio;
+        }
+
         // A missing or blank gateway is an error the command reports when it reads the URL, so
         // there's nothing to warn about.
         var gateway = configuration[EndpointOverrideWarning.XboxPartnerConfigurationKey];

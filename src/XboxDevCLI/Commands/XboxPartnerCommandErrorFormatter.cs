@@ -8,6 +8,12 @@ namespace XboxDevCLI.Commands;
 
 internal static class XboxPartnerCommandErrorFormatter
 {
+    /// <summary>The service's code for a write by title ID that selects a bound title.</summary>
+    public const string BoundTitleRequiresScidCode = "bound_title_requires_scid";
+
+    /// <summary>The service's code for a write to configuration other titles share, sent without the opt-in.</summary>
+    public const string SharedConfigurationRequiresConfirmationCode = "shared_configuration_requires_confirmation";
+
     public static string Format(
         XboxPartnerApiException exception,
         bool compact,
@@ -44,6 +50,19 @@ internal static class XboxPartnerCommandErrorFormatter
 
             JsonElement root = document.RootElement;
             string structuredFailure = fallbackDetail ?? DescribeStatus(exception);
+            if (GetString(root, "code") == BoundTitleRequiresScidCode &&
+                Guid.TryParse(GetString(root, "scid"), out Guid boundScid) &&
+                boundScid != Guid.Empty)
+            {
+                additionalDetail = AppendDetail(
+                    $"Rerun with --scid {boundScid:D} to change the shared configuration.",
+                    additionalDetail);
+            }
+            else if (GetString(root, "code") == SharedConfigurationRequiresConfirmationCode)
+            {
+                additionalDetail = AppendDetail(XboxLiveConfigurationTarget.AllowSharedConfigurationHint, additionalDetail);
+            }
+
             var includesDiagnosticDetails =
                 TryGetProperty(root, "exceptionDetails", out _) ||
                 TryGetProperty(root, "headers", out _) ||
@@ -79,6 +98,10 @@ internal static class XboxPartnerCommandErrorFormatter
             {
                 sanitized["code"] = Redact(code, sensitiveValues);
             }
+            if (!string.IsNullOrWhiteSpace(exception.CorrelationId))
+            {
+                sanitized["correlationId"] = exception.CorrelationId;
+            }
 
             if (fieldErrors is not null)
             {
@@ -110,7 +133,14 @@ internal static class XboxPartnerCommandErrorFormatter
 
         string FormatFallback()
         {
-            string detail = Redact(AppendDetail(failureMessage, additionalDetail), sensitiveValues);
+            string detail = Redact(failureMessage, sensitiveValues);
+            bool hasCorrelationId = !string.IsNullOrWhiteSpace(exception.CorrelationId);
+            if (hasCorrelationId && retryAfterSeconds is null)
+            {
+                detail += $" {XboxPartnerClient.CorrelationIdHeader}: " +
+                    XboxPartnerTableFormatter.NormalizeCell(exception.CorrelationId!);
+            }
+            detail = Redact(AppendDetail(detail, additionalDetail), sensitiveValues);
             if (retryAfterSeconds is not { } seconds)
             {
                 return detail;
@@ -121,8 +151,13 @@ internal static class XboxPartnerCommandErrorFormatter
                 ["status"] = (int)exception.StatusCode,
                 ["title"] = Redact(fallbackTitle, sensitiveValues),
                 ["detail"] = detail,
-                ["retryAfterSeconds"] = seconds,
             };
+            if (hasCorrelationId)
+            {
+                sanitized["correlationId"] = exception.CorrelationId;
+            }
+
+            sanitized["retryAfterSeconds"] = seconds;
             return PlayFabApiClient.FormatJson(JsonSerializer.Serialize(sanitized), compact);
         }
     }

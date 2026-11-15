@@ -13,27 +13,23 @@ internal static class XboxLiveCommandFactory
     {
         var xboxLive = new Command("xbl", "Manage XBOX services configuration");
 
-        var configuration = new Command(
-            "configuration",
-            "Inspect working and published XBOX services configuration state");
-        configuration.Subcommands.Add(ListConfigurationsCommandFactory.Create());
-        configuration.Subcommands.Add(GetConfigurationCommandFactory.Create());
-        xboxLive.Subcommands.Add(configuration);
-        xboxLive.Subcommands.Add(AchievementImageCommandFactory.Create());
+        var config = new Command(
+            "config",
+            "Inspect, download, save, and publish XBOX services configuration");
+        config.Subcommands.Add(ListConfigurationsCommandFactory.Create());
+        config.Subcommands.Add(ConfigStatusCommandFactory.Create());
+        config.Subcommands.Add(GetDocumentsCommandFactory.Create());
+        config.Subcommands.Add(CommitDocumentsCommandFactory.Create());
+        config.Subcommands.Add(PublishCommandFactory.Create());
+        xboxLive.Subcommands.Add(config);
 
-        var schema = new Command("schema", "Inspect XBOX services configuration schemas");
-        schema.Subcommands.Add(GetSchemasCommandFactory.Create());
+        var schema = new Command("schema", "List and download XBOX services configuration schemas");
+        schema.Subcommands.Add(GetSchemasCommandFactory.CreateList());
+        schema.Subcommands.Add(GetSchemasCommandFactory.CreateGet());
+        schema.Subcommands.Add(GetSchemasCommandFactory.CreateDownload());
         xboxLive.Subcommands.Add(schema);
 
-        var document = new Command("document", "Manage XBOX services configuration documents");
-        document.Subcommands.Add(GetDocumentsCommandFactory.Create());
-        document.Subcommands.Add(CommitDocumentsCommandFactory.Create());
-        xboxLive.Subcommands.Add(document);
-
-        var publish = new Command("publish", "Manage XBOX services configuration publishing");
-        publish.Subcommands.Add(PublishCommandFactory.Create());
-        publish.Subcommands.Add(GetPublishStatusCommandFactory.Create());
-        xboxLive.Subcommands.Add(publish);
+        xboxLive.Subcommands.Add(AchievementImageCommandFactory.Create());
 
         return xboxLive.Requires(CommandRequirement.Authentication).Calls(ServiceEndpoints.XboxPartner);
     }

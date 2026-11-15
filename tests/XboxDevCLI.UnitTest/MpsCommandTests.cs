@@ -2,9 +2,11 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
+using System.Net;
 using System.Text.RegularExpressions;
 using XboxDevCLI.PlayFab.Commands;
 using XboxDevCLI.PlayFab.Generated;
+using XboxDevCLI.Telemetry;
 using Xunit;
 
 namespace XboxDevCLI.UnitTest;
@@ -201,5 +203,32 @@ public class MpsCommandTests
         var mps = MpsCommandFactory.CreateMpsCommand();
         var groupCommand = mps.Subcommands.Single(c => c.Name == group);
         return groupCommand.Subcommands.Single(c => c.Name == verb);
+    }
+
+    /// <summary>
+    /// The upload goes to storage, not PlayFab, so a storage rejection is recorded with its own
+    /// status rather than the PlayFab call's 200.
+    /// </summary>
+    [Fact]
+    public async Task UploadBlockBlobAsync_RecordsAStorageRejectionForTelemetry()
+    {
+        var file = Path.GetTempFileName();
+        await File.WriteAllBytesAsync(file, [1, 2, 3]);
+        using var httpClient = new HttpClient(new RoutingHttpHandler(_ => new HttpResponseMessage(HttpStatusCode.Forbidden)));
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            await Assert.ThrowsAsync<InvalidOperationException>(() => MpsCommandFactory.UploadBlockBlobAsync(
+                httpClient, "https://nodpublishers.blob.core.windows.net/assets/a?sig=x", file, 1024, CancellationToken.None));
+
+            Assert.Equal(403, recorded.HttpStatusCode);
+            Assert.Equal(TelemetryErrorTypes.ServiceRejected, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+            File.Delete(file);
+        }
     }
 }

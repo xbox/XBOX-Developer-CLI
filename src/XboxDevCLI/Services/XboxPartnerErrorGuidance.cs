@@ -16,6 +16,32 @@ internal static class XboxPartnerErrorGuidance
     internal const string RateLimitedHint =
         "You sent too many requests in a short time. If a script runs these commands, slow it down.";
 
+    /// <summary>The problem <c>code</c> of a 404 for a Store ID the seller has no game with, on the package and playtest routes.</summary>
+    internal const string GameNotFoundCode = "game_not_found";
+
+    /// <summary>Whether <paramref name="exception"/> is a <c>game_not_found</c> rather than a missing package or playtest.</summary>
+    internal static bool IsGameNotFound(XboxPartnerApiException exception) =>
+        exception.StatusCode == HttpStatusCode.NotFound
+        && Commands.TestAccountCommandFactory.ReadProblemString(exception.ResponseBody, "code") == GameNotFoundCode;
+
+    /// <summary>
+    /// Explains a <c>game_not_found</c>, naming the Store ID and seller the failed request sent: the game is
+    /// the path segment after <c>games</c>, and the seller is the <c>sellerId</c> query parameter, which a
+    /// package request leaves out when the service picks the developer's only seller.
+    /// </summary>
+    internal static string DescribeGameNotFound(Uri requestUri)
+    {
+        string[] segments = requestUri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        int games = Array.FindIndex(segments, segment => segment.Equals("games", StringComparison.OrdinalIgnoreCase));
+        string game = games >= 0 && games + 1 < segments.Length
+            ? $"Store ID {Uri.UnescapeDataString(segments[games + 1])}"
+            : "that Store ID";
+        string? sellerId = System.Web.HttpUtility.ParseQueryString(requestUri.Query)["sellerId"];
+        string seller = string.IsNullOrWhiteSpace(sellerId) ? "your seller" : $"seller {sellerId}";
+        return Output.TerminalText.SingleLine(
+            $"No game with {game} was found for {seller}. Check --store-id and --seller-id.");
+    }
+
     public static string Describe(XboxPartnerApiException exception, bool isAutomation)
     {
         // The detail is server-supplied text written to the terminal.

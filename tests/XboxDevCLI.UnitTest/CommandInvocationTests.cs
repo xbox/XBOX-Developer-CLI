@@ -129,7 +129,7 @@ public sealed class CommandInvocationTests : IDisposable
 
         Assert.Empty(commands.Where(command => CommandEndpoints.FindDeclared(command) is null).Select(Path));
         Assert.Empty(commands
-            .Where(CommandMetadataRegistry.CallsPlayFab)
+            .Where(command => CommandMetadataRegistry.CallsPlayFabTitle(command))
             .Where(command => !CommandEndpoints.For(command).HasFlag(ServiceEndpoints.PlayFab))
             .Select(Path));
     }
@@ -143,7 +143,7 @@ public sealed class CommandInvocationTests : IDisposable
     [InlineData("context get", false, false)]
     [InlineData("playfab title-data get", true, false)]
     [InlineData("seller list", false, true)]
-    [InlineData("xbl schema get", false, true)]
+    [InlineData("xbl schema list", false, true)]
     public void EndpointWarnings_AreWrittenForTheEndpointsTheCommandCalls(string command, bool playFab, bool xboxPartner)
     {
         using var automation = TestEnvironment.UseAuthenticationMode("managedidentity");
@@ -158,6 +158,29 @@ public sealed class CommandInvocationTests : IDisposable
         Assert.Equal(playFab ? 1 : 0, warnings.Count(line => line.Contains("PlayFab API endpoint", StringComparison.Ordinal)));
         Assert.Equal(xboxPartner ? 1 : 0, warnings.Count(line => line.Contains("service endpoint", StringComparison.Ordinal)));
         Assert.Equal((playFab ? 1 : 0) + (xboxPartner ? 1 : 0), warnings.Count);
+    }
+
+    /// <summary><c>playfab api</c> warns only about the endpoint its path goes to.</summary>
+    [Theory]
+    [InlineData("/Studio/ListServicePrincipals", false, true)]
+    [InlineData("/Catalog/GetCatalogConfig", true, false)]
+    public void ApiCommand_WarnsOnlyAboutTheEndpointItsPathGoesTo(string apiPath, bool playFab, bool studio)
+    {
+        using var automation = TestEnvironment.UseAuthenticationMode("managedidentity");
+        var originalStudio = Environment.GetEnvironmentVariable("XBOX_PLAYFAB__STUDIOBASEURL");
+        Environment.SetEnvironmentVariable("XBOX_PLAYFAB__STUDIOBASEURL", "https://studio.nodpublishers.com");
+        try
+        {
+            var stderr = WithChangedEndpoints(() => Program.Prepare(
+                Program.BuildRootCommand().Parse(["playfab", "api", apiPath], Program.NoResponseFileConfig)));
+
+            Assert.Equal(playFab, stderr.Contains("PlayFab API endpoint", StringComparison.Ordinal));
+            Assert.Equal(studio, stderr.Contains("PlayFab studio API endpoint", StringComparison.Ordinal));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("XBOX_PLAYFAB__STUDIOBASEURL", originalStudio);
+        }
     }
 
     /// <summary>A command's <c>--base-url</c> is the endpoint it calls, so it's what the warning names.</summary>
@@ -206,20 +229,21 @@ public sealed class CommandInvocationTests : IDisposable
         string[] args = ["seller", "list"];
         var parseResult = Program.BuildRootCommand().Parse(
             disableTelemetry ? ["--disable-telemetry", .. args] : args, Program.NoResponseFileConfig);
-        var originalSampling = Environment.GetEnvironmentVariable("XBOX_TELEMETRY__DEPENDENCYTRACESAMPLINGRATIO");
-        Environment.SetEnvironmentVariable("XBOX_TELEMETRY__DEPENDENCYTRACESAMPLINGRATIO", "0.5");
+        const string configured = "InstrumentationKey=11111111-1111-1111-1111-111111111111";
+        var originalConnection = Environment.GetEnvironmentVariable("XBOX_TELEMETRY__CONNECTIONSTRING");
+        Environment.SetEnvironmentVariable("XBOX_TELEMETRY__CONNECTIONSTRING", configured);
         try
         {
             var options = TelemetryOptions.FromConfiguration(
-                Program.GetTelemetryConfiguration(parseResult), _ => null, "InstrumentationKey=00000000-0000-0000-0000-000000000000");
+                Program.GetTelemetryConfiguration(parseResult), _ => null, embeddedConnectionString: "");
 
             Assert.Null(Program.GetInvocation(parseResult).LoadedConfiguration.Configuration);
             Assert.Equal(expectedEnabled, options.Enabled);
-            Assert.Equal(0.5, options.DependencyTraceSamplingRatio);
+            Assert.Equal(configured, options.ConnectionString);
         }
         finally
         {
-            Environment.SetEnvironmentVariable("XBOX_TELEMETRY__DEPENDENCYTRACESAMPLINGRATIO", originalSampling);
+            Environment.SetEnvironmentVariable("XBOX_TELEMETRY__CONNECTIONSTRING", originalConnection);
         }
     }
 
@@ -302,6 +326,35 @@ public sealed class CommandInvocationTests : IDisposable
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             parseResult.InvokeAsync(new InvocationConfiguration { EnableDefaultExceptionHandler = false }));
+    }
+
+    /// <summary>
+    /// A command that handles Ctrl+C itself and exits with 1 or 3 is recorded as cancelled, not as
+    /// a failure with no reason.
+    /// </summary>
+    [Fact]
+    public async Task CtrlC_HandledByTheCommand_IsRecordedAsCancelled()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var command = new Command("probe");
+        command.SetAction((_, _) =>
+        {
+            cancellation.Cancel();
+            return Task.FromResult(1);
+        });
+        var root = Root(command.Requires(CommandRequirement.None));
+        var recorded = TelemetryRecorder.Start();
+
+        try
+        {
+            await root.Parse("probe", Program.NoResponseFileConfig).InvokeAsync(cancellationToken: cancellation.Token);
+
+            Assert.Equal(TelemetryErrorTypes.Cancelled, recorded.ErrorType);
+        }
+        finally
+        {
+            TelemetryRecorder.Stop();
+        }
     }
 
     private static RootCommand Root(Command probe)

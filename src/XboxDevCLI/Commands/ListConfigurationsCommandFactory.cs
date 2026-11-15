@@ -14,36 +14,24 @@ internal static class ListConfigurationsCommandFactory
     public static Command Create()
     {
         var sellerOption = new XdtsSellerOption();
-        var scidOption = new Option<Guid>("--scid", "-s")
-        {
-            Description = "The service configuration ID. No default.",
-            Required = true,
-        };
-        scidOption.Validators.Add(result =>
-        {
-            if (result.Tokens.Count > 0 &&
-                (!Guid.TryParse(result.Tokens[0].Value, out Guid value) ||
-                 value == Guid.Empty))
-            {
-                result.AddError("--scid must be a non-empty GUID.");
-            }
-        });
+        var target = new XboxLiveConfigurationTarget();
 
         var command = new Command(
             "list",
             "List working and published configuration state for each accessible sandbox");
         command.WithMetadata(new CommandMetadata(
             Safety: CommandSafety.ReadOnly,
-            Scope: "One XBOX title identified by SCID across all accessible sandboxes.",
+            Scope: "One effective shared XBOX services configuration across all accessible sandboxes.",
             Output:
                 "A JSON array by default. Table output shows working and published versions, " +
                 "their associated commit times, and whether working changes are unpublished. " +
                 ListProgress.HelpOutput,
             Examples:
             [
-                "xbox xbl configuration list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "xbox xbl configuration list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output table",
-                "xbox xbl configuration list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output json-compact",
+                "xbox xbl config list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                "xbox xbl config list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output table",
+                "xbox xbl config list --scid aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee --output json-compact",
+                "xbox xbl config list --title-id 1234ABCD --output table",
             ],
             LearnMore:
             [
@@ -52,14 +40,13 @@ internal static class ListConfigurationsCommandFactory
             ],
             Table: XboxPartnerCommandSupport.ConfigurationTableView));
         sellerOption.AddTo(command);
-        command.Options.Add(scidOption);
+        target.AddTo(command);
         command.SetAction(async (ParseResult parseResult, CancellationToken cancellationToken) =>
         {
             var output = OutputOptions.From(parseResult);
             var verbose = parseResult.GetValue(Program.VerboseOption);
             try
             {
-                Guid scid = parseResult.GetValue(scidOption);
                 var configuration = Program.GetConfiguration(parseResult);
                 using var client = Program.XboxPartnerClientFactory is null
                     ? new XboxPartnerClient(
@@ -73,20 +60,33 @@ internal static class ListConfigurationsCommandFactory
                     client,
                     baseUrl,
                     cancellationToken);
+                var selected = await target.SelectAsync(parseResult, sellerId);
 
                 Program.WriteVerbose(
                     verbose,
-                    () => $"List XBOX services configuration state for SCID {scid:D}");
+                    () => $"List XBOX services configuration state for {selected.Describe()}");
                 return await RunAsync(
                     client,
-                    sellerId,
-                    scid,
+                    selected.SellerId,
+                    selected.Scid,
                     output,
                     Console.Out,
                     Console.Error,
-                    cancellationToken).ConfigureAwait(false);
+                    cancellationToken,
+                    selected.TitleId,
+                    verbose).ConfigureAwait(false);
             }
-            catch (Exception ex)
+            catch (XboxPartnerApiException ex)
+            {
+                Console.Error.WriteLine(XboxPartnerCommandErrorFormatter.Format(ex, output.IsCompact));
+                return 1;
+            }
+            catch (XboxPartnerResponseException ex)
+            {
+                XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, Console.Error);
+                return XboxPartnerCommandSupport.WriteLocalError(ex);
+            }
+            catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
             {
                 Console.Error.WriteLine($"Request failed: {ex.Message}");
                 return 1;
@@ -99,22 +99,31 @@ internal static class ListConfigurationsCommandFactory
     internal static async Task<int> RunAsync(
         XboxPartnerClient client,
         long? sellerId,
-        Guid scid,
+        Guid? scid,
         OutputOptions output,
         TextWriter stdout,
         TextWriter stderr,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? titleId = null,
+        bool verbose = false)
     {
         try
         {
+            XboxLiveResolvedConfigurationTarget? resolved = null;
             string response;
             using (var progress = ListProgress.Start("Reading configurations", stderr))
             {
                 response = await client
-                    .GetXboxLiveConfigurationsAsync(sellerId, scid, cancellationToken, progress.PageRead)
+                    .GetXboxLiveConfigurationsAsync(
+                        sellerId, scid, cancellationToken, titleId,
+                        target => resolved = target, progress.PageRead)
                     .ConfigureAwait(false);
             }
 
+            if (verbose && resolved is not null)
+            {
+                XboxLiveConfigurationTarget.WriteResolved(resolved, sellerId, stderr);
+            }
             stdout.WriteLine(output.TableView is not null
                 ? XboxPartnerTableFormatter.FormatConfigurations(response)
                 : PlayFabApiClient.FormatJson(response, output.IsCompact));
@@ -122,7 +131,6 @@ internal static class ListConfigurationsCommandFactory
         }
         catch (XboxPartnerApiException ex)
         {
-            XboxPartnerCommandSupport.WriteCorrelationId(ex.CorrelationId, stderr);
             stderr.WriteLine(XboxPartnerCommandErrorFormatter.Format(ex, output.IsCompact));
             return 1;
         }
@@ -132,7 +140,7 @@ internal static class ListConfigurationsCommandFactory
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (!XboxPartnerCommandSupport.IsCallerCancellation(ex, cancellationToken))
         {
             stderr.WriteLine($"Request failed: {ex.Message}");
             return 1;

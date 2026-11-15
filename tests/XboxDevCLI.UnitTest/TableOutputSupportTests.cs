@@ -220,56 +220,80 @@ public class TableOutputSupportTests
                     responseType is not null,
                     $"'{path}': cannot resolve response type '{endpoint.ResponseType}'.");
 
-                var elementType = ResolveElementType(path, responseType!, view);
+                // A merged view reads every column from each of its collections, except one that
+                // names the few it reads in OnlyIn, so a column must exist on every one it reads.
+                string[] collections = view.Sources.Count > 0
+                    ? [.. view.Sources.Select(source => source.Collection)]
+                    : [view.Collection];
 
-                Assert.True(
-                    elementType != typeof(string) || view.Columns.All(column => column.IsElementItself),
-                    $"'{path}' declares collection '{view.Collection}' as a scalar, but its " +
-                    "columns read properties.");
-
-                foreach (var column in view.Columns)
+                foreach (var column in view.Columns.Where(column => column.OnlyIn is not null))
                 {
-                    if (column.IsElementItself)
-                    {
-                        // A scalar view is only meaningful over a collection of scalars.
-                        Assert.True(
-                            elementType == typeof(string) || elementType.IsPrimitive,
-                            $"'{path}' column '{column.Header}' reads the element itself, but " +
-                            $"'{view.Collection}' holds {elementType.Name}, not a scalar.");
-                        continue;
-                    }
-
-                    // Walk every segment, not just the first. A dotted path is the supported way
-                    // to reach a nested field, so a typo in a later segment ("Entity.Key.Idd")
-                    // must fail here too — at runtime it renders "-", which is indistinguishable
-                    // from legitimately absent data.
-                    var current = elementType;
-                    var walked = new List<string>();
-
-                    foreach (var segment in column.Property.Split('.'))
-                    {
-                        var property = PropertyForWireName(current, segment);
-                        Assert.True(
-                            property is not null,
-                            $"'{path}' column '{column.Header}' reads '{column.Property}', but " +
-                            $"'{segment}' is not a field on {current.Name}" +
-                            (walked.Count > 0 ? $" (reached via {string.Join('.', walked)})" : string.Empty) +
-                            ". A cell of dashes would be the only symptom at runtime.");
-
-                        walked.Add(segment);
-                        current = Unwrap(property!.PropertyType);
-                    }
-
-                    // The final segment must render as a scalar. Anything else — a collection or
-                    // a nested object — reaches Stringify's fallback and emits raw JSON truncated
-                    // to the column width. Checking only for collections let an object-valued
-                    // property through, which is the same defect with a different shape.
                     Assert.True(
-                        RendersAsScalar(current),
-                        $"'{path}' column '{column.Header}' reads '{column.Property}', which is " +
-                        $"{(IsCollection(current) ? $"a collection ({current.Name})" : $"an object ({current.Name})")}. " +
-                        "A table cell would show truncated raw JSON; point at a field inside it " +
-                        "with a dotted path, or drop the column.");
+                        view.Sources.Count > 0
+                            && column.OnlyIn!.Count > 0
+                            && column.OnlyIn.All(collection => collections.Contains(collection)),
+                        $"'{path}' column '{column.Header}' sets OnlyIn, which must name some of the " +
+                        "collections of a merged view.");
+                }
+
+                foreach (var collection in collections)
+                {
+                    var elementType = ResolveElementType(path, responseType!, view with { Collection = collection });
+
+                    Assert.True(
+                        elementType != typeof(string) || view.Columns.All(column => column.IsElementItself),
+                        $"'{path}' declares collection '{collection}' as a scalar, but its " +
+                        "columns read properties.");
+
+                    foreach (var column in view.Columns)
+                    {
+                        if (column.IsSourceLabel)
+                        {
+                            Assert.True(
+                                view.Sources.Count > 0,
+                                $"'{path}' column '{column.Header}' shows a collection label, but the view isn't merged.");
+                            continue;
+                        }
+
+                        if (column.OnlyIn is { } onlyIn && !onlyIn.Contains(collection))
+                        {
+                            continue;
+                        }
+
+                        if (column.IsElementItself)
+                        {
+                            // A scalar view is only meaningful over a collection of scalars.
+                            Assert.True(
+                                elementType == typeof(string) || elementType.IsPrimitive,
+                                $"'{path}' column '{column.Header}' reads the element itself, but " +
+                                $"'{collection}' holds {elementType.Name}, not a scalar.");
+                            continue;
+                        }
+
+                        // Walk every segment, not just the first. A dotted path is the supported way
+                        // to reach a nested field, so a typo in a later segment ("Entity.Key.Idd")
+                        // must fail here too — at runtime it renders "-", which is indistinguishable
+                        // from legitimately absent data.
+                        var (current, failure) = WalkPath(elementType, column.Property, view.Expand);
+                        Assert.True(
+                            current is not null,
+                            $"'{path}' column '{column.Header}' reads '{column.Property}', but " +
+                            $"{failure}. A cell of dashes would be the only symptom at runtime." +
+                            (view.Sources.Count > 0
+                                ? " If only some of the view's collections have it, name them in the column's OnlyIn."
+                                : string.Empty));
+
+                        // The final segment must render as a scalar. Anything else — a collection or
+                        // a nested object — reaches Stringify's fallback and emits raw JSON truncated
+                        // to the column width. Checking only for collections let an object-valued
+                        // property through, which is the same defect with a different shape.
+                        Assert.True(
+                            RendersAsScalar(current),
+                            $"'{path}' column '{column.Header}' reads '{column.Property}', which is " +
+                            $"{(IsCollection(current) ? $"a collection ({current.Name})" : $"an object ({current.Name})")}. " +
+                            "A table cell would show truncated raw JSON; point at a field inside it " +
+                            "with a dotted path, or drop the column.");
+                    }
                 }
 
                 checkedViews++;
@@ -277,6 +301,43 @@ public class TableOutputSupportTests
         }
 
         Assert.True(checkedViews > 0, "No PlayFab-backed views were checked.");
+    }
+
+    /// <summary>
+    /// Walks a column's dotted path from <paramref name="type"/>, and returns the type it ends on,
+    /// or why it can't. A path through the view's expanded list continues into the list's items.
+    /// </summary>
+    private static (Type? Type, string? Failure) WalkPath(Type type, string propertyPath, string? expand)
+    {
+        var current = type;
+        var walked = new List<string>();
+
+        foreach (var segment in propertyPath.Split('.'))
+        {
+            var property = PropertyForWireName(current, segment);
+            if (property is null)
+            {
+                return (null,
+                    $"'{segment}' is not a field on {current.Name}" +
+                    (walked.Count > 0 ? $" (reached via {string.Join('.', walked)})" : string.Empty));
+            }
+
+            current = Unwrap(property.PropertyType);
+
+            if (walked.Count == 0 && segment == expand)
+            {
+                if (!current.IsGenericType || current.GetGenericTypeDefinition() != typeof(List<>))
+                {
+                    return (null, $"the view expands '{segment}', which is not a list on {type.Name}");
+                }
+
+                current = current.GetGenericArguments()[0];
+            }
+
+            walked.Add(segment);
+        }
+
+        return (current, null);
     }
 
     /// <summary>Strips <c>Nullable&lt;T&gt;</c> so a value type's fields can be walked.</summary>

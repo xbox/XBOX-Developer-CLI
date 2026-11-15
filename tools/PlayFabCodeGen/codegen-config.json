@@ -2,8 +2,9 @@
   "specSource": {
     "type": "github",
     "repo": "PlayFab/API_Specs",
-    "branch": "master",
-    "path": "Swagger/PlayFab"
+    "branch": "d7b792ce6e9a2f063f395ab95d54328e6533bffc",
+    "path": "Swagger/PlayFab",
+    "overlayPath": "specs"
   },
   "output": {
     "directory": "../../src/XboxDevCLI/PlayFab/Generated",
@@ -26,7 +27,8 @@
     "State",
     "Authentication",
     "Sweepstakes",
-    "Localization"
+    "Localization",
+    "Studio"
   ],
   "exclude": {
     "groups": [

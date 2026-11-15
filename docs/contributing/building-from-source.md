@@ -5,28 +5,27 @@ description: Clone the repository and build the CLI with the .NET SDK.
 
 # Building from source
 
-Prefer to build the XBOX Developer CLI yourself? Clone the repository and build it with the
-.NET SDK.
+Build the XBOX CLI yourself from a clone of the repository with the .NET SDK. Read
+`CONTRIBUTING.md` at the root of the repository before you suggest a change.
 
-## Prerequisites
+## Before you begin
 
 - [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) or later.
 
-The repository targets `net10.0`. `Directory.Build.props` enables nullable
-reference types, implicit usings, latest C# language version, and
-`TreatWarningsAsErrors=true`, so local builds must be warning-free.
-
 ## Restore and build
+
+From the repository root:
 
 ```bash
 dotnet restore
 dotnet build
 ```
 
+Builds treat warnings as errors, so a change must build without warnings.
+
 ## Run from source
 
-When running from source, prefix commands with
-`dotnet run --project src/XboxDevCLI --`:
+Prefix commands with `dotnet run --project src/XboxDevCLI --`:
 
 ```bash
 dotnet run --project src/XboxDevCLI -- auth login
@@ -35,25 +34,18 @@ dotnet run --project src/XboxDevCLI -- --playfab-title-id ABC123 playfab api /Ad
 
 ## Run tests
 
-For the normal unit test pass:
-
 ```bash
 dotnet test
 ```
 
-For the coverage bar, fuzz testing, and deeper validation guidance, see
-[Testing and coverage](testing.md) and [Fuzz Testing](fuzzing.md).
+See [Testing and coverage](testing.md) for the coverage bar and end-to-end tests, and
+[Fuzz testing](fuzzing.md) for the property-based tests.
 
 ## Single-file publishing
 
-Releases are single-file, self-contained executables for these runtime identifiers:
-
-- `win-x64`
-- `linux-x64`
-- `osx-x64`
-- `osx-arm64`
-
-To publish one the same way, pass the runtime identifier you want:
+Releases are single-file, self-contained executables for the runtime identifiers `win-x64`,
+`linux-x64`, `osx-x64`, and `osx-arm64`. To publish one the same way, pass the runtime
+identifier you want:
 
 ```bash
 dotnet publish src/XboxDevCLI/XboxDevCLI.csproj --configuration Release \
@@ -61,20 +53,7 @@ dotnet publish src/XboxDevCLI/XboxDevCLI.csproj --configuration Release \
   -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
-Publishing also puts `LICENSE` and `NOTICE.md` beside the executable. A self-contained publish
-appends the third-party notices of the .NET runtime it bundles to that `NOTICE.md`.
-
-Each release packages the publish folder as `xbox-<rid>.zip`. See
-[Installation](../installation.md) for the downloadable archive names.
-
 ## PlayFab code generation
 
-Generated PlayFab request/response models and endpoint metadata live under
-`src/XboxDevCLI/PlayFab/Generated/`. If you need to update generated API data,
-use the dedicated generator workflow documented in [Code Generation](code-generation.md)
-rather than editing generated files by hand.
-
-## Contributing
-
-Please read `CONTRIBUTING.md` at the root of the repository
-for the code of conduct and how to report issues and suggest changes.
+Don't edit the generated PlayFab models and API metadata in `src/XboxDevCLI/PlayFab/Generated/`
+by hand. Regenerate them as [Code generation](code-generation.md) describes.

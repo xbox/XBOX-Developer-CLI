@@ -25,4 +25,11 @@ internal static class TerminalText
             ? string.Empty
             : string.Concat(value.Where(character =>
                 character is '\n' or '\t' || !TableFormatter.IsUnsafeCellCharacter(character)));
+
+    /// <summary>
+    /// Makes a failure's message, such as an exception's, safe for stderr: line breaks are kept,
+    /// written as the platform's, and every other unsafe character is removed.
+    /// </summary>
+    public static string Message(string? value) =>
+        MultiLine(value?.ReplaceLineEndings("\n")).ReplaceLineEndings();
 }

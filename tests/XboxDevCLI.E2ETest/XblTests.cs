@@ -20,40 +20,60 @@ public class XblTests
     private static E2ESettings Settings => E2ESettings.Current;
 
     [LiveFact]
-    public async Task SchemaGet_ListsTheTypes()
+    public async Task SchemaList_ListsTheTypes()
     {
-        CliResult result = await Cli.RunAsync("xbl", "schema", "get", "--output", "json-compact");
+        CliResult result = await Cli.RunAsync("xbl", "schema", "list", "--output", "json-compact");
 
         result.Check(result.Json().Items().HasString(SchemaType), $"Expected the {SchemaType} type.");
     }
 
     [LiveFact]
-    public async Task SchemaGet_DownloadsTheNewestVersionOfAType()
+    public async Task SchemaGet_DefaultsToTheNewestVersionOfAType()
     {
-        CliResult versions = await Cli.RunAsync("xbl", "schema", "get", "--type", SchemaType, "--output", "json-compact");
-        long newest = versions.Json().Items().Select(version => version.Number("version") ?? 0).DefaultIfEmpty().Max();
-        versions.Check(newest > 0, $"Expected versions of {SchemaType}.");
+        long newest = await GetNewestSchemaVersionAsync();
+
+        CliResult schema = await Cli.RunAsync("xbl", "schema", "get", "--type", SchemaType, "--output", "json-compact");
+
+        JsonElement selected = schema.Json();
+        schema.Check(selected.Is("type", SchemaType), $"Expected the {SchemaType} type.");
+        schema.Check(selected.Number("version") == newest, $"Expected version {newest}.");
+        schema.Check(!string.IsNullOrEmpty(selected.Text("namespace")), "Expected a namespace.");
+    }
+
+    [LiveFact]
+    public async Task SchemaDownload_WritesOneXsdToStdout()
+    {
+        long newest = await GetNewestSchemaVersionAsync();
 
         CliResult schema = await Cli.RunAsync(
-            "xbl", "schema", "get", "--type", SchemaType, "--version", newest.ToString(CultureInfo.InvariantCulture));
+            "xbl", "schema", "download", "--type", SchemaType, "--version", newest.ToString(CultureInfo.InvariantCulture),
+            "--dest", "-");
 
         schema.Check(schema.ExitCode == 0, "Expected exit code 0.");
         schema.Check(ParseXml(schema.Stdout)?.Name == XsdRoot, "Expected the XSD on stdout.");
     }
 
+    private static async Task<long> GetNewestSchemaVersionAsync()
+    {
+        CliResult versions = await Cli.RunAsync("xbl", "schema", "list", "--type", SchemaType, "--output", "json-compact");
+        long newest = versions.Json().Items().Select(version => version.Number("version") ?? 0).DefaultIfEmpty().Max();
+        versions.Check(newest > 0, $"Expected versions of {SchemaType}.");
+        return newest;
+    }
+
     [LiveFact]
-    public async Task DocumentDownload_SavesTheWorkingDocuments()
+    public async Task ConfigDownload_SavesTheWorkingDocuments()
     {
         DirectoryInfo destination = Directory.CreateTempSubdirectory("xbox-e2e-");
         try
         {
             CliResult result = await Cli.RunForSellerAsync(
-                "xbl", "document", "download", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
-                "--dest", destination.FullName);
+                "xbl", "config", "download", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
+                "--view", "draft", "--dest", destination.FullName);
 
             JsonElement download = result.Json();
             JsonElement[] files = download.Items("files");
-            result.Check(download.Is("view", "working"), "Expected the working view.");
+            result.Check(download.Is("view", "draft"), "Expected the draft view.");
             result.Check(files.Length > 0, "Expected documents.");
             result.Check(
                 files.All(file => file.ValueKind == JsonValueKind.String && File.Exists(file.GetString())),
@@ -67,9 +87,9 @@ public class XblTests
     }
 
     [LiveFact]
-    public async Task ConfigurationList_IncludesTheSandbox()
+    public async Task ConfigList_IncludesTheSandbox()
     {
-        CliResult result = await Cli.RunForSellerAsync("xbl", "configuration", "list", "--scid", Settings.Scid);
+        CliResult result = await Cli.RunForSellerAsync("xbl", "config", "list", "--scid", Settings.Scid);
 
         result.Check(
             result.Json().Items().Any(configuration => configuration.Is("sandbox", Settings.Sandbox)),
@@ -77,26 +97,22 @@ public class XblTests
     }
 
     [LiveFact]
-    public async Task ConfigurationGet_ShowsPublishedConfiguration()
+    public async Task ConfigStatus_ShowsPublishedConfigurationAndTheLastPublish()
     {
         CliResult result = await Cli.RunForSellerAsync(
-            "xbl", "configuration", "get", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox);
+            "xbl", "config", "status", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox);
 
         JsonElement configuration = result.Json();
         result.Check(configuration.Is("sandbox", Settings.Sandbox), $"Expected {Settings.Sandbox}.");
         result.Check(
             configuration.Flag("hasPublishedConfiguration") == true && configuration.Number("publishedVersion") > 0,
             "Expected published configuration.");
-    }
 
-    [LiveFact]
-    public async Task PublishStatus_ReportsAStatus()
-    {
-        CliResult result = await Cli.RunForSellerAsync(
-            "xbl", "publish", "status", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox);
-
-        // The CLI prints the service's response as it is, which names its fields in PascalCase.
-        result.Check(!string.IsNullOrWhiteSpace(result.Json().Text("Status")), "Expected a status.");
+        result.Check(
+            configuration.TryGetProperty("lastPublish", out JsonElement lastPublish) &&
+                lastPublish.ValueKind == JsonValueKind.Object &&
+                !string.IsNullOrWhiteSpace(lastPublish.Text("status")),
+            "Expected the last publish's status.");
     }
 
     [LiveFact]
@@ -149,20 +165,20 @@ public class XblTests
 
     // XBOX services answer that the files haven't changed and store nothing, which the CLI counts as success.
     [LiveFact]
-    public async Task DocumentCommit_ValidateOnly_AcceptsTheDocumentsJustDownloaded()
+    public async Task ConfigSave_ValidateOnly_AcceptsTheDocumentsJustDownloaded()
     {
         DirectoryInfo destination = Directory.CreateTempSubdirectory("xbox-e2e-");
         try
         {
             CliResult download = await Cli.RunForSellerAsync(
-                "xbl", "document", "download", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
-                "--dest", destination.FullName);
+                "xbl", "config", "download", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
+                "--view", "draft", "--dest", destination.FullName);
             string[] files = [.. download.Json().Items("files").Select(file => file.GetString()).OfType<string>()];
             download.Check(files.Length > 0, "Expected documents.");
 
             CliResult result = await Cli.RunForSellerAsync(
             [
-                "xbl", "document", "commit", "--validate-only", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
+                "xbl", "config", "save", "--validate-only", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
                 .. files.SelectMany(file => new[] { "--file", file }),
             ]);
 
@@ -177,7 +193,7 @@ public class XblTests
     // A failed request writes one JSON error to stderr, whose detail carries the service's reason and its
     // correlation vector (MS-CV), which traces the request.
     [LiveFact]
-    public async Task DocumentCommit_ValidateOnly_ShowsWhyABrokenDocumentIsRefused()
+    public async Task ConfigSave_ValidateOnly_ShowsWhyABrokenDocumentIsRefused()
     {
         DirectoryInfo directory = Directory.CreateTempSubdirectory("xbox-e2e-");
         try
@@ -186,7 +202,7 @@ public class XblTests
             await File.WriteAllTextAsync(document, "<{ not a configuration document");
 
             CliResult result = await Cli.RunForSellerAsync(
-                "xbl", "document", "commit", "--validate-only", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
+                "xbl", "config", "save", "--validate-only", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox,
                 "--file", document);
 
             result.Check(result.ExitCode == 1, "Expected exit code 1.");
@@ -205,10 +221,10 @@ public class XblTests
 
     // With no --source-sandbox-id, XBOX services validate publishing the sandbox's own working configuration.
     [LiveFact]
-    public async Task PublishStart_ValidateOnly_ValidatesTheSandbox()
+    public async Task ConfigPublish_ValidateOnly_ValidatesTheSandbox()
     {
         CliResult result = await Cli.RunForSellerAsync(
-            "xbl", "publish", "start", "--validate-only", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox);
+            "xbl", "config", "publish", "--validate-only", "--scid", Settings.Scid, "--sandbox-id", Settings.Sandbox);
 
         // The CLI prints the service's response as it is, which names its fields in PascalCase.
         result.Check(!string.IsNullOrWhiteSpace(result.Json().Text("Status")), "Expected a status.");

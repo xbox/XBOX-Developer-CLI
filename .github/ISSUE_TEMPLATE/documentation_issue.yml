@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Please search [existing issues](https://github.com/microsoft/XBOX-Developer-CLI/issues) first.
+        Please search [existing issues](https://github.com/xbox/cli/issues) first.
         Do not include credentials, account details, or other sensitive information.
   - type: input
     id: page

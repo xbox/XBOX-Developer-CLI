@@ -3,183 +3,183 @@
 
 using Azure.Monitor.OpenTelemetry.Exporter;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using OpenTelemetry;
-using OpenTelemetry.Metrics;
+using OpenTelemetry.Logs;
 using OpenTelemetry.Resources;
-using OpenTelemetry.Trace;
 
 namespace XboxDevCLI.Telemetry;
 
-internal sealed class TelemetryService : IDisposable
+/// <summary>
+/// Sends the invocation's one <see cref="CommandInvocationEvent"/> as an Application Insights
+/// custom event. Telemetry is best effort: nothing here may fail the CLI or change its exit code.
+/// </summary>
+internal sealed class TelemetryService
 {
-    private static readonly TimeSpan FlushTimeout = TimeSpan.FromSeconds(2);
+    internal const string ServiceName = "xbox-cli";
+    internal const string StorageSubDirectory = "xbox-cli";
+    internal const int FailureDrainBudgetMilliseconds = 300;
 
-    private readonly TracerProvider? _tracerProvider;
-    private readonly MeterProvider? _meterProvider;
+    private const string ExporterSettingPrefix = "Azure.Monitor.OpenTelemetry.Exporter.";
+
     private readonly Action<string>? _diagnostic;
+    private readonly Action<OpenTelemetryLoggerOptions>? _configureExport;
+    private readonly Func<string, string?> _getEnvironmentVariable;
+    private bool _disclosureShown;
 
     private TelemetryService(
         TelemetryOptions options,
-        TracerProvider? tracerProvider,
-        MeterProvider? meterProvider,
-        Action<string>? diagnostic)
+        Action<string>? diagnostic,
+        Action<OpenTelemetryLoggerOptions>? configureExport,
+        Func<string, string?> getEnvironmentVariable)
     {
         Options = options;
-        _tracerProvider = tracerProvider;
-        _meterProvider = meterProvider;
         _diagnostic = diagnostic;
+        _configureExport = configureExport;
+        _getEnvironmentVariable = getEnvironmentVariable;
     }
 
     internal TelemetryOptions Options { get; }
 
     /// <summary>
-    /// True when telemetry providers were built and the CLI is actively exporting telemetry
-    /// (a valid destination is configured and initialization succeeded). This is the correct
-    /// gate for the first-run disclosure: it is only shown when data is really being collected.
+    /// True when telemetry is enabled and has somewhere to go, which is when the first-run
+    /// disclosure is shown.
     /// </summary>
-    internal bool IsCollecting => _meterProvider != null || _tracerProvider != null;
+    internal bool IsCollecting => Options.Enabled && Options.ConnectionString is not null;
 
-    internal static TelemetryService Create(
-        IConfiguration configuration,
-        Action<string>? diagnostic = null)
+    /// <summary>
+    /// Shows the first-run disclosure, if telemetry is collecting. Nothing is sent unless this has
+    /// shown it, on this run or an earlier one.
+    /// </summary>
+    internal void ShowDisclosure(string stateDirectory, TextWriter writer, bool useAnsi)
     {
-        TelemetryOptions options;
-        try
+        if (IsCollecting)
         {
-            options = TelemetryOptions.FromConfiguration(configuration);
-        }
-        catch (Exception exception)
-        {
-            // Resolving options reads configuration and assembly metadata; if that ever
-            // fails, telemetry must still not break the CLI. Fail open to a disabled no-op.
-            diagnostic?.Invoke(
-                $"Telemetry configuration could not be resolved ({TelemetryInstrumentation.ClassifyException(exception)}).");
-            return new TelemetryService(
-                new TelemetryOptions(false, null, false, 0),
-                null,
-                null,
-                diagnostic);
-        }
-
-        if (!options.Enabled || options.ConnectionString == null)
-        {
-            return new TelemetryService(options, null, null, diagnostic);
-        }
-
-        TracerProvider? tracerProvider = null;
-        MeterProvider? meterProvider = null;
-        try
-        {
-            var resource = ResourceBuilder.CreateDefault()
-                .AddService(
-                    TelemetryInstrumentation.SourceName,
-                    serviceVersion: TelemetryInstrumentation.ServiceVersion);
-
-            tracerProvider = Sdk.CreateTracerProviderBuilder()
-                .SetResourceBuilder(resource)
-                .AddSource(TelemetryInstrumentation.SourceName)
-                .SetSampler(new ParentBasedSampler(
-                    new TraceIdRatioBasedSampler(options.DependencyTraceSamplingRatio)))
-                .AddAzureMonitorTraceExporter(exporter =>
-                    exporter.ConnectionString = options.ConnectionString)
-                .Build();
-
-            meterProvider = Sdk.CreateMeterProviderBuilder()
-                .SetResourceBuilder(resource)
-                .AddMeter(TelemetryInstrumentation.SourceName)
-                .AddAzureMonitorMetricExporter(exporter =>
-                    exporter.ConnectionString = options.ConnectionString)
-                .Build();
-
-            return new TelemetryService(options, tracerProvider, meterProvider, diagnostic);
-        }
-        catch (Exception exception)
-        {
-            // Telemetry is best-effort: any failure to initialize the exporter (including
-            // unexpected SDK/exporter or assembly/type-load failures under single-file
-            // publish, or offline-storage I/O errors in locked-down environments) must
-            // never break the CLI or change its exit code. Fail open to a disabled no-op.
-            diagnostic?.Invoke(
-                $"Telemetry exporter could not be initialized ({TelemetryInstrumentation.ClassifyException(exception)}).");
-
-            // Dispose any provider already built before the failure to avoid leaking its
-            // exporter/background resources.
-            TryDispose(tracerProvider, diagnostic);
-            TryDispose(meterProvider, diagnostic);
-
-            return new TelemetryService(
-                options with { Enabled = false },
-                null,
-                null,
-                diagnostic);
+            _disclosureShown = TelemetryDisclosure.WriteIfFirstRun(stateDirectory, writer, useAnsi);
         }
     }
 
-    private static void TryDispose(IDisposable? disposable, Action<string>? diagnostic)
+    /// <summary>Whether this run is in CI, by the presence of a CI variable.</summary>
+    internal bool IsCi => TelemetryInstrumentation.IsCi(_getEnvironmentVariable);
+
+    /// <summary>Resolves the telemetry settings. Never throws: a setting that can't be read turns telemetry off.</summary>
+    /// <param name="configuration">The invocation's configuration.</param>
+    /// <param name="diagnostic">Receives what went wrong with telemetry, for <c>--verbose</c>.</param>
+    /// <param name="configureExport">
+    /// Replaces the Azure Monitor exporter, so tests can see what would be sent.
+    /// </param>
+    /// <param name="getEnvironmentVariable">Reads environment variables; the process's by default.</param>
+    internal static TelemetryService Create(
+        IConfiguration configuration,
+        Action<string>? diagnostic = null,
+        Action<OpenTelemetryLoggerOptions>? configureExport = null,
+        Func<string, string?>? getEnvironmentVariable = null)
     {
-        if (disposable == null)
+        getEnvironmentVariable ??= Environment.GetEnvironmentVariable;
+        try
+        {
+            return new TelemetryService(
+                TelemetryOptions.FromConfiguration(configuration, getEnvironmentVariable),
+                diagnostic,
+                configureExport,
+                getEnvironmentVariable);
+        }
+        catch (Exception exception)
+        {
+            diagnostic?.Invoke(
+                $"Telemetry configuration could not be resolved ({TelemetryInstrumentation.ClassifyException(exception)}).");
+            return new TelemetryService(
+                new TelemetryOptions(false, null),
+                diagnostic,
+                configureExport,
+                getEnvironmentVariable);
+        }
+    }
+
+    /// <summary>
+    /// Sends <paramref name="invocation"/>, if telemetry is collecting and the disclosure has been
+    /// shown (<see cref="ShowDisclosure"/>). On success the exporter
+    /// gets no time to send before exit and saves the event to send on a later run; on failure it
+    /// gets <see cref="FailureDrainBudgetMilliseconds"/>.
+    /// </summary>
+    internal void Emit(CommandInvocationEvent invocation)
+    {
+        if (!IsCollecting || !_disclosureShown)
         {
             return;
         }
 
         try
         {
-            disposable.Dispose();
-        }
-        catch (Exception exception)
-        {
-            diagnostic?.Invoke(
-                $"Telemetry exporter disposal failed ({TelemetryInstrumentation.ClassifyException(exception)}).");
-        }
-    }
+            var attributes = TelemetryInstrumentation.ToAttributes(invocation);
+            ConfigureExporter(failed: invocation.ExitCode != 0, ci: invocation.Ci);
 
-    internal void RecordCommand(string commandName, int exitCode, TimeSpan duration, string authMode)
-    {
-        if (Options.Enabled)
-        {
-            TelemetryInstrumentation.RecordCommand(commandName, exitCode, duration, authMode);
-        }
-    }
+            using var loggerFactory = LoggerFactory.Create(builder => builder.AddOpenTelemetry(logging =>
+            {
+                logging.IncludeScopes = false;
+                logging.IncludeFormattedMessage = false;
+                logging.SetResourceBuilder(ResourceBuilder.CreateEmpty()
+                    .AddService(ServiceName, serviceVersion: TelemetryInstrumentation.ServiceVersion, autoGenerateServiceInstanceId: false)
+                    // A fixed instance keeps the exporter from sending the machine name as the role instance.
+                    .AddAttributes([new("service.instance.id", ServiceName)]));
+                logging.AddProcessor(new HourFloorProcessor());
+                if (_configureExport is not null)
+                {
+                    _configureExport(logging);
+                }
+                else
+                {
+                    logging.AddAzureMonitorLogExporter(exporter =>
+                    {
+                        exporter.ConnectionString = Options.ConnectionString;
+                        exporter.EnableLiveMetrics = false;
+                        exporter.EnableTraceBasedLogsSampler = false;
+                    });
+                }
+            }));
 
-    internal void RecordUnhandledFailure(Exception exception)
-    {
-        if (Options.Enabled)
-        {
-            TelemetryInstrumentation.RecordUnhandledFailure(exception);
-        }
-    }
-
-    public void Dispose()
-    {
-        var timeoutMilliseconds = (int)FlushTimeout.TotalMilliseconds;
-        FlushAndDispose(
-            () => _tracerProvider?.ForceFlush(timeoutMilliseconds),
-            () => _tracerProvider?.Dispose());
-        FlushAndDispose(
-            () => _meterProvider?.ForceFlush(timeoutMilliseconds),
-            () => _meterProvider?.Dispose());
-    }
-
-    private void FlushAndDispose(Action flush, Action dispose)
-    {
-        try
-        {
-            flush();
+            loggerFactory.CreateLogger(string.Empty).Log(
+                LogLevel.Information,
+                default,
+                attributes,
+                null,
+                static (_, _) => string.Empty);
         }
         catch (Exception exception)
         {
             _diagnostic?.Invoke(
-                $"Telemetry exporter flush failed ({TelemetryInstrumentation.ClassifyException(exception)}).");
+                $"Telemetry could not be sent ({TelemetryInstrumentation.ClassifyException(exception)}).");
+        }
+    }
+
+    /// <summary>
+    /// Sets the exporter's process-wide settings, which it reads when it starts and when it shuts down.
+    /// </summary>
+    private static void ConfigureExporter(bool failed, bool ci)
+    {
+        AppContext.SetData(
+            ExporterSettingPrefix + "ShutdownDrainBudgetMilliseconds",
+            failed ? FailureDrainBudgetMilliseconds : 0);
+        AppContext.SetData(ExporterSettingPrefix + "StorageSubDirectory", StorageSubDirectory);
+        // A CI machine rarely runs the CLI again, so an event saved for a later run would never be sent.
+        AppContext.SetSwitch(ExporterSettingPrefix + "DisablePersistOnShutdown", ci);
+        // The exporter's own usage reporting is separate telemetry, so turn it off.
+        Environment.SetEnvironmentVariable("APPLICATIONINSIGHTS_STATSBEAT_DISABLED", "true");
+        Environment.SetEnvironmentVariable("APPLICATIONINSIGHTS_SDKSTATS_DISABLED", "true");
+    }
+
+    /// <summary>Rounds the event's time down to the hour, so it can't pin down when a command ran.</summary>
+    internal sealed class HourFloorProcessor : BaseProcessor<LogRecord>
+    {
+        public override void OnEnd(LogRecord data)
+        {
+            data.Timestamp = FloorToHour(data.Timestamp);
         }
 
-        try
+        internal static DateTime FloorToHour(DateTime timestamp)
         {
-            dispose();
-        }
-        catch (Exception exception)
-        {
-            _diagnostic?.Invoke(
-                $"Telemetry exporter disposal failed ({TelemetryInstrumentation.ClassifyException(exception)}).");
+            var utc = timestamp.Kind == DateTimeKind.Local ? timestamp.ToUniversalTime() : timestamp;
+            return new DateTime(utc.Ticks - (utc.Ticks % TimeSpan.TicksPerHour), DateTimeKind.Utc);
         }
     }
 }

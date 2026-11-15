@@ -1,8 +1,10 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.Buffers;
 using System.Net;
 using System.Net.Http.Headers;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Services;
 
@@ -64,6 +66,7 @@ internal static class AchievementImageBlobUploader
             using HttpResponseMessage response = await client.SendAsync(
                 request, HttpCompletionOption.ResponseHeadersRead, timeout.Token)
                 .ConfigureAwait(false);
+            TelemetryRecorder.RecordResponseStatus((int)response.StatusCode);
             if (response.StatusCode != HttpStatusCode.Created)
             {
                 throw new InvalidDataException(
@@ -72,10 +75,12 @@ internal static class AchievementImageBlobUploader
         }
         catch (OperationCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
             throw new TimeoutException("Image upload to storage timed out.", ex);
         }
         catch (Exception ex) when (ex is HttpRequestException or IOException)
         {
+            TelemetryRecorder.RecordError(TelemetryErrorTypes.Transport);
             throw new IOException("Image upload to storage failed before completion.", ex);
         }
     }

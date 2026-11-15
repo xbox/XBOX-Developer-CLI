@@ -1,13 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Microsoft.Extensions.Configuration;
-using Microsoft.Identity.Client;
-using Moq;
 using System.Net;
 using System.Text.Json;
 using XboxDevCLI.PlayFab.Commands;
-using XboxDevCLI.Services;
 using XboxDevCLI.Output;
 using Xunit;
 
@@ -67,18 +63,18 @@ public class ExperimentCommandTests
     [Fact]
     public async Task RunListAsync_PostsEmptyBodyToGetExperiments()
     {
-        var handler = new ExperimentMockHandler(Ok("""{"code":200,"status":"OK","data":{"Experiments":[]}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Experiments":[]}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
         var exit = await ExperimentCommandFactory.RunListAsync(client, OutputOptions.Json, stdout, stderr, CancellationToken.None);
 
         Assert.Equal(0, exit);
-        Assert.Equal(HttpMethod.Post, handler.LastMethod);
+        Assert.Equal(HttpMethod.Post, handler.LastRequest?.Method);
         Assert.Contains("/Experimentation/GetExperiments", handler.LastRequestUri);
         // GetExperimentsRequest only has an optional CustomTags field; nulls are omitted → "{}".
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Empty(doc.RootElement.EnumerateObject());
         Assert.Contains("Experiments", stdout.ToString());
         Assert.Equal(string.Empty, stderr.ToString());
@@ -87,8 +83,8 @@ public class ExperimentCommandTests
     [Fact]
     public async Task RunListAsync_JsonCompact_EmitsSingleLine()
     {
-        var handler = new ExperimentMockHandler(Ok("""{"code":200,"status":"OK","data":{"Experiments":[{"Name":"exp"}]}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Experiments":[{"Name":"exp"}]}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await ExperimentCommandFactory.RunListAsync(client, OutputOptions.JsonCompact, stdout, new StringWriter(), CancellationToken.None);
@@ -102,11 +98,11 @@ public class ExperimentCommandTests
     [Fact]
     public async Task RunListAsync_DataOnly_StripsEnvelope()
     {
-        var handler = new ExperimentMockHandler(Ok("""{"code":200,"status":"OK","data":{"Experiments":[]}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Experiments":[]}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
-        var exit = await ExperimentCommandFactory.RunListAsync(client, OutputOptions.JsonDataOnly, stdout, new StringWriter(), CancellationToken.None);
+        var exit = await ExperimentCommandFactory.RunListAsync(client, new OutputOptions("json", DataOnly: true), stdout, new StringWriter(), CancellationToken.None);
 
         Assert.Equal(0, exit);
         var output = stdout.ToString();
@@ -118,9 +114,9 @@ public class ExperimentCommandTests
     public async Task RunListAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":401,"status":"Unauthorized","error":"NotAuthorized","errorCode":1074,"errorMessage":"nope"}""";
-        var handler = new ExperimentMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -138,15 +134,15 @@ public class ExperimentCommandTests
     [Fact]
     public async Task RunScorecardAsync_SendsExperimentIdToGetLatestScorecard()
     {
-        var handler = new ExperimentMockHandler(Ok("""{"code":200,"status":"OK","data":{"Scorecard":{"ExperimentId":"exp-1"}}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"Scorecard":{"ExperimentId":"exp-1"}}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await ExperimentCommandFactory.RunScorecardAsync(client, "exp-1", OutputOptions.Json, stdout, new StringWriter(), CancellationToken.None);
 
         Assert.Equal(0, exit);
         Assert.Contains("/Experimentation/GetLatestScorecard", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Equal("exp-1", doc.RootElement.GetProperty("ExperimentId").GetString());
         Assert.Contains("Scorecard", stdout.ToString());
     }
@@ -155,9 +151,9 @@ public class ExperimentCommandTests
     public async Task RunScorecardAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad id"}""";
-        var handler = new ExperimentMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -175,8 +171,8 @@ public class ExperimentCommandTests
     [Fact]
     public async Task RunTreatmentAsync_SendsEntityKeyToGetTreatmentAssignment()
     {
-        var handler = new ExperimentMockHandler(Ok("""{"code":200,"status":"OK","data":{"TreatmentAssignment":{"Variables":[]}}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"TreatmentAssignment":{"Variables":[]}}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
 
         var exit = await ExperimentCommandFactory.RunTreatmentAsync(
@@ -185,7 +181,7 @@ public class ExperimentCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/Experimentation/GetTreatmentAssignment", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         var entity = doc.RootElement.GetProperty("Entity");
         Assert.Equal("E1", entity.GetProperty("Id").GetString());
         Assert.Equal("title_player_account", entity.GetProperty("Type").GetString());
@@ -196,9 +192,9 @@ public class ExperimentCommandTests
     public async Task RunTreatmentAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":400,"status":"BadRequest","error":"InvalidParams","errorCode":1000,"errorMessage":"bad entity"}""";
-        var handler = new ExperimentMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.BadRequest) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -218,8 +214,8 @@ public class ExperimentCommandTests
     [Fact]
     public async Task RunExclusionGroupsAsync_PostsEmptyBodyToGetExclusionGroups()
     {
-        var handler = new ExperimentMockHandler(Ok("""{"code":200,"status":"OK","data":{"ExclusionGroups":[]}}"""));
-        using var client = CreateClientWithHandler(handler);
+        var handler = new MockHttpMessageHandler(Ok("""{"code":200,"status":"OK","data":{"ExclusionGroups":[]}}"""));
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -227,7 +223,7 @@ public class ExperimentCommandTests
 
         Assert.Equal(0, exit);
         Assert.Contains("/Experimentation/GetExclusionGroups", handler.LastRequestUri);
-        using var doc = JsonDocument.Parse(handler.CapturedBody!);
+        using var doc = JsonDocument.Parse(handler.LastRequestBody!);
         Assert.Empty(doc.RootElement.EnumerateObject());
         Assert.Contains("ExclusionGroups", stdout.ToString());
         Assert.Equal(string.Empty, stderr.ToString());
@@ -237,9 +233,9 @@ public class ExperimentCommandTests
     public async Task RunExclusionGroupsAsync_ApiError_ReturnsOneAndWritesError()
     {
         var errorJson = """{"code":403,"status":"Forbidden","error":"NotAuthorized","errorCode":1074,"errorMessage":"denied"}""";
-        var handler = new ExperimentMockHandler(
+        var handler = new MockHttpMessageHandler(
             new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent(errorJson) });
-        using var client = CreateClientWithHandler(handler);
+        using var client = PlayFabTestClient.Create(handler);
         var stdout = new StringWriter();
         var stderr = new StringWriter();
 
@@ -257,68 +253,5 @@ public class ExperimentCommandTests
     private static HttpResponseMessage Ok(string json = """{"code":200,"status":"OK","data":{"ok":true}}""") =>
         new(HttpStatusCode.OK) { Content = new StringContent(json) };
 
-    private static IConfiguration CreateTestConfiguration() =>
-        new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["PlayFab:TitleId"] = "TEST123",
-                ["PlayFab:BaseUrlTemplate"] = "https://{0}.playfabapi.com",
-                ["AzureAd:ClientId"] = "test-client-id",
-                ["AzureAd:TenantId"] = "test-tenant-id",
-                ["AzureAd:Scopes"] = "api://test/.default",
-            })
-            .Build();
-
-    private static AuthenticationResult CreateMockAuthResult(string accessToken) =>
-        new(
-            accessToken: accessToken,
-            isExtendedLifeTimeToken: false,
-            uniqueId: "test-unique-id",
-            expiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            extendedExpiresOn: DateTimeOffset.UtcNow.AddHours(1),
-            tenantId: "test-tenant-id",
-            account: Mock.Of<IAccount>(),
-            idToken: "test-id-token",
-            scopes: new[] { "api://test/.default" },
-            correlationId: Guid.NewGuid());
-
-    private static PlayFabApiClient CreateClientWithHandler(HttpMessageHandler handler)
-    {
-        var config = CreateTestConfiguration();
-        var mockAuth = new Mock<AuthenticationService>(config) { CallBase = false };
-        mockAuth.Setup(a => a.AcquireTokenSilentAsync(It.IsAny<CancellationToken>())).ReturnsAsync(CreateMockAuthResult("token"));
-        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("https://TEST123.playfabapi.com/") };
-        return new PlayFabApiClient(config, mockAuth.Object, httpClient);
-    }
-
     #endregion
-}
-
-/// <summary>
-/// Mock handler that captures the outgoing request method, URI, and body for assertion, then
-/// returns a fixed response.
-/// </summary>
-internal sealed class ExperimentMockHandler : HttpMessageHandler
-{
-    private readonly HttpResponseMessage _response;
-
-    public ExperimentMockHandler(HttpResponseMessage response) => _response = response;
-
-    public string? CapturedBody { get; private set; }
-
-    public string? LastRequestUri { get; private set; }
-
-    public HttpMethod? LastMethod { get; private set; }
-
-    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
-    {
-        LastMethod = request.Method;
-        LastRequestUri = request.RequestUri?.ToString();
-        if (request.Content != null)
-        {
-            CapturedBody = await request.Content.ReadAsStringAsync(cancellationToken);
-        }
-
-        return _response;
-    }
 }

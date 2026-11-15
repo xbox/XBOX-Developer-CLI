@@ -1,4 +1,5 @@
-// Copyright (C) Microsoft Corporation. All rights reserved.
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
 
 using System.Text.Json;
 using Xunit;
@@ -34,11 +35,11 @@ public sealed class LiveReadOnlyTests(LiveCliFixture fixture)
 
         using var response = await fixture.RunJsonAsync(
             "--playfab-title-id", playFab.TitleId,
-            "playfab", "api", "call", "/Admin/GetTitleData",
+            "playfab", "api", "/Admin/GetTitleData",
             "--body-file", body,
             "--output", "json-compact");
 
-        AssertTitleDataSentinel(response.RootElement, "playfab api call /Admin/GetTitleData");
+        AssertTitleDataSentinel(response.RootElement, "playfab api /Admin/GetTitleData");
     }
 
     [LiveFact(LiveService.PlayFab)]

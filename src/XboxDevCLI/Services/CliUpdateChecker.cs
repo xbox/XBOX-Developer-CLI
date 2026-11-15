@@ -22,10 +22,7 @@ internal sealed class CliUpdateChecker(HttpClient client)
         var current = ParseVersion(currentVersion);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(CheckTimeout);
-        using var request = new HttpRequestMessage(HttpMethod.Get, ProjectLinks.LatestReleaseApi);
-        request.Headers.UserAgent.ParseAdd("XboxDevCLI-UpdateCheck/1.0");
-        request.Headers.Accept.ParseAdd("application/vnd.github+json");
-        using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        using var response = await GetLatestReleaseAsync(deadline.Token);
         if (!response.IsSuccessStatusCode)
         {
             var guidance = response.StatusCode switch
@@ -81,15 +78,44 @@ internal sealed class CliUpdateChecker(HttpClient client)
             Instructions: updateAvailable
                 ? [
                     $"Open {releaseUrl} and review the release notes and installation instructions.",
+                    "If you installed with WinGet on Windows, run 'winget upgrade Microsoft.Gaming.XBOXDeveloperCLI' instead of the manual steps below. WinGet might get a release a few hours after GitHub.",
                     $"For a portable install, download the ZIP for your operating system and CPU architecture and extract the whole archive into a new directory. Installation and PATH steps: {ProjectLinks.InstallationGuide}",
                     "Keep a backup of the old installation. Close running CLI processes before replacing it, especially on Windows.",
                     "Keep any XBOX_ environment variables you set. Settings come from them, command options, and the new release's built-in defaults, not from a settings file.",
                     "Leave existing user-local state in place (%LOCALAPPDATA%\\XboxDevCLI on Windows). Saved seller selections and authentication cache are automatically reused for the same OS user; seller lookup still uses the signed-in identity. No import or seller reset is needed.",
                     "If you keep the same installation path, PATH needs no change. Otherwise replace the old PATH entry with the directory containing the new executable, not the executable filename. On Windows edit your user Path environment variable; on Linux/macOS update PATH in your shell startup file.",
                     "Open a new terminal. Inspect 'Get-Command xbox -All' in PowerShell or 'type -a xbox' in Bash/Zsh to ensure an old copy or alias is not selected, then run 'xbox --version' and compare it with the downloaded release.",
-                    "For a source build or package-managed install, use its original build or installation mechanism instead of manually overwriting managed files. A package channel may lag the GitHub release."
+                    "For a source build or other package-managed install, use its original build or installation mechanism instead of manually overwriting managed files. A package channel may lag the GitHub release."
                 ]
                 : []);
+    }
+
+    private async Task<HttpResponseMessage> GetLatestReleaseAsync(CancellationToken cancellationToken)
+    {
+        var uri = new Uri(ProjectLinks.LatestReleaseApi);
+        for (int redirects = 0; ; redirects++)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.UserAgent.ParseAdd("XboxDevCLI-UpdateCheck/1.0");
+            request.Headers.Accept.ParseAdd("application/vnd.github+json");
+            var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            if (response.StatusCode is not (HttpStatusCode.MovedPermanently or HttpStatusCode.Redirect
+                or HttpStatusCode.SeeOther or HttpStatusCode.TemporaryRedirect or HttpStatusCode.PermanentRedirect))
+                return response;
+
+            var status = response.StatusCode;
+            var location = response.Headers.Location;
+            response.Dispose();
+            if (redirects == 3)
+                throw new HttpRequestException(
+                    $"HTTP {(int)status}: GitHub release metadata returned too many redirects. Open {ProjectLinks.Releases} in your browser.");
+            if (location is null || !Uri.TryCreate(uri, location, out var destination)
+                || destination.Scheme != Uri.UriSchemeHttps
+                || !destination.Host.Equals("api.github.com", StringComparison.OrdinalIgnoreCase))
+                throw new HttpRequestException(
+                    $"HTTP {(int)status}: GitHub release metadata returned an invalid redirect. Only https://api.github.com destinations are allowed. Open {ProjectLinks.Releases} in your browser.");
+            uri = destination;
+        }
     }
 
     private static NuGetVersion ParseVersion(string value)

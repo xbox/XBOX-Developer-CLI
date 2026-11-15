@@ -2,11 +2,10 @@
 // Licensed under the MIT License.
 
 using System.CommandLine;
-using XboxDevCLI.Output;
 using XboxDevCLI.CommandLine;
-using System.Text.Json;
 using XboxDevCLI.PlayFab.Generated.Groups;
 using XboxDevCLI.Services;
+using static XboxDevCLI.PlayFab.Commands.PlayFabCommandHelper;
 
 namespace XboxDevCLI.PlayFab.Commands;
 
@@ -52,15 +51,6 @@ internal static class GroupCommandFactory
     internal const string ListGroupBlocksPath = "/Group/ListGroupBlocks";
     internal const string ListMembershipPath = "/Group/ListMembership";
     internal const string ListMembershipOpportunitiesPath = "/Group/ListMembershipOpportunities";
-
-    /// <summary>
-    /// Serialization options for request bodies: optional (null) fields are omitted so a
-    /// minimal, valid PlayFab request is produced from only the options the user supplied.
-    /// </summary>
-    private static readonly JsonSerializerOptions RequestOptions = new()
-    {
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-    };
 
     public static Command Create()
     {
@@ -363,7 +353,25 @@ internal static class GroupCommandFactory
             return await ExecuteAsync(parseResult, apiPath, request, cancellationToken: cancellationToken);
         });
 
-        return command.WithMetadata(new CommandMetadata(ApiPaths: [ListGroupMembersPath]));
+        // Members are listed inside their roles, so the table has a row per member, with its role.
+        return command.WithMetadata(new CommandMetadata(
+            ApiPaths: [ListGroupMembersPath],
+            Table: new TableView(
+                nameof(ListGroupMembersResponse.Members),
+                [
+                    new TableColumn(
+                        "MEMBER ID",
+                        $"{nameof(EntityMemberRole.Members)}.{nameof(EntityWithLineage.Key)}.{nameof(EntityKey.Id)}",
+                        38),
+                    new TableColumn(
+                        "MEMBER TYPE",
+                        $"{nameof(EntityMemberRole.Members)}.{nameof(EntityWithLineage.Key)}.{nameof(EntityKey.Type)}",
+                        24),
+                    new TableColumn("ROLE ID", nameof(EntityMemberRole.RoleId), 24),
+                ])
+            {
+                Expand = nameof(EntityMemberRole.Members),
+            }));
     }
 
     private static Command CreateMemberIsMemberCommand()
@@ -892,18 +900,30 @@ internal static class GroupCommandFactory
             return await ExecuteAsync(parseResult, apiPath, request, cancellationToken: cancellationToken);
         });
 
-        return command.WithMetadata(new CommandMetadata(ApiPaths: [ListMembershipOpportunitiesPath]));
+        return command.WithMetadata(new CommandMetadata(
+            ApiPaths: [ListMembershipOpportunitiesPath],
+            Table: TableView.Merged(
+                "TYPE",
+                [
+                    new TableSource(nameof(ListMembershipOpportunitiesResponse.Invitations), "invitation"),
+                    new TableSource(nameof(ListMembershipOpportunitiesResponse.Applications), "application"),
+                ],
+                [
+                    new TableColumn(
+                        "GROUP ID",
+                        $"{nameof(GroupInvitation.Group)}.{nameof(EntityKey.Id)}",
+                        38),
+                    new TableColumn("ROLE ID", nameof(GroupInvitation.RoleId), 24)
+                    {
+                        OnlyIn = [nameof(ListMembershipOpportunitiesResponse.Invitations)],
+                    },
+                    new TableColumn("EXPIRES", nameof(GroupInvitation.Expires), 24),
+                ])));
     }
 
     #endregion
 
     #region Shared option factories
-
-    private static Option<string> RequiredOption(string name, string description) =>
-        new(name) { Description = description, Required = true };
-
-    private static Option<string?> OptionalOption(string name, string description) =>
-        new(name) { Description = description };
 
     private static Option<string> GroupIdOption() =>
         RequiredOption("--group-id", "The group's entity ID.");
@@ -950,41 +970,20 @@ internal static class GroupCommandFactory
     #region Shared executor
 
     /// <summary>
-    /// Serializes <paramref name="request"/> and routes it through the shared
-    /// <see cref="PlayFabCommandHelper.InvokeAsync"/> (call → format → error) using the
-    /// process-global <see cref="Console"/> streams and the global <c>--output</c> /
-    /// <c>--data-only</c> options resolved from <paramref name="parseResult"/>.
+    /// Runs <paramref name="request"/> through the shared helpers:
+    /// <see cref="PlayFabCommandHelper.WithClientAsync"/> builds the client and resolves the global
+    /// <c>--output</c> / <c>--data-only</c> options, and <see cref="PlayFabCommandHelper.RunAsync{TRequest}"/>
+    /// serializes, calls, and formats the response or error. Returns 0 on success; 1 on failure.
     /// </summary>
-    /// <remarks>
-    /// This is a thin wrapper over the shared helper: option resolution and client
-    /// construction live here, while the testable call/format/error branches live in
-    /// <see cref="PlayFabCommandHelper.InvokeAsync"/>, matching the other PlayFab command
-    /// factories. Returns 0 on success; 1 on failure.
-    /// </remarks>
-    private static async Task<int> ExecuteAsync<TRequest>(
+    private static Task<int> ExecuteAsync<TRequest>(
         ParseResult parseResult,
         string apiPath,
         TRequest request,
         CancellationToken cancellationToken,
         bool confirmedDestructive = false)
-        where TRequest : class
-    {
-        var output = OutputOptions.From(parseResult);
-
-        try
-        {
-            using var client = PlayFabCommandHelper.CreateClient(parseResult);
-            var jsonBody = JsonSerializer.Serialize(request, RequestOptions);
-            return await PlayFabCommandHelper.InvokeAsync(
-                client, apiPath, jsonBody, output,
-                Console.Out, Console.Error, cancellationToken, confirmedDestructive);
-        }
-        catch (Exception ex)
-        {
-            Console.Error.WriteLine($"Request failed: {ex.Message}");
-            return 1;
-        }
-    }
+        where TRequest : class =>
+        WithClientAsync(parseResult, cancellationToken, (client, output, stdout, stderr, cancellationToken) =>
+            RunAsync(client, apiPath, request, output, stdout, stderr, cancellationToken, confirmedDestructive));
 
     /// <summary>
     /// Resolves confirmation for a destructive operation (<c>Delete*</c>) via the global

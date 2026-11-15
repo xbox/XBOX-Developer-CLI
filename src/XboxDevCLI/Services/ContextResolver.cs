@@ -8,6 +8,7 @@ using Microsoft.Extensions.Configuration;
 using XboxDevCLI.CommandLine;
 using XboxDevCLI.Commands;
 using XboxDevCLI.Safety;
+using XboxDevCLI.Telemetry;
 
 namespace XboxDevCLI.Services;
 
@@ -38,8 +39,10 @@ internal enum ContextEndpoint
 /// </remarks>
 internal static class ContextResolver
 {
-    /// <summary>The options marked with <see cref="AsContextValue"/>, with the endpoint each one's saved value belongs to.</summary>
-    private static readonly ConditionalWeakTable<Option, object> MarkedOptions = new();
+    private sealed record ContextOption(ContextEndpoint Endpoint, Func<ParseResult, bool>? Applies);
+
+    /// <summary>The endpoint and optional invocation condition of each marked option.</summary>
+    private static readonly ConditionalWeakTable<Option, ContextOption> MarkedOptions = new();
 
     /// <summary>
     /// Options whose inline value is a request body or part of one, which a suggested command
@@ -66,18 +69,22 @@ internal static class ContextResolver
     /// calls right after parsing, fills it in as if typed: from <c>XBOX_</c> and the option's name,
     /// else the value <c>context set</c> saved under the option's name for the host of
     /// <paramref name="endpoint"/>. So the command only reads the option.
+    /// An optional <paramref name="applies"/> condition suppresses lookup for alternative selectors.
     /// </summary>
-    internal static TOption AsContextValue<TOption>(this TOption option, ContextEndpoint endpoint)
+    internal static TOption AsContextValue<TOption>(
+        this TOption option,
+        ContextEndpoint endpoint,
+        Func<ParseResult, bool>? applies = null)
         where TOption : Option
     {
-        MarkedOptions.AddOrUpdate(option, endpoint);
+        MarkedOptions.AddOrUpdate(option, new ContextOption(endpoint, applies));
         return option;
     }
 
 
     /// <summary>The endpoint a marked option's saved value belongs to, or <c>null</c> when it isn't marked.</summary>
     internal static ContextEndpoint? GetEndpoint(Option option) =>
-        MarkedOptions.TryGetValue(option, out var endpoint) ? (ContextEndpoint)endpoint : null;
+        MarkedOptions.TryGetValue(option, out var context) ? context.Endpoint : null;
 
     /// <summary>The name a value is saved under: the option's name, such as <c>seller-id</c>.</summary>
     internal static string GetKey(Option option) => option.Name.TrimStart('-');
@@ -176,6 +183,11 @@ internal static class ContextResolver
     {
         var options = GetOptions(parseResult).ToList();
         var missing = options.Where(option => parseResult.GetResult(option) is not { Implicit: false }).ToList();
+        foreach (var option in options.Except(missing))
+        {
+            TelemetryRecorder.RecordContextKey(GetKey(option));
+        }
+
         if (parseResult.Errors.Any(error => !IsAbout(error, missing)))
         {
             return parseResult;
@@ -214,19 +226,27 @@ internal static class ContextResolver
 
         Program.ShareConfiguration(parseResult, resolved);
         WriteSources(resolved, values, explicitProfile);
+        // Recorded first, so a refused implicit target still reports the key that caused it.
+        foreach (var value in values)
+        {
+            TelemetryRecorder.RecordContextKey(GetKey(value.Option));
+        }
+
         RefuseImplicitTarget(parseResult, values);
+
         return resolved;
     }
 
     /// <summary>
     /// The marked options the command takes: its own, and those it inherits, except that an
-    /// inherited PlayFab value, the title, applies only to a command that calls PlayFab. So a
-    /// command that doesn't, such as <c>auth status</c>, never looks it up.
+    /// inherited PlayFab value, the title, applies only to a command that calls PlayFab for a
+    /// title. So a command that doesn't, such as <c>auth status</c> or a studio command such as
+    /// <c>playfab service-principal list</c>, never looks it up.
     /// </summary>
     private static IEnumerable<Option> GetOptions(ParseResult parseResult)
     {
         var command = parseResult.CommandResult.Command;
-        var callsPlayFab = CommandMetadataRegistry.CallsPlayFab(command);
+        var callsPlayFab = CommandMetadataRegistry.CallsPlayFabTitle(command, GetApiPath(parseResult));
         var inherited = new List<Option>();
         for (var parent = command.Parents.OfType<Command>().FirstOrDefault();
              parent is not null;
@@ -236,7 +256,10 @@ internal static class ContextResolver
                 option.Recursive && (callsPlayFab || GetEndpoint(option) != ContextEndpoint.PlayFab)));
         }
 
-        return command.Options.Concat(inherited).Where(option => GetEndpoint(option) is not null).Distinct();
+        return command.Options.Concat(inherited)
+            .Where(option => MarkedOptions.TryGetValue(option, out var context)
+                && (context.Applies?.Invoke(parseResult) ?? true))
+            .Distinct();
     }
 
     /// <summary>
@@ -484,7 +507,7 @@ internal static class ContextResolver
     }
 
     /// <summary>The PlayFab path the invocation takes at run time, such as <c>playfab api</c>'s, or <c>null</c>.</summary>
-    private static string? GetApiPath(ParseResult parseResult)
+    internal static string? GetApiPath(ParseResult parseResult)
     {
         var command = parseResult.CommandResult.Command;
         return CommandMetadataRegistry.GetMetadata(command).Safety == CommandSafety.DependsOnApiPath

@@ -44,6 +44,14 @@ public class ConfigurationTests
     }
 
     [Fact]
+    public void ShippedStudioBaseUrlMatchesCompiledInSecurityBaseline()
+    {
+        Assert.Equal(
+            EndpointOverrideWarning.DefaultStudioBaseUrl,
+            GetBuiltInValue(EndpointOverrideWarning.StudioConfigurationKey));
+    }
+
+    [Fact]
     public void LoadConfiguration_WithCliOverrides_OverridesBuiltInSettings()
     {
         var rootCommand = CreateRootCommandWithGlobalOptions();
