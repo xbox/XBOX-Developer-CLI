@@ -15,7 +15,7 @@ On Windows, install the CLI with [WinGet](https://learn.microsoft.com/windows/pa
 the Windows Package Manager:
 
 ```powershell
-winget install Microsoft.Gaming.XBOXDeveloperCLI
+winget install xbox
 xbox --version
 ```
 

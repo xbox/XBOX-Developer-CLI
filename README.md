@@ -13,7 +13,7 @@
 Install with WinGet on Windows:
 
 ```powershell
-winget install Microsoft.Gaming.XBOXDeveloperCLI
+winget install xbox
 ```
 
 Run the install script on macOS or Linux:
